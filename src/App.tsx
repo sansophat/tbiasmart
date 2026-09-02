@@ -1,0 +1,1477 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  INITIAL_BRANCHES, 
+  INITIAL_BRANCH_TYPES,
+  INITIAL_EMPLOYEES, 
+  INITIAL_ATTENDANCE_RECORDS, 
+  INITIAL_LEAVE_REQUESTS,
+  INITIAL_TRANSFER_RECORDS,
+  INITIAL_BRANDING,
+  INITIAL_ROLE_PERMISSIONS,
+  INITIAL_SYSTEM_SETTINGS,
+  INITIAL_AUDIT_LOGS
+} from './data/initialData';
+import { DEFAULT_AUTH_USER } from './data/authUsers';
+import { 
+  Branch, 
+  BranchTypeConfig,
+  Employee, 
+  AttendanceRecord, 
+  LeaveRequest, 
+  UserGeoLocation, 
+  Language, 
+  AuthUser,
+  BranchTransferRecord,
+  CompanyBranding,
+  RolePermission,
+  SystemSettings,
+  AuditLogEntry,
+  SystemBackupData,
+  ConnectedPeer,
+  SyncMessage
+} from './types';
+import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
+import { DashboardView } from './components/DashboardView';
+import { QrAttendanceView } from './components/QrAttendanceView';
+import { BranchKioskView } from './components/BranchKioskView';
+import { GpsRadarMap } from './components/GpsRadarMap';
+import { EmployeeDirectoryView } from './components/EmployeeDirectoryView';
+import { BranchManagementView } from './components/BranchManagementView';
+import { ReportsView } from './components/ReportsView';
+import { AdminSettingsView } from './components/AdminSettingsView';
+import { EmployeePortalView } from './components/EmployeePortalView';
+import { ProfileSettingsView } from './components/ProfileSettingsView';
+import { BranchTransferModal } from './components/BranchTransferModal';
+import { LoginModal } from './components/LoginModal';
+import { InstallAppModal } from './components/InstallAppModal';
+import { DigitalIdCardModal } from './components/DigitalIdCardModal';
+import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
+import { realtimeService } from './utils/realtimeService';
+import { mergeDatasets } from './utils/backupRestoreUtils';
+
+const DEFAULT_STARTER_BRANCH: Branch = {
+  id: 'br_main_hq',
+  nameKh: 'ការិយាល័យកណ្តាល (Head Office)',
+  nameEn: 'Main Corporate HQ',
+  type: 'office',
+  addressKh: 'រាជធានីភ្នំពេញ ព្រះរាជាណាចក្រកម្ពុជា',
+  addressEn: 'Phnom Penh, Cambodia',
+  lat: 11.55802,
+  lng: 104.92804,
+  radiusMeters: 80,
+  openTime: '08:00',
+  closeTime: '17:30',
+  managerName: 'Administrator',
+  contactPhone: '+855 23 888 999',
+  themeColor: 'from-indigo-600 to-blue-600',
+  iconName: 'Building2',
+  activeStaffCount: 0,
+};
+
+export default function App() {
+  // Language State
+  const [lang, setLang] = useState<Language>(() => {
+    return (localStorage.getItem('attend_lang') as Language) || 'km';
+  });
+
+  // Persistent Admin Profile (Synced from server & localStorage)
+  const [adminProfile, setAdminProfile] = useState<AuthUser>(() => {
+    const saved = localStorage.getItem('attend_admin_profile');
+    return saved ? JSON.parse(saved) : DEFAULT_AUTH_USER;
+  });
+
+  // Current Logged-in User State (Requires Login on initial open if not already signed in)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    const saved = localStorage.getItem('attend_auth_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [showLoginModal, setShowLoginModal] = useState<boolean>(() => {
+    const saved = localStorage.getItem('attend_auth_user');
+    return !saved;
+  });
+
+  // Layout Sidebar Collapse & Mobile State
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+
+  // Real-time Sync Connection State
+  const [isLiveSyncConnected, setIsLiveSyncConnected] = useState<boolean>(true);
+  const [onlinePeersCount, setOnlinePeersCount] = useState<number>(1);
+  const [connectedPeers, setConnectedPeers] = useState<ConnectedPeer[]>([]);
+  const [liveToast, setLiveToast] = useState<{ title: string; message: string; type: 'punch' | 'leave' | 'transfer' | 'system' } | null>(null);
+
+  // Persistent Core Data
+  const [branches, setBranches] = useState<Branch[]>(() => {
+    const saved = localStorage.getItem('attend_branches');
+    return saved ? JSON.parse(saved) : INITIAL_BRANCHES;
+  });
+
+  const [employees, setEmployees] = useState<Employee[]>(() => {
+    const saved = localStorage.getItem('attend_employees');
+    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
+  });
+
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
+    const saved = localStorage.getItem('attend_records');
+    return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE_RECORDS;
+  });
+
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
+    const saved = localStorage.getItem('attend_leaves');
+    return saved ? JSON.parse(saved) : INITIAL_LEAVE_REQUESTS;
+  });
+
+  const [transferRecords, setTransferRecords] = useState<BranchTransferRecord[]>(() => {
+    const saved = localStorage.getItem('attend_transfers');
+    return saved ? JSON.parse(saved) : INITIAL_TRANSFER_RECORDS;
+  });
+
+  const [branchTypes, setBranchTypes] = useState<BranchTypeConfig[]>(() => {
+    const saved = localStorage.getItem('attend_branch_types');
+    return saved ? JSON.parse(saved) : INITIAL_BRANCH_TYPES;
+  });
+
+  // Company Branding State
+  const [branding, setBranding] = useState<CompanyBranding>(() => {
+    const saved = localStorage.getItem('attend_branding');
+    return saved ? JSON.parse(saved) : INITIAL_BRANDING;
+  });
+
+  // Role Permissions (RBAC) State
+  const [rolePermissions, setRolePermissions] = useState<RolePermission[]>(() => {
+    const saved = localStorage.getItem('attend_role_permissions');
+    return saved ? JSON.parse(saved) : INITIAL_ROLE_PERMISSIONS;
+  });
+
+  // System Settings & Broadcast State
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
+    const saved = localStorage.getItem('attend_system_settings');
+    return saved ? JSON.parse(saved) : INITIAL_SYSTEM_SETTINGS;
+  });
+
+  // Administrative Audit Logs
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
+    const saved = localStorage.getItem('attend_audit_logs');
+    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+  });
+
+  // Transfer modal state
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
+  const [transferTargetEmp, setTransferTargetEmp] = useState<Employee | null>(null);
+  const [showInstallModal, setShowInstallModal] = useState<boolean>(false);
+  const [onlineCardEmp, setOnlineCardEmp] = useState<Employee | null>(null);
+
+  // Auto-detect URL parameters for ready-to-view scanned digital card (e.g. ?viewCard=EMP_CODE)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const checkUrlParams = () => {
+      const params = new URLSearchParams(window.location.search);
+      const codeOrId = params.get('viewCard') || params.get('verify') || params.get('badge') || params.get('card');
+      if (codeOrId) {
+        const found = employees.find(
+          (e) => e.code.toLowerCase() === codeOrId.toLowerCase() || e.id.toLowerCase() === codeOrId.toLowerCase()
+        );
+        if (found) {
+          setOnlineCardEmp(found);
+        }
+      }
+    };
+    checkUrlParams();
+    window.addEventListener('popstate', checkUrlParams);
+    return () => window.removeEventListener('popstate', checkUrlParams);
+  }, [employees]);
+
+  // Default active tab: if employee, open portal, else dashboard
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return currentUser?.role === 'employee' ? 'portal' : 'dashboard';
+  });
+
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
+
+  // Live GPS state: initial coordinates
+  const [currentGeo, setCurrentGeo] = useState<UserGeoLocation>({
+    lat: 11.55802,
+    lng: 104.92804,
+    accuracy: 5,
+    timestamp: Date.now(),
+    isReal: false,
+    label: 'Initial Location',
+  });
+
+  // Automatically acquire real browser GPS coordinates on app load
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setCurrentGeo({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: Math.round(pos.coords.accuracy),
+            timestamp: pos.timestamp,
+            isReal: true,
+            label: `Live GPS Device (±${Math.round(pos.coords.accuracy)}m)`,
+          });
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+  }, []);
+
+  // Update Real-time Service user context
+  useEffect(() => {
+    realtimeService.setUserContext(currentUser);
+  }, [currentUser]);
+
+  // Initial Canonical State Fetch on Device Startup / Page Load
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchCanonicalState = async () => {
+      try {
+        const res = await fetch('/api/system/state');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.state && isMounted) {
+            const s = data.state;
+            if (Array.isArray(s.branches)) {
+              setBranches(s.branches);
+              localStorage.setItem('attend_branches', JSON.stringify(s.branches));
+            }
+            if (Array.isArray(s.employees)) {
+              setEmployees(s.employees);
+              localStorage.setItem('attend_employees', JSON.stringify(s.employees));
+            }
+            if (Array.isArray(s.attendanceRecords)) {
+              setAttendanceRecords(s.attendanceRecords);
+              localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
+            }
+            if (Array.isArray(s.leaveRequests)) {
+              setLeaveRequests(s.leaveRequests);
+              localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
+            }
+            if (Array.isArray(s.transferRecords)) {
+              setTransferRecords(s.transferRecords);
+              localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
+            }
+            if (s.branding) {
+              setBranding(s.branding);
+              localStorage.setItem('attend_branding', JSON.stringify(s.branding));
+            }
+            if (Array.isArray(s.rolePermissions)) {
+              setRolePermissions(s.rolePermissions);
+              localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
+            }
+            if (s.systemSettings) {
+              setSystemSettings(s.systemSettings);
+              localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
+            }
+            if (s.adminProfile) {
+              setAdminProfile(s.adminProfile);
+              localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
+              setCurrentUser((curr) => {
+                if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+                  const updated = { ...curr, ...s.adminProfile };
+                  localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                  return updated;
+                }
+                return curr;
+              });
+            }
+            if (Array.isArray(s.auditLogs)) {
+              setAuditLogs(s.auditLogs);
+              localStorage.setItem('attend_audit_logs', JSON.stringify(s.auditLogs));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch initial canonical state:', err);
+      }
+    };
+
+    fetchCanonicalState();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Real-time Sync Event Listeners
+  useEffect(() => {
+    const unsubConnection = realtimeService.subscribeConnection((connected) => {
+      setIsLiveSyncConnected(connected);
+    });
+
+    const unsubPresence = realtimeService.subscribePresence((peers, count) => {
+      setConnectedPeers(peers);
+      setOnlinePeersCount(Math.max(1, count));
+    });
+
+    const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
+      setLiveToast({ title, message, type });
+      setTimeout(() => setLiveToast(null), 4500);
+    };
+
+    const unsubSync = realtimeService.subscribe((message: SyncMessage) => {
+      const { type, payload, senderName } = message;
+
+      if (type === 'INIT_ACK' || type === 'SYSTEM_STATE_SYNC' || type === 'CANONICAL_STATE_RESPONSE') {
+        const s = payload?.state;
+        if (s) {
+          if (Array.isArray(s.branches)) {
+            setBranches(s.branches);
+            localStorage.setItem('attend_branches', JSON.stringify(s.branches));
+          }
+          if (Array.isArray(s.employees)) {
+            setEmployees(s.employees);
+            localStorage.setItem('attend_employees', JSON.stringify(s.employees));
+          }
+          if (Array.isArray(s.attendanceRecords)) {
+            setAttendanceRecords(s.attendanceRecords);
+            localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
+          }
+          if (Array.isArray(s.leaveRequests)) {
+            setLeaveRequests(s.leaveRequests);
+            localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
+          }
+          if (Array.isArray(s.transferRecords)) {
+            setTransferRecords(s.transferRecords);
+            localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
+          }
+          if (s.branding) {
+            setBranding(s.branding);
+            localStorage.setItem('attend_branding', JSON.stringify(s.branding));
+          }
+          if (Array.isArray(s.rolePermissions)) {
+            setRolePermissions(s.rolePermissions);
+            localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
+          }
+          if (s.systemSettings) {
+            setSystemSettings(s.systemSettings);
+            localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
+          }
+          if (s.adminProfile) {
+            setAdminProfile(s.adminProfile);
+            localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
+            setCurrentUser((curr) => {
+              if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+                const updated = { ...curr, ...s.adminProfile };
+                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                return updated;
+              }
+              return curr;
+            });
+          }
+        }
+      } else if (type === 'UPDATE_USER_PROFILE' && payload) {
+        const { user, employee } = payload;
+        if (user && (user.role === 'admin' || user.id === 'user_admin' || user.username === 'admin')) {
+          setAdminProfile(user);
+          localStorage.setItem('attend_admin_profile', JSON.stringify(user));
+          setCurrentUser((curr) => {
+            if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+              const updated = { ...curr, ...user };
+              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              return updated;
+            }
+            return curr;
+          });
+        }
+        if (employee && employee.id) {
+          setEmployees((prev) => prev.map((e) => (e.id === employee.id ? { ...e, ...employee } : e)));
+          setCurrentUser((curr) => {
+            if (curr && curr.employeeId === employee.id) {
+              const updated = {
+                ...curr,
+                avatar: employee.avatar || curr.avatar,
+                nameKh: employee.nameKh || curr.nameKh,
+                nameEn: employee.nameEn || curr.nameEn,
+                pinCode: employee.pinCode,
+                password: employee.password,
+              };
+              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              return updated;
+            }
+            return curr;
+          });
+        }
+      } else if (type === 'PUNCH_ATTENDANCE' && payload) {
+        const record: AttendanceRecord = payload.record || payload;
+        if (!record || !record.id) return;
+
+        setAttendanceRecords((prev) => {
+          if (prev.some((r) => r.id === record.id)) return prev;
+          return [record, ...prev];
+        });
+
+        const empName = lang === 'km' ? (record.employeeNameKh || record.employeeNameEn) : (record.employeeNameEn || record.employeeNameKh);
+        const actionType = record.type === 'check_in' 
+          ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
+          : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
+        
+        showLiveAlert(
+          lang === 'km' ? '🟢 វត្តមានថ្មី (Live Sync)' : '🟢 Real-time Attendance Sync',
+          `${empName} ${actionType} - ${record.branchNameEn || ''}`,
+          'punch'
+        );
+      } else if (type === 'SUBMIT_LEAVE' && payload) {
+        setLeaveRequests((prev) => {
+          if (prev.some((l) => l.id === payload.id)) return prev;
+          return [payload, ...prev];
+        });
+        showLiveAlert(
+          lang === 'km' ? '📋 ស្នើសុំច្បាប់ថ្មី (Live Sync)' : '📋 New Leave Request',
+          `${payload.employeeNameEn || 'Staff'}: ${payload.reason || ''}`,
+          'leave'
+        );
+      } else if (type === 'UPDATE_LEAVE_STATUS' && payload) {
+        const { requestId, status, approvedBy, comment } = payload;
+        setLeaveRequests((prev) =>
+          prev.map((l) =>
+            l.id === requestId
+              ? {
+                  ...l,
+                  status,
+                  approvedBy: approvedBy || l.approvedBy,
+                  adminComment: comment || l.adminComment,
+                }
+              : l
+          )
+        );
+        showLiveAlert(
+          lang === 'km' ? '⚖️ ការអនុម័តច្បាប់ (Live Sync)' : '⚖️ Leave Status Updated',
+          `Request status updated to "${status.toUpperCase()}"`,
+          'leave'
+        );
+      } else if (type === 'TRANSFER_EMPLOYEE' && payload) {
+        const record: BranchTransferRecord = payload;
+        setTransferRecords((prev) => {
+          if (prev.some((t) => t.id === record.id)) return prev;
+          return [record, ...prev];
+        });
+        setEmployees((prev) =>
+          prev.map((e) =>
+            e.id === record.employeeId
+              ? {
+                  ...e,
+                  branchId: record.toBranchId,
+                  gpsCalibratedBranchId: undefined, // Reset GPS lock so staff can calibrate for the new branch for the 1st time
+                  gpsCalibratedAt: undefined,
+                }
+              : e
+          )
+        );
+        showLiveAlert(
+          lang === 'km' ? '🔄 ផ្ទេរបុគ្គលិក (Live Sync)' : '🔄 Staff Transfer Synced',
+          `${record.employeeNameEn}: ${record.fromBranchNameEn} ➔ ${record.toBranchNameEn}`,
+          'transfer'
+        );
+      } else if (type === 'ADD_EMPLOYEE' && payload) {
+        setEmployees((prev) => {
+          if (prev.some((e) => e.id === payload.id)) return prev;
+          return [payload, ...prev];
+        });
+      } else if (type === 'UPDATE_EMPLOYEE' && payload) {
+        setEmployees((prev) => prev.map((e) => (e.id === payload.id ? payload : e)));
+      } else if (type === 'DELETE_EMPLOYEE' && payload) {
+        const idToDelete = payload.id || payload.employeeId;
+        setEmployees((prev) => prev.filter((e) => e.id !== idToDelete));
+      } else if (type === 'UPDATE_BRANCH' && payload) {
+        setBranches((prev) => {
+          const exists = prev.some((b) => b.id === payload.id);
+          if (exists) {
+            return prev.map((b) => (b.id === payload.id ? payload : b));
+          }
+          return [...prev, payload];
+        });
+      } else if (type === 'DELETE_BRANCH' && payload) {
+        const idToDelete = payload.id || payload.branchId;
+        setBranches((prev) => prev.filter((b) => b.id !== idToDelete));
+      } else if (type === 'UPDATE_BRANDING' && payload) {
+        setBranding(payload);
+      } else if (type === 'UPDATE_SETTINGS' || type === 'UPDATE_SYSTEM_SETTINGS') {
+        if (payload) setSystemSettings(payload);
+      } else if (type === 'SYSTEM_RESET') {
+        const s = payload?.state;
+        if (s) {
+          if (Array.isArray(s.branches)) setBranches(s.branches);
+          if (Array.isArray(s.employees)) setEmployees(s.employees);
+          if (Array.isArray(s.attendanceRecords)) setAttendanceRecords(s.attendanceRecords);
+          if (Array.isArray(s.leaveRequests)) setLeaveRequests(s.leaveRequests);
+          if (Array.isArray(s.transferRecords)) setTransferRecords(s.transferRecords);
+          if (s.branding) setBranding(s.branding);
+          if (Array.isArray(s.rolePermissions)) setRolePermissions(s.rolePermissions);
+          if (s.systemSettings) setSystemSettings(s.systemSettings);
+          if (Array.isArray(s.auditLogs)) setAuditLogs(s.auditLogs);
+        } else if (payload?.resetType === 'demo_seed') {
+          setBranches(INITIAL_BRANCHES);
+          setEmployees(INITIAL_EMPLOYEES);
+          setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
+          setLeaveRequests(INITIAL_LEAVE_REQUESTS);
+          setTransferRecords(INITIAL_TRANSFER_RECORDS);
+          setBranding(INITIAL_BRANDING);
+          setRolePermissions(INITIAL_ROLE_PERMISSIONS);
+          setSystemSettings(INITIAL_SYSTEM_SETTINGS);
+          setAuditLogs(INITIAL_AUDIT_LOGS);
+        } else {
+          setBranches([DEFAULT_STARTER_BRANCH]);
+          setEmployees([]);
+          setAttendanceRecords([]);
+          setLeaveRequests([]);
+          setTransferRecords([]);
+          setAuditLogs([]);
+          setSelectedBranchId('all');
+        }
+        showLiveAlert(
+          lang === 'km' ? '⚡ កំណត់ប្រព័ន្ធឡើងវិញ (Live Sync)' : '⚡ System Reset Executed',
+          `System was reset to ${payload?.resetType === 'demo_seed' ? 'Demo Seed' : 'Blank Fresh State'} by ${senderName || 'Admin'}`,
+          'system'
+        );
+      } else if (type === 'SYSTEM_RESTORE' && payload?.backupData) {
+        const b = payload.backupData as SystemBackupData;
+        const mode = payload.restoreMode || 'overwrite';
+        if (mode === 'overwrite') {
+          if (b.branches) setBranches(b.branches);
+          if (b.employees) setEmployees(b.employees);
+          if (b.attendanceRecords) setAttendanceRecords(b.attendanceRecords);
+          if (b.leaveRequests) setLeaveRequests(b.leaveRequests);
+          if (b.transferRecords) setTransferRecords(b.transferRecords);
+          if (b.branding) setBranding(b.branding);
+          if (b.rolePermissions) setRolePermissions(b.rolePermissions);
+          if (b.systemSettings) setSystemSettings(b.systemSettings);
+          if (b.auditLogs) setAuditLogs(b.auditLogs);
+        } else {
+          if (b.branches) setBranches((prev) => mergeDatasets(prev, b.branches!));
+          if (b.employees) setEmployees((prev) => mergeDatasets(prev, b.employees!));
+          if (b.attendanceRecords) setAttendanceRecords((prev) => mergeDatasets(prev, b.attendanceRecords!));
+          if (b.leaveRequests) setLeaveRequests((prev) => mergeDatasets(prev, b.leaveRequests!));
+          if (b.transferRecords) setTransferRecords((prev) => mergeDatasets(prev, b.transferRecords!));
+        }
+        showLiveAlert(
+          lang === 'km' ? '💾 ស្តារទិន្នន័យជោគជ័យ (Live Sync)' : '💾 System Data Restored',
+          `Restored ${b.summary?.branchesCount || 0} branches & ${b.summary?.attendanceRecordsCount || 0} punches.`,
+          'system'
+        );
+      }
+    });
+
+    return () => {
+      unsubConnection();
+      unsubPresence();
+      unsubSync();
+    };
+  }, [lang]);
+
+  // Sync to local storage
+  useEffect(() => {
+    localStorage.setItem('attend_lang', lang);
+  }, [lang]);
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('attend_auth_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('attend_auth_user');
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_branches', JSON.stringify(branches));
+  }, [branches]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_employees', JSON.stringify(employees));
+  }, [employees]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_records', JSON.stringify(attendanceRecords));
+  }, [attendanceRecords]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_leaves', JSON.stringify(leaveRequests));
+  }, [leaveRequests]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_transfers', JSON.stringify(transferRecords));
+  }, [transferRecords]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_branding', JSON.stringify(branding));
+    updateDynamicAppBranding(branding, lang);
+  }, [branding, lang]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_role_permissions', JSON.stringify(rolePermissions));
+  }, [rolePermissions]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_system_settings', JSON.stringify(systemSettings));
+  }, [systemSettings]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_audit_logs', JSON.stringify(auditLogs));
+  }, [auditLogs]);
+
+  // Handlers with Real-time synchronization
+  const handleAddAttendanceRecord = (newRecord: AttendanceRecord) => {
+    setAttendanceRecords((prev) => [newRecord, ...prev]);
+
+    // Broadcast to all WebSocket connected peers and REST API
+    realtimeService.emit('PUNCH_ATTENDANCE', { record: newRecord });
+
+    fetch('/api/attendance/punch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record: newRecord, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleAddEmployee = (newEmp: Employee) => {
+    setEmployees((prev) => [newEmp, ...prev]);
+    realtimeService.emit('ADD_EMPLOYEE', newEmp);
+    fetch('/api/employees/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee: newEmp, isNew: true, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateEmployee = (updatedEmp: Employee) => {
+    setEmployees((prev) => prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e)));
+    setAttendanceRecords((prev) =>
+      prev.map((r) =>
+        r.employeeId === updatedEmp.id
+          ? {
+              ...r,
+              employeeNameKh: updatedEmp.nameKh,
+              employeeNameEn: updatedEmp.nameEn,
+              employeeAvatar: updatedEmp.avatar,
+            }
+          : r
+      )
+    );
+    realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
+    fetch('/api/employees/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleDeleteEmployee = (id: string) => {
+    setEmployees((prev) => prev.filter((e) => e.id !== id));
+    realtimeService.emit('DELETE_EMPLOYEE', { id });
+    fetch('/api/employees/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: id, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateBranch = (updatedBranch: Branch) => {
+    setBranches((prev) => prev.map((b) => (b.id === updatedBranch.id ? updatedBranch : b)));
+    realtimeService.emit('UPDATE_BRANCH', updatedBranch);
+    fetch('/api/branches/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: updatedBranch, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateBranchLocation = (
+    branchId: string, 
+    lat: number, 
+    lng: number, 
+    employeeId?: string
+  ): { success: boolean; message: string } => {
+    // Check if acting user is a staff member or has employee ID
+    const isStaffRole = currentUser?.role === 'employee';
+    const actingEmpId = employeeId || (isStaffRole ? (currentUser?.employeeId || employees.find(e => e.code === currentUser?.employeeCode)?.id) : undefined);
+
+    if (actingEmpId) {
+      const emp = employees.find((e) => e.id === actingEmpId);
+      if (emp) {
+        // Enforce rule: Staff can set branch to GPS for only the 1st time and cannot change to others until transferred to another branch
+        if (emp.gpsCalibratedBranchId === branchId) {
+          const lockedMsg = lang === 'km'
+            ? `🔒 ទីតាំង GPS សាខាត្រូវបានកំណត់រួចរាល់ហើយ! បុគ្គលិកអាចកំណត់ទីតាំង GPS បានតែ ១ ដងប៉ុណ្ណោះក្នុងសាខាមួយ។ មិនអាចផ្លាស់ប្តូរទៅកាន់ទីតាំងផ្សេងទៀតបានទេ លុះត្រាតែមានការផ្ទេរទៅកាន់សាខាថ្មី ទើបអាចកំណត់ឡើងវិញបាន។`
+            : `🔒 Branch GPS is already locked! Staff "${emp.nameEn}" can only set branch GPS once for this branch. You cannot change it until you are officially transferred to another branch.`;
+          return { success: false, message: lockedMsg };
+        }
+
+        // First time setting GPS for this branch:
+        // 1. Update employee record with calibrated branch ID & timestamp
+        const updatedEmp: Employee = {
+          ...emp,
+          gpsCalibratedBranchId: branchId,
+          gpsCalibratedAt: new Date().toISOString(),
+        };
+
+        setEmployees((prev) =>
+          prev.map((e) => (e.id === actingEmpId ? updatedEmp : e))
+        );
+        realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
+        fetch('/api/employees/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employee: updatedEmp, senderId: realtimeService.getClientId() }),
+        }).catch(() => {});
+
+        // 2. Update branch coordinates
+        let branchName = '';
+        setBranches((prev) =>
+          prev.map((b) => {
+            if (b.id === branchId) {
+              branchName = lang === 'km' ? b.nameKh : b.nameEn;
+              const updated: Branch = { 
+                ...b, 
+                lat, 
+                lng,
+                gpsSetByEmployeeId: actingEmpId,
+                gpsSetAt: new Date().toISOString()
+              };
+              realtimeService.emit('UPDATE_BRANCH', updated);
+              fetch('/api/branches/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ branch: updated, senderId: realtimeService.getClientId() }),
+              }).catch(() => {});
+              return updated;
+            }
+            return b;
+          })
+        );
+
+        // 3. Add Audit Log
+        handleAddAuditLog({
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toLocaleString(),
+          actorName: (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : emp.nameEn) || 'Staff',
+          actorRole: currentUser?.role || 'employee',
+          action: 'Staff Branch GPS Calibrated (1st-Time Lock)',
+          actionKh: 'បុគ្គលិកកំណត់ទីតាំង GPS សាខាលើកដំបូង (ចាក់សោ)',
+          module: 'branches',
+          details: `Staff ${emp.nameEn} set initial branch GPS for ${branchName || branchId} to (${lat.toFixed(5)}, ${lng.toFixed(5)}). Locked until transfer.`,
+          detailsKh: `បុគ្គលិក ${emp.nameKh} បានកំណត់កូអរដោនេ GPS ដំបូងសម្រាប់សាខា ${branchName || branchId} (${lat.toFixed(5)}, ${lng.toFixed(5)})។ បានចាក់សោរហូតដល់មានការផ្ទេរសាខា។`,
+          status: 'success',
+        });
+
+        const successMsg = lang === 'km'
+          ? `✅ បានកំណត់កូអរដោនេសាខា "${branchName}" ទៅកាន់ទីតាំង GPS ជាក់ស្តែងរបស់អ្នក (${lat.toFixed(5)}, ${lng.toFixed(5)}) ជាលើកដំបូងជោគជ័យ! ទីតាំងនេះត្រូវបានចាក់សោរហូតដល់មានការផ្ទេរសាខាថ្មី។`
+          : `✅ Branch "${branchName}" coordinates set to your GPS (${lat.toFixed(5)}, ${lng.toFixed(5)}) for the 1st time! Location is locked until transferred to another branch.`;
+
+        return { success: true, message: successMsg };
+      }
+    }
+
+    // Admin / Manager / Generic Update
+    let updatedBranchName = '';
+    setBranches((prev) =>
+      prev.map((b) => {
+        if (b.id === branchId) {
+          updatedBranchName = lang === 'km' ? b.nameKh : b.nameEn;
+          const updated = { ...b, lat, lng };
+          realtimeService.emit('UPDATE_BRANCH', updated);
+          fetch('/api/branches/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ branch: updated, senderId: realtimeService.getClientId() }),
+          }).catch(() => {});
+          return updated;
+        }
+        return b;
+      })
+    );
+
+    return {
+      success: true,
+      message: lang === 'km'
+        ? `បានកែសម្រួលកូអរដោនេសាខា "${updatedBranchName}" ជោគជ័យ!`
+        : `Branch "${updatedBranchName}" coordinates updated successfully!`,
+    };
+  };
+
+  const handleAddBranch = (newBranch: Branch) => {
+    setBranches((prev) => [...prev, newBranch]);
+    realtimeService.emit('UPDATE_BRANCH', newBranch);
+    fetch('/api/branches/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: newBranch, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleDeleteBranch = (branchId: string) => {
+    setBranches((prev) => prev.filter((b) => b.id !== branchId));
+    realtimeService.emit('DELETE_BRANCH', { id: branchId });
+    fetch('/api/branches/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branchId, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleAddBranchType = (typeConfig: BranchTypeConfig) => {
+    setBranchTypes((prev) => {
+      const updated = [...prev, typeConfig];
+      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      return updated;
+    });
+    fetch('/api/branch-types/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branchType: typeConfig, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateBranchType = (typeConfig: BranchTypeConfig) => {
+    setBranchTypes((prev) => {
+      const updated = prev.map((t) => (t.id === typeConfig.id ? typeConfig : t));
+      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      return updated;
+    });
+    fetch('/api/branch-types/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branchType: typeConfig, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleDeleteBranchType = (typeId: string) => {
+    setBranchTypes((prev) => {
+      const updated = prev.filter((t) => t.id !== typeId);
+      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      return updated;
+    });
+    fetch('/api/branch-types/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ typeId, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateBranding = (newBranding: CompanyBranding) => {
+    setBranding(newBranding);
+    realtimeService.emit('UPDATE_BRANDING', newBranding);
+    fetch('/api/system/branding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branding: newBranding, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateSystemSettings = (newSettings: SystemSettings) => {
+    setSystemSettings(newSettings);
+    realtimeService.emit('UPDATE_SETTINGS', newSettings);
+    fetch('/api/system/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: newSettings, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateRolePermissions = (newRoles: RolePermission[]) => {
+    setRolePermissions(newRoles);
+    realtimeService.emit('UPDATE_ROLE_PERMISSIONS', newRoles);
+    fetch('/api/system/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: { rolePermissions: newRoles }, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleSubmitLeaveRequest = (newRequest: LeaveRequest) => {
+    setLeaveRequests((prev) => [newRequest, ...prev]);
+    realtimeService.emit('SUBMIT_LEAVE', newRequest);
+    fetch('/api/leaves/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request: newRequest, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleUpdateLeaveStatus = (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => {
+    const approver = (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator';
+    setLeaveRequests((prev) =>
+      prev.map((r) =>
+        r.id === requestId
+          ? {
+              ...r,
+              status: newStatus,
+              approvedBy: approver,
+              adminComment: comment || r.adminComment,
+            }
+          : r
+      )
+    );
+
+    realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
+
+    fetch('/api/leaves/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, status: newStatus, approvedBy: approver, comment, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleAddAuditLog = (log: AuditLogEntry) => {
+    setAuditLogs((prev) => [log, ...prev]);
+  };
+
+  // Open transfer modal for specific employee
+  const handleOpenTransferModal = (emp?: Employee) => {
+    setTransferTargetEmp(emp || null);
+    setIsTransferModalOpen(true);
+  };
+
+  // Confirm official transfer
+  const handleTransferEmployee = (
+    employeeId: string,
+    toBranchId: string,
+    reason: string,
+    effectiveDate: string
+  ) => {
+    const emp = employees.find((e) => e.id === employeeId);
+    const fromBranch = branches.find((b) => b.id === emp?.branchId);
+    const toBranch = branches.find((b) => b.id === toBranchId);
+
+    const record: BranchTransferRecord = {
+      id: `tr_${Date.now()}`,
+      employeeId,
+      employeeNameKh: emp?.nameKh || '',
+      employeeNameEn: emp?.nameEn || '',
+      employeeCode: emp?.code || '',
+      employeeAvatar: emp?.avatar || '',
+      fromBranchId: fromBranch?.id || '',
+      fromBranchNameKh: fromBranch?.nameKh || '',
+      fromBranchNameEn: fromBranch?.nameEn || '',
+      toBranchId,
+      toBranchNameKh: toBranch?.nameKh || '',
+      toBranchNameEn: toBranch?.nameEn || '',
+      effectiveDate,
+      reason,
+      transferredBy: currentUser?.nameKh || currentUser?.nameEn || 'Administrator',
+      timestamp: new Date().toLocaleString(),
+    };
+
+    setTransferRecords((prev) => [record, ...prev]);
+
+    setEmployees((prev) =>
+      prev.map((e) => {
+        if (e.id === employeeId) {
+          return {
+            ...e,
+            branchId: toBranchId,
+            gpsCalibratedBranchId: undefined, // Reset GPS lock so staff can calibrate for the new branch for the 1st time
+            gpsCalibratedAt: undefined,
+          };
+        }
+        return e;
+      })
+    );
+
+    if (currentUser?.employeeId === employeeId || currentUser?.employeeCode === emp?.code) {
+      setCurrentUser((prev) => (prev ? { ...prev, branchId: toBranchId } : null));
+    }
+
+    realtimeService.emit('TRANSFER_EMPLOYEE', record);
+    fetch('/api/employees/transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record }),
+    }).catch(() => {});
+
+    handleAddAuditLog({
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Authorized Staff Transfer',
+      actionKh: 'អនុម័តការផ្ទេរសាខាបុគ្គលិក',
+      module: 'employees',
+      details: `Transferred ${emp?.nameEn || ''} from ${fromBranch?.nameEn || ''} to ${toBranch?.nameEn || ''}. Reason: ${reason}`,
+      detailsKh: `បានផ្ទេរបុគ្គលិក ${emp?.nameKh || ''} ពី ${fromBranch?.nameKh || ''} ទៅកាន់ ${toBranch?.nameKh || ''}។`,
+      status: 'success',
+    });
+  };
+
+  // RESTORE BACKUP DATA
+  const handleRestoreBackup = (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => {
+    if (mode === 'overwrite') {
+      if (backupData.branches) setBranches(backupData.branches);
+      if (backupData.employees) setEmployees(backupData.employees);
+      if (backupData.attendanceRecords) setAttendanceRecords(backupData.attendanceRecords);
+      if (backupData.leaveRequests) setLeaveRequests(backupData.leaveRequests);
+      if (backupData.transferRecords) setTransferRecords(backupData.transferRecords);
+      if (backupData.branding) setBranding(backupData.branding);
+      if (backupData.rolePermissions) setRolePermissions(backupData.rolePermissions);
+      if (backupData.systemSettings) setSystemSettings(backupData.systemSettings);
+      if (backupData.auditLogs) setAuditLogs(backupData.auditLogs);
+    } else {
+      if (backupData.branches) setBranches((prev) => mergeDatasets(prev, backupData.branches!));
+      if (backupData.employees) setEmployees((prev) => mergeDatasets(prev, backupData.employees!));
+      if (backupData.attendanceRecords) setAttendanceRecords((prev) => mergeDatasets(prev, backupData.attendanceRecords!));
+      if (backupData.leaveRequests) setLeaveRequests((prev) => mergeDatasets(prev, backupData.leaveRequests!));
+      if (backupData.transferRecords) setTransferRecords((prev) => mergeDatasets(prev, backupData.transferRecords!));
+    }
+
+    realtimeService.emit('SYSTEM_RESTORE', { backupData, restoreMode: mode });
+    fetch('/api/system/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backupData, restoreMode: mode }),
+    }).catch(() => {});
+
+    handleAddAuditLog({
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Restored System Database',
+      actionKh: 'ស្តារទិន្នន័យប្រព័ន្ធឡើងវិញ (Database Restore)',
+      module: 'backup',
+      details: `Restored ${backupData.summary?.branchesCount || 0} branches, ${backupData.summary?.employeesCount || 0} staff via ${mode.toUpperCase()} mode.`,
+      detailsKh: `បានស្តារទិន្នន័យប្រព័ន្ធ (${mode === 'overwrite' ? 'ជំនួសទាំងស្រុង' : 'បញ្ចូលបន្ថែម'}) ចំនួន ${backupData.summary?.branchesCount || 0} សាខា។`,
+      status: 'success',
+    });
+  };
+
+  // RESET SYSTEM DATA
+  const handleResetSystem = (type: 'demo_seed' | 'clean_fresh') => {
+    if (type === 'demo_seed') {
+      setBranches(INITIAL_BRANCHES);
+      setEmployees(INITIAL_EMPLOYEES);
+      setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
+      setLeaveRequests(INITIAL_LEAVE_REQUESTS);
+      setTransferRecords(INITIAL_TRANSFER_RECORDS);
+      setBranding(INITIAL_BRANDING);
+      setRolePermissions(INITIAL_ROLE_PERMISSIONS);
+      setSystemSettings(INITIAL_SYSTEM_SETTINGS);
+      setAuditLogs(INITIAL_AUDIT_LOGS);
+      setSelectedBranchId('all');
+
+      localStorage.setItem('attend_branches', JSON.stringify(INITIAL_BRANCHES));
+      localStorage.setItem('attend_employees', JSON.stringify(INITIAL_EMPLOYEES));
+      localStorage.setItem('attend_records', JSON.stringify(INITIAL_ATTENDANCE_RECORDS));
+      localStorage.setItem('attend_leaves', JSON.stringify(INITIAL_LEAVE_REQUESTS));
+      localStorage.setItem('attend_transfers', JSON.stringify(INITIAL_TRANSFER_RECORDS));
+      localStorage.setItem('attend_branding', JSON.stringify(INITIAL_BRANDING));
+      localStorage.setItem('attend_role_permissions', JSON.stringify(INITIAL_ROLE_PERMISSIONS));
+      localStorage.setItem('attend_system_settings', JSON.stringify(INITIAL_SYSTEM_SETTINGS));
+      localStorage.setItem('attend_audit_logs', JSON.stringify(INITIAL_AUDIT_LOGS));
+    } else {
+      // 100% Blank Brand New Start
+      const freshBranch = [DEFAULT_STARTER_BRANCH];
+      setBranches(freshBranch);
+      setEmployees([]);
+      setAttendanceRecords([]);
+      setLeaveRequests([]);
+      setTransferRecords([]);
+      setAuditLogs([]);
+      setSelectedBranchId('all');
+
+      localStorage.setItem('attend_branches', JSON.stringify(freshBranch));
+      localStorage.setItem('attend_employees', JSON.stringify([]));
+      localStorage.setItem('attend_records', JSON.stringify([]));
+      localStorage.setItem('attend_leaves', JSON.stringify([]));
+      localStorage.setItem('attend_transfers', JSON.stringify([]));
+      localStorage.setItem('attend_audit_logs', JSON.stringify([]));
+    }
+
+    realtimeService.emit('SYSTEM_RESET', { resetType: type });
+    fetch('/api/system/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resetType: type }),
+    }).catch(() => {});
+
+    handleAddAuditLog({
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator',
+      actorRole: currentUser?.role || 'admin',
+      action: 'System Factory Reset',
+      actionKh: 'កំណត់ប្រព័ន្ធឡើងវិញ (Factory Reset)',
+      module: 'system',
+      details: `Reinitialized system state to: ${type === 'demo_seed' ? 'Official 7-Branch Seed Data' : 'Brand New Blank Start'}.`,
+      detailsKh: `បានកំណត់ប្រព័ន្ធឡើងវិញទៅកាន់ ${type === 'demo_seed' ? 'ទិន្នន័យគំរូ ៧ សាខា' : 'ទិន្នន័យទទេរស្អាត (Brand New)'}។`,
+      status: 'warning',
+    });
+  };
+
+  const handleUpdateUserProfile = (updatedUser: AuthUser, updatedEmp?: Employee) => {
+    setCurrentUser(updatedUser);
+    localStorage.setItem('attend_auth_user', JSON.stringify(updatedUser));
+
+    if (updatedUser.role === 'admin' || updatedUser.id === 'user_admin' || updatedUser.username === 'admin') {
+      setAdminProfile(updatedUser);
+      localStorage.setItem('attend_admin_profile', JSON.stringify(updatedUser));
+    }
+
+    if (updatedEmp) {
+      handleUpdateEmployee(updatedEmp);
+    }
+
+    realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: updatedEmp });
+
+    fetch('/api/user/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: updatedUser,
+        employee: updatedEmp,
+        senderId: realtimeService.getClientId(),
+      }),
+    }).catch(() => {});
+  };
+
+  const handleLogin = (user: AuthUser) => {
+    setCurrentUser(user);
+    localStorage.setItem('attend_auth_user', JSON.stringify(user));
+    setShowLoginModal(false);
+    if (user.role === 'employee') {
+      setActiveTab('portal');
+    } else {
+      setActiveTab('dashboard');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('attend_auth_user');
+    setShowLoginModal(true);
+    setActiveTab('dashboard');
+  };
+
+  const pendingLeavesCount = leaveRequests.filter((r) => r.status === 'pending').length;
+
+  return (
+    <div className="min-h-screen bg-[#F1F5F9] text-slate-800 flex flex-col font-['Kantumruy_Pro','Plus_Jakarta_Sans',sans-serif]">
+      {/* 1. Collapsible Sidebar Navigation */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        branding={branding}
+        currentUser={currentUser}
+        selectedBranchId={selectedBranchId}
+        setSelectedBranchId={setSelectedBranchId}
+        branches={branches}
+        currentGeo={currentGeo}
+        lang={lang}
+        pendingLeavesCount={pendingLeavesCount}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
+        onOpenLoginModal={() => setShowLoginModal(true)}
+        onLogout={handleLogout}
+        isOpenMobile={isMobileSidebarOpen}
+        setIsOpenMobile={setIsMobileSidebarOpen}
+        onOpenInstallModal={() => setShowInstallModal(true)}
+      />
+
+      {/* Main Content Layout with dynamic left margin for Sidebar */}
+      <div className={`flex-1 flex flex-col transition-all duration-300 ${
+        isSidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72'
+      }`}>
+        {/* 2. Top Navigation Header Bar */}
+        <Navbar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          selectedBranchId={selectedBranchId}
+          setSelectedBranchId={setSelectedBranchId}
+          branches={branches}
+          currentGeo={currentGeo}
+          lang={lang}
+          setLang={setLang}
+          onOpenQuickScan={() => setActiveTab('scan')}
+          currentUser={currentUser}
+          onOpenLoginModal={() => setShowLoginModal(true)}
+          pendingLeavesCount={pendingLeavesCount}
+          branding={branding}
+          broadcastNoticeKh={systemSettings.broadcastNoticeKh}
+          broadcastNoticeEn={systemSettings.broadcastNoticeEn}
+          broadcastActive={systemSettings.broadcastActive}
+          onToggleMobileMenu={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+          isSidebarCollapsed={isSidebarCollapsed}
+          isLiveSyncConnected={isLiveSyncConnected}
+          onlinePeersCount={onlinePeersCount}
+          onOpenInstallModal={() => setShowInstallModal(true)}
+        />
+
+        {/* 3. Main Views Dynamic Router */}
+        <main className="flex-1 pb-16">
+          {activeTab === 'dashboard' && (
+            <DashboardView
+              branches={branches}
+              employees={employees}
+              attendanceRecords={attendanceRecords}
+              transferRecords={transferRecords}
+              currentUser={currentUser}
+              selectedBranchId={selectedBranchId}
+              setSelectedBranchId={setSelectedBranchId}
+              onNavigateTab={setActiveTab}
+              onOpenTransferModal={handleOpenTransferModal}
+              lang={lang}
+            />
+          )}
+
+          {activeTab === 'portal' && (
+            <EmployeePortalView
+              currentUser={currentUser || DEFAULT_AUTH_USER}
+              employees={employees}
+              branches={branches}
+              leaveRequests={leaveRequests}
+              attendanceRecords={attendanceRecords}
+              onSubmitLeaveRequest={handleSubmitLeaveRequest}
+              onOpenScan={() => setActiveTab('scan')}
+              lang={lang}
+              branding={branding}
+              currentGeo={currentGeo}
+              onUpdateBranchLocation={handleUpdateBranchLocation}
+            />
+          )}
+
+          {activeTab === 'scan' && (
+            <QrAttendanceView
+              branches={branches}
+              employees={employees}
+              attendanceRecords={attendanceRecords}
+              onAddAttendanceRecord={handleAddAttendanceRecord}
+              currentGeo={currentGeo}
+              setCurrentGeo={setCurrentGeo}
+              currentUser={currentUser}
+              lang={lang}
+              onUpdateBranchLocation={handleUpdateBranchLocation}
+              onNavigateToDashboard={() => setActiveTab('dashboard')}
+            />
+          )}
+
+          {activeTab === 'kiosk' && (
+            <BranchKioskView
+              branches={branches}
+              employees={employees}
+              attendanceRecords={attendanceRecords}
+              onAddAttendanceRecord={handleAddAttendanceRecord}
+              lang={lang}
+            />
+          )}
+
+          {activeTab === 'gps_radar' && (
+            <GpsRadarMap
+              branches={branches}
+              employees={employees}
+              currentUser={currentUser}
+              currentGeo={currentGeo}
+              setCurrentGeo={setCurrentGeo}
+              lang={lang}
+              onUpdateBranchLocation={handleUpdateBranchLocation}
+            />
+          )}
+
+          {activeTab === 'employees' && (
+            <EmployeeDirectoryView
+              employees={employees}
+              branches={branches}
+              attendanceRecords={attendanceRecords}
+              onAddEmployee={handleAddEmployee}
+              onUpdateEmployee={handleUpdateEmployee}
+              onDeleteEmployee={handleDeleteEmployee}
+              onOpenTransferModal={handleOpenTransferModal}
+              lang={lang}
+              branding={branding}
+            />
+          )}
+
+          {activeTab === 'branches' && (
+            <BranchManagementView
+              branches={branches}
+              branchTypes={branchTypes}
+              employees={employees}
+              transferRecords={transferRecords}
+              onUpdateBranch={handleUpdateBranch}
+              onAddBranch={handleAddBranch}
+              onDeleteBranch={handleDeleteBranch}
+              onAddBranchType={handleAddBranchType}
+              onUpdateBranchType={handleUpdateBranchType}
+              onDeleteBranchType={handleDeleteBranchType}
+              lang={lang}
+            />
+          )}
+
+          {activeTab === 'reports' && (
+            <ReportsView
+              attendanceRecords={attendanceRecords}
+              branches={branches}
+              employees={employees}
+              leaveRequests={leaveRequests}
+              onUpdateLeaveStatus={handleUpdateLeaveStatus}
+              lang={lang}
+              branding={branding}
+            />
+          )}
+
+          {activeTab === 'profile' && (
+            <ProfileSettingsView
+              currentUser={currentUser || DEFAULT_AUTH_USER}
+              employees={employees}
+              branches={branches}
+              onUpdateUserProfile={handleUpdateUserProfile}
+              lang={lang}
+            />
+          )}
+
+          {activeTab === 'settings' && (
+            <AdminSettingsView
+              branches={branches}
+              onUpdateBranch={handleUpdateBranch}
+              onAddBranch={handleAddBranch}
+              onDeleteBranch={handleDeleteBranch}
+              branding={branding}
+              onUpdateBranding={handleUpdateBranding}
+              onOpenInstallModal={() => setShowInstallModal(true)}
+              rolePermissions={rolePermissions}
+              onUpdateRolePermissions={handleUpdateRolePermissions}
+              systemSettings={systemSettings}
+              onUpdateSystemSettings={handleUpdateSystemSettings}
+              auditLogs={auditLogs}
+              onAddAuditLog={handleAddAuditLog}
+              employees={employees}
+              attendanceRecords={attendanceRecords}
+              leaveRequests={leaveRequests}
+              transferRecords={transferRecords}
+              onRestoreBackup={handleRestoreBackup}
+              onResetSystem={handleResetSystem}
+              onUpdateLeaveRequests={setLeaveRequests}
+              onUpdateEmployeesList={setEmployees}
+              isLiveSyncConnected={isLiveSyncConnected}
+              onlinePeersCount={onlinePeersCount}
+              connectedPeers={connectedPeers}
+              lang={lang}
+            />
+          )}
+        </main>
+
+        {/* 4. Bottom Footer */}
+        <footer className="border-t border-slate-200 bg-white py-6 px-4 sm:px-8 text-xs text-slate-500 shadow-inner">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center space-x-3">
+              <img
+                src={branding.logoUrl}
+                alt="Logo"
+                className="w-6 h-6 rounded-lg object-cover border border-slate-200"
+              />
+              <p className="font-semibold text-slate-700">
+                {lang === 'km'
+                  ? `© ២០២៦ ${branding.companyNameKh} • ${branding.sloganKh}`
+                  : `© 2026 ${branding.companyNameEn} • ${branding.sloganEn}`}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-slate-500 font-medium">
+              <span className="inline-flex items-center gap-1.5 text-emerald-700 font-bold bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                {lang === 'km' ? `៧ សាខាដំណើរការ & Sync Real-Time (${onlinePeersCount} គ្រឿង)` : `7 Branches Active & Real-Time Synced (${onlinePeersCount} nodes)`}
+              </span>
+              <span className="text-slate-400">|</span>
+              <span className="font-mono text-[11px] text-slate-600">
+                📞 {branding.supportPhone}
+              </span>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+      {/* Real-time Floating Sync Notification Toast */}
+      {liveToast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-slate-900/95 text-white p-4 rounded-2xl border border-indigo-500/50 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-black text-indigo-400">{liveToast.title}</h4>
+              <p className="text-xs text-slate-200 font-medium mt-1 leading-snug">{liveToast.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLiveToast(null)}
+              className="text-slate-400 hover:text-white text-xs font-bold p-1 rounded-lg"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Official Branch Transfer Modal */}
+      <BranchTransferModal
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+        employee={transferTargetEmp}
+        branches={branches}
+        onConfirmTransfer={handleTransferEmployee}
+        lang={lang}
+      />
+
+      {/* Authentication & Role Switcher Modal (Bypassed if public visitor is viewing an online digital card) */}
+      <LoginModal
+        isOpen={(showLoginModal || !currentUser) && !onlineCardEmp}
+        onClose={() => {
+          if (currentUser) {
+            setShowLoginModal(false);
+          }
+        }}
+        currentUser={currentUser}
+        adminProfile={adminProfile}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+        employees={employees}
+        lang={lang}
+        branding={branding}
+        onUpdateBranding={handleUpdateBranding}
+      />
+
+      {/* PWA & Home Screen Device Installation Modal */}
+      <InstallAppModal
+        isOpen={showInstallModal}
+        onClose={() => setShowInstallModal(false)}
+        branding={branding}
+        onUpdateBranding={handleUpdateBranding}
+        lang={lang}
+      />
+
+      {/* Online Verified Digital ID Card Scanned/Direct View Modal */}
+      {onlineCardEmp && (
+        <DigitalIdCardModal
+          employee={onlineCardEmp}
+          branch={branches.find((b) => b.id === onlineCardEmp.branchId)}
+          branding={branding}
+          lang={lang}
+          isOnlineVerificationView={true}
+          onClose={() => {
+            setOnlineCardEmp(null);
+            if (typeof window !== 'undefined' && window.history) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('viewCard');
+              url.searchParams.delete('verify');
+              url.searchParams.delete('badge');
+              url.searchParams.delete('card');
+              window.history.replaceState({}, '', url.pathname + (url.search || ''));
+            }
+          }}
+          onUpdatePhoto={(empId, newUrl) => {
+            setEmployees((prev) =>
+              prev.map((e) => (e.id === empId ? { ...e, avatar: newUrl } : e))
+            );
+            if (onlineCardEmp.id === empId) {
+              setOnlineCardEmp((prev) => prev ? { ...prev, avatar: newUrl } : null);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}

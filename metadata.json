@@ -1,0 +1,11 @@
+{
+  "name": "QR & GPS Attendance System - វត្តមានបុគ្គលិកគ្រប់សាខា",
+  "description": "Multi-branch QR Code and Geolocation verification attendance management system for Nightclubs, Warehouse, Cafes, and Office HQ.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
