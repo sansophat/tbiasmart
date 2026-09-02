@@ -54,6 +54,8 @@ import {
   DEFAULT_BACKUP_SELECTION
 } from '../utils/backupRestoreUtils';
 import { realtimeService } from '../utils/realtimeService';
+import { syncStateToCloudDatabase } from '../utils/firebaseSync';
+import { Cloud, CloudUpload } from 'lucide-react';
 
 interface BackupRestorePanelProps {
   branches: Branch[];
@@ -435,6 +437,32 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                 {currentTotalRecords.toLocaleString()}
               </span>
             </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await syncStateToCloudDatabase({
+                  branches,
+                  employees,
+                  attendanceRecords,
+                  leaveRequests,
+                  transferRecords,
+                  branding,
+                  rolePermissions,
+                  systemSettings,
+                  auditLogs,
+                });
+                if (ok) {
+                  triggerAlert('success', lang === 'km' ? '☁️ បានរក្សាទុកទិន្នន័យទាំងអស់ទៅកាន់ Cloud Firestore ជោគជ័យ!' : '☁️ All database records pushed to Firebase Cloud Firestore!');
+                } else {
+                  triggerAlert('error', lang === 'km' ? 'មានបញ្ហាក្នុងការរក្សាទុកទៅកាន់ Cloud' : 'Failed to sync to Cloud database');
+                }
+              }}
+              className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center space-x-2 transition cursor-pointer shadow-lg shadow-emerald-600/30"
+            >
+              <CloudUpload className="w-3.5 h-3.5" />
+              <span>{lang === 'km' ? 'បញ្ចូលទៅ Cloud ឥឡូវ' : 'Sync to Cloud Now'}</span>
+            </button>
 
             <button
               type="button"

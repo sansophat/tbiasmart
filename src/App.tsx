@@ -54,6 +54,12 @@ import { DigitalIdCardModal } from './components/DigitalIdCardModal';
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
+import { 
+  subscribeToCloudDatabase, 
+  syncStateToCloudDatabase, 
+  getCloudDatabaseState,
+  CloudSystemState 
+} from './utils/firebaseSync';
 
 const DEFAULT_STARTER_BRANCH: Branch = {
   id: 'br_main_hq',
@@ -569,7 +575,71 @@ export default function App() {
     };
   }, [lang]);
 
-  // Sync to local storage
+  // Sync with Firebase Cloud Firestore Database in real-time
+  useEffect(() => {
+    let isInitialCloudLoad = true;
+
+    const unsubscribe = subscribeToCloudDatabase((cloudData) => {
+      if (!cloudData) return;
+
+      if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
+        setBranches(cloudData.branches);
+        localStorage.setItem('attend_branches', JSON.stringify(cloudData.branches));
+      }
+      if (Array.isArray(cloudData.employees)) {
+        setEmployees(cloudData.employees);
+        localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
+      }
+      if (Array.isArray(cloudData.attendanceRecords)) {
+        setAttendanceRecords(cloudData.attendanceRecords);
+        localStorage.setItem('attend_records', JSON.stringify(cloudData.attendanceRecords));
+      }
+      if (Array.isArray(cloudData.leaveRequests)) {
+        setLeaveRequests(cloudData.leaveRequests);
+        localStorage.setItem('attend_leaves', JSON.stringify(cloudData.leaveRequests));
+      }
+      if (Array.isArray(cloudData.transferRecords)) {
+        setTransferRecords(cloudData.transferRecords);
+        localStorage.setItem('attend_transfers', JSON.stringify(cloudData.transferRecords));
+      }
+      if (Array.isArray(cloudData.branchTypes)) {
+        setBranchTypes(cloudData.branchTypes);
+        localStorage.setItem('attend_branch_types', JSON.stringify(cloudData.branchTypes));
+      }
+      if (cloudData.branding) {
+        setBranding(cloudData.branding);
+        localStorage.setItem('attend_branding', JSON.stringify(cloudData.branding));
+      }
+      if (Array.isArray(cloudData.rolePermissions)) {
+        setRolePermissions(cloudData.rolePermissions);
+        localStorage.setItem('attend_role_permissions', JSON.stringify(cloudData.rolePermissions));
+      }
+      if (cloudData.systemSettings) {
+        setSystemSettings(cloudData.systemSettings);
+        localStorage.setItem('attend_system_settings', JSON.stringify(cloudData.systemSettings));
+      }
+      if (Array.isArray(cloudData.auditLogs)) {
+        setAuditLogs(cloudData.auditLogs);
+        localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
+      }
+
+      if (!isInitialCloudLoad) {
+        setLiveToast({
+          title: lang === 'km' ? '☁️ ទិន្នន័យបានធ្វើសមកាលកម្ម' : '☁️ Cloud Database Synced',
+          message: lang === 'km' ? 'ទិន្នន័យចុងក្រោយត្រូវបានធ្វើបច្ចុប្បន្នភាពពី Cloud' : 'Latest data synced from cloud database.',
+          type: 'system'
+        });
+        setTimeout(() => setLiveToast(null), 3000);
+      }
+      isInitialCloudLoad = false;
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [lang]);
+
+  // Sync to local storage and Cloud Firestore
   useEffect(() => {
     localStorage.setItem('attend_lang', lang);
   }, [lang]);
@@ -1004,23 +1074,42 @@ export default function App() {
 
   // RESTORE BACKUP DATA
   const handleRestoreBackup = (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => {
+    let nextBranches = branches;
+    let nextEmployees = employees;
+    let nextRecords = attendanceRecords;
+    let nextLeaves = leaveRequests;
+    let nextTransfers = transferRecords;
+
     if (mode === 'overwrite') {
-      if (backupData.branches) setBranches(backupData.branches);
-      if (backupData.employees) setEmployees(backupData.employees);
-      if (backupData.attendanceRecords) setAttendanceRecords(backupData.attendanceRecords);
-      if (backupData.leaveRequests) setLeaveRequests(backupData.leaveRequests);
-      if (backupData.transferRecords) setTransferRecords(backupData.transferRecords);
+      if (backupData.branches) { setBranches(backupData.branches); nextBranches = backupData.branches; }
+      if (backupData.employees) { setEmployees(backupData.employees); nextEmployees = backupData.employees; }
+      if (backupData.attendanceRecords) { setAttendanceRecords(backupData.attendanceRecords); nextRecords = backupData.attendanceRecords; }
+      if (backupData.leaveRequests) { setLeaveRequests(backupData.leaveRequests); nextLeaves = backupData.leaveRequests; }
+      if (backupData.transferRecords) { setTransferRecords(backupData.transferRecords); nextTransfers = backupData.transferRecords; }
       if (backupData.branding) setBranding(backupData.branding);
       if (backupData.rolePermissions) setRolePermissions(backupData.rolePermissions);
       if (backupData.systemSettings) setSystemSettings(backupData.systemSettings);
       if (backupData.auditLogs) setAuditLogs(backupData.auditLogs);
     } else {
-      if (backupData.branches) setBranches((prev) => mergeDatasets(prev, backupData.branches!));
-      if (backupData.employees) setEmployees((prev) => mergeDatasets(prev, backupData.employees!));
-      if (backupData.attendanceRecords) setAttendanceRecords((prev) => mergeDatasets(prev, backupData.attendanceRecords!));
-      if (backupData.leaveRequests) setLeaveRequests((prev) => mergeDatasets(prev, backupData.leaveRequests!));
-      if (backupData.transferRecords) setTransferRecords((prev) => mergeDatasets(prev, backupData.transferRecords!));
+      if (backupData.branches) setBranches((prev) => { nextBranches = mergeDatasets(prev, backupData.branches!); return nextBranches; });
+      if (backupData.employees) setEmployees((prev) => { nextEmployees = mergeDatasets(prev, backupData.employees!); return nextEmployees; });
+      if (backupData.attendanceRecords) setAttendanceRecords((prev) => { nextRecords = mergeDatasets(prev, backupData.attendanceRecords!); return nextRecords; });
+      if (backupData.leaveRequests) setLeaveRequests((prev) => { nextLeaves = mergeDatasets(prev, backupData.leaveRequests!); return nextLeaves; });
+      if (backupData.transferRecords) setTransferRecords((prev) => { nextTransfers = mergeDatasets(prev, backupData.transferRecords!); return nextTransfers; });
     }
+
+    // Persist immediately to Firebase Cloud Firestore for all devices & incognito
+    syncStateToCloudDatabase({
+      branches: nextBranches,
+      employees: nextEmployees,
+      attendanceRecords: nextRecords,
+      leaveRequests: nextLeaves,
+      transferRecords: nextTransfers,
+      branding: backupData.branding || branding,
+      rolePermissions: backupData.rolePermissions || rolePermissions,
+      systemSettings: backupData.systemSettings || systemSettings,
+      auditLogs: backupData.auditLogs || auditLogs,
+    });
 
     realtimeService.emit('SYSTEM_RESTORE', { backupData, restoreMode: mode });
     fetch('/api/system/restore', {
@@ -1037,15 +1126,27 @@ export default function App() {
       action: 'Restored System Database',
       actionKh: 'ស្តារទិន្នន័យប្រព័ន្ធឡើងវិញ (Database Restore)',
       module: 'backup',
-      details: `Restored ${backupData.summary?.branchesCount || 0} branches, ${backupData.summary?.employeesCount || 0} staff via ${mode.toUpperCase()} mode.`,
-      detailsKh: `បានស្តារទិន្នន័យប្រព័ន្ធ (${mode === 'overwrite' ? 'ជំនួសទាំងស្រុង' : 'បញ្ចូលបន្ថែម'}) ចំនួន ${backupData.summary?.branchesCount || 0} សាខា។`,
+      details: `Restored ${backupData.summary?.branchesCount || 0} branches, ${backupData.summary?.employeesCount || 0} staff via ${mode.toUpperCase()} mode to Cloud Firestore.`,
+      detailsKh: `បានស្តារទិន្នន័យប្រព័ន្ធ (${mode === 'overwrite' ? 'ជំនួសទាំងស្រុង' : 'បញ្ចូលបន្ថែម'}) ចំនួន ${backupData.summary?.branchesCount || 0} សាខាទៅកាន់ Cloud។`,
       status: 'success',
     });
   };
 
   // RESET SYSTEM DATA
   const handleResetSystem = (type: 'demo_seed' | 'clean_fresh') => {
+    let freshBranches: Branch[] = [];
+    let freshEmployees: Employee[] = [];
+    let freshRecords: AttendanceRecord[] = [];
+    let freshLeaves: LeaveRequest[] = [];
+    let freshTransfers: BranchTransferRecord[] = [];
+
     if (type === 'demo_seed') {
+      freshBranches = INITIAL_BRANCHES;
+      freshEmployees = INITIAL_EMPLOYEES;
+      freshRecords = INITIAL_ATTENDANCE_RECORDS;
+      freshLeaves = INITIAL_LEAVE_REQUESTS;
+      freshTransfers = INITIAL_TRANSFER_RECORDS;
+
       setBranches(INITIAL_BRANCHES);
       setEmployees(INITIAL_EMPLOYEES);
       setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
@@ -1068,8 +1169,8 @@ export default function App() {
       localStorage.setItem('attend_audit_logs', JSON.stringify(INITIAL_AUDIT_LOGS));
     } else {
       // 100% Blank Brand New Start
-      const freshBranch = [DEFAULT_STARTER_BRANCH];
-      setBranches(freshBranch);
+      freshBranches = [DEFAULT_STARTER_BRANCH];
+      setBranches(freshBranches);
       setEmployees([]);
       setAttendanceRecords([]);
       setLeaveRequests([]);
@@ -1077,13 +1178,25 @@ export default function App() {
       setAuditLogs([]);
       setSelectedBranchId('all');
 
-      localStorage.setItem('attend_branches', JSON.stringify(freshBranch));
+      localStorage.setItem('attend_branches', JSON.stringify(freshBranches));
       localStorage.setItem('attend_employees', JSON.stringify([]));
       localStorage.setItem('attend_records', JSON.stringify([]));
       localStorage.setItem('attend_leaves', JSON.stringify([]));
       localStorage.setItem('attend_transfers', JSON.stringify([]));
       localStorage.setItem('attend_audit_logs', JSON.stringify([]));
     }
+
+    // Sync reset to Cloud Firestore
+    syncStateToCloudDatabase({
+      branches: freshBranches,
+      employees: freshEmployees,
+      attendanceRecords: freshRecords,
+      leaveRequests: freshLeaves,
+      transferRecords: freshTransfers,
+      branding: type === 'demo_seed' ? INITIAL_BRANDING : branding,
+      rolePermissions: type === 'demo_seed' ? INITIAL_ROLE_PERMISSIONS : rolePermissions,
+      systemSettings: type === 'demo_seed' ? INITIAL_SYSTEM_SETTINGS : systemSettings,
+    });
 
     realtimeService.emit('SYSTEM_RESET', { resetType: type });
     fetch('/api/system/reset', {
