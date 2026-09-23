@@ -268,6 +268,7 @@ export interface SystemBackupData {
   branding?: CompanyBranding;
   rolePermissions?: RolePermission[];
   systemSettings?: SystemSettings;
+  adminProfile?: AuthUser;
   auditLogs?: AuditLogEntry[];
 }
 

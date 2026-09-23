@@ -382,6 +382,7 @@ app.post('/api/system/restore', (req, res) => {
       branding: backupData.branding || INITIAL_BRANDING,
       rolePermissions: backupData.rolePermissions || INITIAL_ROLE_PERMISSIONS,
       systemSettings: backupData.systemSettings || INITIAL_SYSTEM_SETTINGS,
+      adminProfile: backupData.adminProfile || (backupData as any).profile || serverDb.adminProfile || DEFAULT_ADMIN_PROFILE,
       auditLogs: backupData.auditLogs || [],
       lastUpdated: new Date().toISOString(),
       isReset: false,
@@ -406,6 +407,9 @@ app.post('/api/system/restore', (req, res) => {
       attendanceRecords: mergeArrays(serverDb.attendanceRecords, backupData.attendanceRecords),
       leaveRequests: mergeArrays(serverDb.leaveRequests, backupData.leaveRequests),
       transferRecords: mergeArrays(serverDb.transferRecords, backupData.transferRecords),
+      adminProfile: backupData.adminProfile || (backupData as any).profile 
+        ? { ...(serverDb.adminProfile || {}), ...(backupData.adminProfile || (backupData as any).profile) } 
+        : serverDb.adminProfile,
       lastUpdated: new Date().toISOString(),
     };
   }

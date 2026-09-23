@@ -63,7 +63,8 @@ import {
   LeaveRequest,
   BranchTransferRecord,
   SystemBackupData,
-  ConnectedPeer
+  ConnectedPeer,
+  AuthUser
 } from '../types';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { BackupRestorePanel } from './BackupRestorePanel';
@@ -84,6 +85,7 @@ interface AdminSettingsViewProps {
   auditLogs: AuditLogEntry[];
   onAddAuditLog: (log: AuditLogEntry) => void;
   employees: Employee[];
+  adminProfile?: AuthUser;
   attendanceRecords?: AttendanceRecord[];
   leaveRequests?: LeaveRequest[];
   transferRecords?: BranchTransferRecord[];
@@ -139,6 +141,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   auditLogs,
   onAddAuditLog,
   employees,
+  adminProfile,
   attendanceRecords = [],
   leaveRequests = [],
   transferRecords = [],
@@ -2011,6 +2014,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           rolePermissions={rolePermissions}
           systemSettings={systemSettings}
           auditLogs={auditLogs}
+          adminProfile={adminProfile}
           onRestoreBackup={onRestoreBackup}
           onResetSystem={onResetSystem}
           onAddAuditLog={onAddAuditLog}

@@ -40,7 +40,8 @@ import {
   AuditLogEntry, 
   SystemBackupData, 
   Language,
-  ConnectedPeer
+  ConnectedPeer,
+  AuthUser
 } from '../types';
 import { 
   generateSystemBackup, 
@@ -71,6 +72,7 @@ interface BackupRestorePanelProps {
   rolePermissions: RolePermission[];
   systemSettings: SystemSettings;
   auditLogs: AuditLogEntry[];
+  adminProfile?: AuthUser;
   onRestoreBackup: (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => void;
   onResetSystem: (type: 'demo_seed' | 'clean_fresh') => void;
   onAddAuditLog: (log: AuditLogEntry) => void;
@@ -90,6 +92,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
   rolePermissions,
   systemSettings,
   auditLogs,
+  adminProfile,
   onRestoreBackup,
   onResetSystem,
   onAddAuditLog,
@@ -166,6 +169,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       rolePermissions: value,
       systemSettings: value,
       auditLogs: value,
+      adminProfile: value,
     });
   };
 
@@ -181,6 +185,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       rolePermissions: value,
       systemSettings: value,
       auditLogs: value,
+      adminProfile: value,
     });
   };
 
@@ -203,10 +208,11 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       rolePermissions,
       systemSettings,
       auditLogs,
-      selectedExportModules
+      selectedExportModules,
+      adminProfile
     );
 
-    const suffix = activeExportModulesCount === 9 ? 'FullBackup' : 'SelectiveBackup';
+    const suffix = activeExportModulesCount >= 9 ? 'FullBackup' : 'SelectiveBackup';
     downloadBackupFile(backupData, `${branding.companyNameEn || 'Attendance'}_${suffix}`);
 
     const exportedModuleNames = Object.entries(selectedExportModules)
@@ -230,8 +236,8 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
     triggerAlert(
       'success', 
       lang === 'km' 
-        ? `ឯកសារបម្រុងទុក (${activeExportModulesCount}/៩ ផ្នែក) ត្រូវបានទាញយកជោគជ័យ!` 
-        : `Selective backup (${activeExportModulesCount}/9 modules) downloaded successfully!`
+        ? `ឯកសារបម្រុងទុក (${activeExportModulesCount}/១០ ផ្នែក) ត្រូវបានទាញយកជោគជ័យ!` 
+        : `Selective backup (${activeExportModulesCount}/10 modules) downloaded successfully!`
     );
   };
 
@@ -249,7 +255,8 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       rolePermissions,
       systemSettings,
       auditLogs,
-      selectedExportModules
+      selectedExportModules,
+      adminProfile
     );
 
     const updated = saveLocalSnapshot(name, backupData);
@@ -313,6 +320,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       branding: selectedRestoreModules.branding ? parsedBackup.branding : undefined,
       rolePermissions: selectedRestoreModules.rolePermissions ? parsedBackup.rolePermissions : undefined,
       systemSettings: selectedRestoreModules.systemSettings ? parsedBackup.systemSettings : undefined,
+      adminProfile: selectedRestoreModules.adminProfile !== false ? parsedBackup.adminProfile : undefined,
       auditLogs: selectedRestoreModules.auditLogs ? parsedBackup.auditLogs : undefined,
     };
 
@@ -519,6 +527,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                         rolePermissions: cloudData.rolePermissions,
                         systemSettings: cloudData.systemSettings,
                         auditLogs: cloudData.auditLogs,
+                        adminProfile: cloudData.adminProfile,
                       },
                       'overwrite'
                     );
@@ -842,6 +851,30 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                     {selectedExportModules.systemSettings && <Check className="w-3 h-3 stroke-[3]" />}
                   </div>
                 </button>
+
+                {/* Admin Profile */}
+                <button
+                  type="button"
+                  onClick={() => toggleExportModule('adminProfile')}
+                  className={`p-3 rounded-2xl border text-left transition cursor-pointer flex items-center justify-between ${
+                    selectedExportModules.adminProfile
+                      ? 'bg-indigo-50/70 border-indigo-300 text-indigo-900 shadow-xs'
+                      : 'bg-slate-50/80 border-slate-200 text-slate-500 hover:bg-slate-100'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <div className={`p-1.5 rounded-xl ${selectedExportModules.adminProfile ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold block leading-tight">{lang === 'km' ? 'គណនី Admin' : 'Admin Profile'}</span>
+                      <span className="text-[10px] font-mono opacity-80">{adminProfile?.nameEn || 'User & Role'}</span>
+                    </div>
+                  </div>
+                  <div className={`w-4 h-4 rounded-md border flex items-center justify-center ${selectedExportModules.adminProfile ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'}`}>
+                    {selectedExportModules.adminProfile && <Check className="w-3 h-3 stroke-[3]" />}
+                  </div>
+                </button>
               </div>
             </div>
 
@@ -853,13 +886,13 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
             >
               <Download className="w-4 h-4" />
               <span>
-                {activeExportModulesCount === 9
+                {activeExportModulesCount >= 9
                   ? lang === 'km'
                     ? 'ទាញយកកញ្ចប់ទិន្នន័យទាំងអស់ (Download Full Backup .JSON)'
                     : 'Download Full System Backup (.JSON)'
                   : lang === 'km'
-                  ? `ទាញយកផ្នែកជ្រើសរើស (${activeExportModulesCount}/៩ ផ្នែក) .JSON`
-                  : `Download Selected Modules (${activeExportModulesCount}/9 Modules) .JSON`}
+                  ? `ទាញយកផ្នែកជ្រើសរើស (${activeExportModulesCount}/១០ ផ្នែក) .JSON`
+                  : `Download Selected Modules (${activeExportModulesCount}/10 Modules) .JSON`}
               </span>
             </button>
           </div>
@@ -1281,6 +1314,26 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                         </span>
                         <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${selectedRestoreModules.auditLogs ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'}`}>
                           {selectedRestoreModules.auditLogs && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Admin Profile */}
+                    {parsedBackup.adminProfile !== undefined && (
+                      <button
+                        type="button"
+                        onClick={() => toggleRestoreModule('adminProfile')}
+                        className={`p-2 rounded-xl border text-left flex items-center justify-between transition cursor-pointer ${
+                          selectedRestoreModules.adminProfile
+                            ? 'bg-white border-indigo-400 text-indigo-950 font-bold shadow-2xs'
+                            : 'bg-indigo-50/40 border-indigo-200/50 text-slate-400 line-through'
+                        }`}
+                      >
+                        <span className="text-[11px] truncate">
+                          {lang === 'km' ? 'គណនី Admin' : 'Admin Profile'} ({parsedBackup.adminProfile.nameEn || parsedBackup.adminProfile.nameKh || parsedBackup.adminProfile.username})
+                        </span>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${selectedRestoreModules.adminProfile ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'}`}>
+                          {selectedRestoreModules.adminProfile && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                         </div>
                       </button>
                     )}

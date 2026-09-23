@@ -8,7 +8,8 @@ import {
   RolePermission, 
   SystemSettings, 
   AuditLogEntry, 
-  SystemBackupData 
+  SystemBackupData,
+  AuthUser 
 } from '../types';
 
 export interface LocalSnapshot {
@@ -31,6 +32,7 @@ export interface BackupSelectionOptions {
   rolePermissions: boolean;
   systemSettings: boolean;
   auditLogs: boolean;
+  adminProfile?: boolean;
 }
 
 export const DEFAULT_BACKUP_SELECTION: BackupSelectionOptions = {
@@ -43,6 +45,7 @@ export const DEFAULT_BACKUP_SELECTION: BackupSelectionOptions = {
   rolePermissions: true,
   systemSettings: true,
   auditLogs: true,
+  adminProfile: true,
 };
 
 /**
@@ -58,7 +61,8 @@ export function generateSystemBackup(
   rolePermissions: RolePermission[],
   systemSettings: SystemSettings,
   auditLogs: AuditLogEntry[],
-  selectedModules: BackupSelectionOptions = DEFAULT_BACKUP_SELECTION
+  selectedModules: BackupSelectionOptions = DEFAULT_BACKUP_SELECTION,
+  adminProfile?: AuthUser
 ): SystemBackupData {
   const exportDate = new Date().toISOString();
 
@@ -71,6 +75,7 @@ export function generateSystemBackup(
   const finalRolePerms = selectedModules.rolePermissions ? rolePermissions : [];
   const finalSysSettings = selectedModules.systemSettings ? systemSettings : ({} as SystemSettings);
   const finalLogs = selectedModules.auditLogs ? auditLogs : [];
+  const finalAdminProfile = (selectedModules.adminProfile !== false && adminProfile) ? adminProfile : undefined;
   
   const summary = {
     branchesCount: finalBranches.length,
@@ -104,6 +109,7 @@ export function generateSystemBackup(
     branding: finalBranding,
     rolePermissions: finalRolePerms,
     systemSettings: finalSysSettings,
+    adminProfile: finalAdminProfile,
     auditLogs: finalLogs,
   };
 }
@@ -165,6 +171,40 @@ export function validateAndParseBackupJSON(jsonString: string): {
       auditLogsCount: (parsed.auditLogs || []).length,
     };
 
+    let foundAdminProfile: AuthUser | undefined = 
+      parsed.adminProfile || 
+      parsed.profile || 
+      parsed.adminUser || 
+      parsed.userProfile || 
+      parsed.currentUser;
+
+    // Fallback: If no explicit adminProfile in backup, see if an admin exists in employees list
+    if (!foundAdminProfile && Array.isArray(parsed.employees)) {
+      const adminEmp = parsed.employees.find((e: any) => 
+        e.role === 'admin' || 
+        e.code === 'HQ-001' || 
+        e.code === 'ADMIN-001' || 
+        e.id === 'user_admin' ||
+        (e.positionEn && (e.positionEn.toLowerCase().includes('director') || e.positionEn.toLowerCase().includes('super admin')))
+      );
+      if (adminEmp) {
+        foundAdminProfile = {
+          id: 'user_admin',
+          username: 'admin',
+          email: adminEmp.email || 'admin@enterprise.com.kh',
+          role: 'admin',
+          nameKh: adminEmp.nameKh,
+          nameEn: adminEmp.nameEn,
+          avatar: adminEmp.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+          employeeId: adminEmp.id,
+          employeeCode: adminEmp.code,
+          branchId: adminEmp.branchId,
+          roleTitle: adminEmp.positionKh || adminEmp.positionEn || 'Super Administrator / HR Director',
+          pinCode: adminEmp.pinCode || '1234',
+        };
+      }
+    }
+
     const validatedData: SystemBackupData = {
       version: parsed.version || '1.0.0',
       exportDate: parsed.exportDate || new Date().toISOString(),
@@ -179,6 +219,7 @@ export function validateAndParseBackupJSON(jsonString: string): {
       branding: parsed.branding || {},
       rolePermissions: parsed.rolePermissions || [],
       systemSettings: parsed.systemSettings || {},
+      adminProfile: foundAdminProfile,
       auditLogs: parsed.auditLogs || [],
     };
 

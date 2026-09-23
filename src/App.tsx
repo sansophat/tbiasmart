@@ -360,6 +360,14 @@ export default function App() {
               if (s.adminProfile) {
                 setAdminProfile(s.adminProfile);
                 localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
+                setCurrentUser((curr) => {
+                  if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+                    const updated = { ...curr, ...s.adminProfile };
+                    localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                    return updated;
+                  }
+                  return curr;
+                });
               }
               if (Array.isArray(s.auditLogs)) {
                 setAuditLogs(s.auditLogs);
@@ -711,6 +719,18 @@ export default function App() {
           setSystemSettings(cloudData.systemSettings);
           localStorage.setItem('attend_system_settings', JSON.stringify(cloudData.systemSettings));
         }
+        if (cloudData.adminProfile) {
+          setAdminProfile(cloudData.adminProfile);
+          localStorage.setItem('attend_admin_profile', JSON.stringify(cloudData.adminProfile));
+          setCurrentUser((curr) => {
+            if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+              const updated = { ...curr, ...cloudData.adminProfile };
+              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              return updated;
+            }
+            return curr;
+          });
+        }
         if (Array.isArray(cloudData.auditLogs)) {
           setAuditLogs(cloudData.auditLogs);
           localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
@@ -743,6 +763,7 @@ export default function App() {
             branding,
             rolePermissions,
             systemSettings,
+            adminProfile,
             auditLogs,
           });
         }
@@ -806,6 +827,10 @@ export default function App() {
     localStorage.setItem('attend_audit_logs', JSON.stringify(auditLogs));
   }, [auditLogs]);
 
+  useEffect(() => {
+    localStorage.setItem('attend_admin_profile', JSON.stringify(adminProfile));
+  }, [adminProfile]);
+
   // Automatically sync any local modifications to Firebase Cloud Firestore
   useEffect(() => {
     // Only push to cloud if:
@@ -829,6 +854,7 @@ export default function App() {
       branding,
       rolePermissions,
       systemSettings,
+      adminProfile,
       auditLogs,
     });
   }, [
@@ -841,6 +867,7 @@ export default function App() {
     branding,
     rolePermissions,
     systemSettings,
+    adminProfile,
     auditLogs,
   ]);
 
@@ -1235,6 +1262,27 @@ export default function App() {
     let nextLeaves = leaveRequests;
     let nextTransfers = transferRecords;
 
+    const incomingProfile: AuthUser | undefined = 
+      backupData.adminProfile || 
+      (backupData as any).profile || 
+      (backupData as any).adminUser ||
+      (backupData as any).userProfile;
+
+    let nextAdminProfile = adminProfile;
+    if (incomingProfile) {
+      nextAdminProfile = incomingProfile;
+      setAdminProfile(incomingProfile);
+      localStorage.setItem('attend_admin_profile', JSON.stringify(incomingProfile));
+      setCurrentUser((curr) => {
+        if (!curr || curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin' || curr.id === incomingProfile.id) {
+          const updated = { ...(curr || {}), ...incomingProfile };
+          localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+          return updated;
+        }
+        return curr;
+      });
+    }
+
     if (mode === 'overwrite') {
       if (backupData.branches) { setBranches(backupData.branches); nextBranches = backupData.branches; }
       if (backupData.employees) { setEmployees(backupData.employees); nextEmployees = backupData.employees; }
@@ -1254,7 +1302,7 @@ export default function App() {
     }
 
     // Persist immediately to Firebase Cloud Firestore for all devices & incognito
-    syncStateToCloudDatabase({
+    syncStateToCloudImmediate({
       branches: nextBranches,
       employees: nextEmployees,
       attendanceRecords: nextRecords,
@@ -1263,6 +1311,7 @@ export default function App() {
       branding: backupData.branding || branding,
       rolePermissions: backupData.rolePermissions || rolePermissions,
       systemSettings: backupData.systemSettings || systemSettings,
+      adminProfile: nextAdminProfile,
       auditLogs: backupData.auditLogs || auditLogs,
     });
 
@@ -1381,6 +1430,7 @@ export default function App() {
     if (updatedUser.role === 'admin' || updatedUser.id === 'user_admin' || updatedUser.username === 'admin') {
       setAdminProfile(updatedUser);
       localStorage.setItem('attend_admin_profile', JSON.stringify(updatedUser));
+      syncStateToCloudImmediate({ adminProfile: updatedUser });
     }
 
     if (updatedEmp) {
@@ -1628,6 +1678,7 @@ export default function App() {
               auditLogs={auditLogs}
               onAddAuditLog={handleAddAuditLog}
               employees={employees}
+              adminProfile={adminProfile}
               attendanceRecords={attendanceRecords}
               leaveRequests={leaveRequests}
               transferRecords={transferRecords}
