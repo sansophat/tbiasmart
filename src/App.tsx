@@ -54,6 +54,7 @@ import { DigitalIdCardModal } from './components/DigitalIdCardModal';
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
+import { Cloud, Loader2 } from 'lucide-react';
 import { 
   subscribeToCloudDatabase, 
   syncStateToCloudDatabase, 
@@ -116,6 +117,12 @@ export default function App() {
   const [connectedPeers, setConnectedPeers] = useState<ConnectedPeer[]>([]);
   const [liveToast, setLiveToast] = useState<{ title: string; message: string; type: 'punch' | 'leave' | 'transfer' | 'system' } | null>(null);
   const isReceivingCloudUpdate = useRef<boolean>(false);
+
+  // Cloud Sync readiness check (if another browser or fresh device has no local cache, show sync overlay and load cloud state first)
+  const hasLocalCache = Boolean(localStorage.getItem('attend_branches'));
+  const [isCloudSyncLoading, setIsCloudSyncLoading] = useState<boolean>(!hasLocalCache);
+  const isCloudInitializedRef = useRef<boolean>(hasLocalCache);
+  const initialMountSkipped = useRef<boolean>(false);
 
   // Persistent Core Data
   const [branches, setBranches] = useState<Branch[]>(() => {
@@ -240,73 +247,140 @@ export default function App() {
     realtimeService.setUserContext(currentUser);
   }, [currentUser]);
 
-  // Initial Canonical State Fetch on Device Startup / Page Load
+  // Initial Cloud & Canonical State Fetch on Device Startup / Page Load
   useEffect(() => {
     let isMounted = true;
 
-    const fetchCanonicalState = async () => {
+    const fetchInitialData = async () => {
       try {
-        const res = await fetch('/api/system/state');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.state && isMounted) {
-            const s = data.state;
-            if (Array.isArray(s.branches)) {
-              setBranches(s.branches);
-              localStorage.setItem('attend_branches', JSON.stringify(s.branches));
-            }
-            if (Array.isArray(s.employees)) {
-              setEmployees(s.employees);
-              localStorage.setItem('attend_employees', JSON.stringify(s.employees));
-            }
-            if (Array.isArray(s.attendanceRecords)) {
-              setAttendanceRecords(s.attendanceRecords);
-              localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
-            }
-            if (Array.isArray(s.leaveRequests)) {
-              setLeaveRequests(s.leaveRequests);
-              localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
-            }
-            if (Array.isArray(s.transferRecords)) {
-              setTransferRecords(s.transferRecords);
-              localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
-            }
-            if (s.branding) {
-              setBranding(s.branding);
-              localStorage.setItem('attend_branding', JSON.stringify(s.branding));
-            }
-            if (Array.isArray(s.rolePermissions)) {
-              setRolePermissions(s.rolePermissions);
-              localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
-            }
-            if (s.systemSettings) {
-              setSystemSettings(s.systemSettings);
-              localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
-            }
-            if (s.adminProfile) {
-              setAdminProfile(s.adminProfile);
-              localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
-              setCurrentUser((curr) => {
-                if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
-                  const updated = { ...curr, ...s.adminProfile };
-                  localStorage.setItem('attend_auth_user', JSON.stringify(updated));
-                  return updated;
-                }
-                return curr;
-              });
-            }
-            if (Array.isArray(s.auditLogs)) {
-              setAuditLogs(s.auditLogs);
-              localStorage.setItem('attend_audit_logs', JSON.stringify(s.auditLogs));
+        // 1. Prioritize Cloud Firestore first (universal source of truth across all devices)
+        const cloudState = await getCloudDatabaseState();
+        if (isMounted && cloudState && Array.isArray(cloudState.branches) && cloudState.branches.length > 0) {
+          isReceivingCloudUpdate.current = true;
+          setBranches(cloudState.branches);
+          localStorage.setItem('attend_branches', JSON.stringify(cloudState.branches));
+
+          if (Array.isArray(cloudState.employees)) {
+            setEmployees(cloudState.employees);
+            localStorage.setItem('attend_employees', JSON.stringify(cloudState.employees));
+          }
+          if (Array.isArray(cloudState.attendanceRecords)) {
+            setAttendanceRecords(cloudState.attendanceRecords);
+            localStorage.setItem('attend_records', JSON.stringify(cloudState.attendanceRecords));
+          }
+          if (Array.isArray(cloudState.leaveRequests)) {
+            setLeaveRequests(cloudState.leaveRequests);
+            localStorage.setItem('attend_leaves', JSON.stringify(cloudState.leaveRequests));
+          }
+          if (Array.isArray(cloudState.transferRecords)) {
+            setTransferRecords(cloudState.transferRecords);
+            localStorage.setItem('attend_transfers', JSON.stringify(cloudState.transferRecords));
+          }
+          if (Array.isArray(cloudState.branchTypes)) {
+            setBranchTypes(cloudState.branchTypes);
+            localStorage.setItem('attend_branch_types', JSON.stringify(cloudState.branchTypes));
+          }
+          if (cloudState.branding) {
+            setBranding(cloudState.branding);
+            localStorage.setItem('attend_branding', JSON.stringify(cloudState.branding));
+          }
+          if (Array.isArray(cloudState.rolePermissions)) {
+            setRolePermissions(cloudState.rolePermissions);
+            localStorage.setItem('attend_role_permissions', JSON.stringify(cloudState.rolePermissions));
+          }
+          if (cloudState.systemSettings) {
+            setSystemSettings(cloudState.systemSettings);
+            localStorage.setItem('attend_system_settings', JSON.stringify(cloudState.systemSettings));
+          }
+          if (cloudState.adminProfile) {
+            setAdminProfile(cloudState.adminProfile);
+            localStorage.setItem('attend_admin_profile', JSON.stringify(cloudState.adminProfile));
+            setCurrentUser((curr) => {
+              if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+                const updated = { ...curr, ...cloudState.adminProfile };
+                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                return updated;
+              }
+              return curr;
+            });
+          }
+          if (Array.isArray(cloudState.auditLogs)) {
+            setAuditLogs(cloudState.auditLogs);
+            localStorage.setItem('attend_audit_logs', JSON.stringify(cloudState.auditLogs));
+          }
+
+          setTimeout(() => {
+            isReceivingCloudUpdate.current = false;
+          }, 400);
+
+          isCloudInitializedRef.current = true;
+          setIsCloudSyncLoading(false);
+          return;
+        }
+
+        // 2. Fallback to local server API if running in fullstack dev server
+        try {
+          const res = await fetch('/api/system/state');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.state && isMounted) {
+              const s = data.state;
+              if (Array.isArray(s.branches) && s.branches.length > 0) {
+                setBranches(s.branches);
+                localStorage.setItem('attend_branches', JSON.stringify(s.branches));
+              }
+              if (Array.isArray(s.employees)) {
+                setEmployees(s.employees);
+                localStorage.setItem('attend_employees', JSON.stringify(s.employees));
+              }
+              if (Array.isArray(s.attendanceRecords)) {
+                setAttendanceRecords(s.attendanceRecords);
+                localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
+              }
+              if (Array.isArray(s.leaveRequests)) {
+                setLeaveRequests(s.leaveRequests);
+                localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
+              }
+              if (Array.isArray(s.transferRecords)) {
+                setTransferRecords(s.transferRecords);
+                localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
+              }
+              if (s.branding) {
+                setBranding(s.branding);
+                localStorage.setItem('attend_branding', JSON.stringify(s.branding));
+              }
+              if (Array.isArray(s.rolePermissions)) {
+                setRolePermissions(s.rolePermissions);
+                localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
+              }
+              if (s.systemSettings) {
+                setSystemSettings(s.systemSettings);
+                localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
+              }
+              if (s.adminProfile) {
+                setAdminProfile(s.adminProfile);
+                localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
+              }
+              if (Array.isArray(s.auditLogs)) {
+                setAuditLogs(s.auditLogs);
+                localStorage.setItem('attend_audit_logs', JSON.stringify(s.auditLogs));
+              }
             }
           }
+        } catch (err) {
+          // Expected on static environments like Vercel
         }
       } catch (err) {
         console.warn('Failed to fetch initial canonical state:', err);
+      } finally {
+        if (isMounted) {
+          isCloudInitializedRef.current = true;
+          setIsCloudSyncLoading(false);
+        }
       }
     };
 
-    fetchCanonicalState();
+    fetchInitialData();
 
     return () => {
       isMounted = false;
@@ -657,8 +731,8 @@ export default function App() {
         }, 800);
       },
       () => {
-        // If Firestore is empty, seed it with current dataset
-        if (branches.length > 0 || employees.length > 0) {
+        // Only seed if Firestore is truly empty and this device has genuine local cache (not defaulted on empty browser)
+        if (hasLocalCache && (branches.length > 0 || employees.length > 0)) {
           syncStateToCloudImmediate({
             branches,
             employees,
@@ -672,6 +746,8 @@ export default function App() {
             auditLogs,
           });
         }
+        isCloudInitializedRef.current = true;
+        setIsCloudSyncLoading(false);
       }
     );
 
@@ -732,7 +808,16 @@ export default function App() {
 
   // Automatically sync any local modifications to Firebase Cloud Firestore
   useEffect(() => {
+    // Only push to cloud if:
+    // 1. Initial cloud fetch has finished
+    // 2. We are not currently receiving an update from the cloud
+    // 3. This is not the first component render
+    if (!isCloudInitializedRef.current) return;
     if (isReceivingCloudUpdate.current) return;
+    if (!initialMountSkipped.current) {
+      initialMountSkipped.current = true;
+      return;
+    }
 
     syncStateToCloudDatabase({
       branches,
@@ -1337,6 +1422,24 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F1F5F9] text-slate-800 flex flex-col font-['Kantumruy_Pro','Plus_Jakarta_Sans',sans-serif]">
+      {/* Cloud Sync Overlay for Fresh Devices / Browsers */}
+      {isCloudSyncLoading && (
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-900/95 backdrop-blur-md text-white px-4 text-center">
+          <div className="w-16 h-16 rounded-3xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center mb-5 shadow-xl shadow-indigo-600/30 animate-pulse">
+            <Cloud className="w-8 h-8 text-indigo-400" />
+          </div>
+          <div className="flex items-center space-x-2.5 text-lg font-bold text-slate-100 mb-1">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+            <span>{lang === 'km' ? 'កំពុងទាញយកទិន្នន័យពី Cloud Firestore...' : 'Loading Data from Cloud Firestore...'}</span>
+          </div>
+          <p className="text-xs text-slate-400 max-w-sm">
+            {lang === 'km'
+              ? 'កំពុងធ្វើសមកាលកម្មទិន្នន័យសាខា បុគ្គលិក និងវត្តមានឆ្លងឧបករណ៍...'
+              : 'Synchronizing multi-branch database, staff directory, and attendance records...'}
+          </p>
+        </div>
+      )}
+
       {/* 1. Collapsible Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}

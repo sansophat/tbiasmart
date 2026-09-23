@@ -45,6 +45,7 @@ export interface CloudSystemState {
   branding?: any;
   rolePermissions?: any[];
   systemSettings?: any;
+  adminProfile?: any;
   auditLogs?: any[];
   lastUpdated?: string;
   updatedBy?: string;
@@ -78,8 +79,8 @@ export function subscribeCloudConnectionStatus(listener: StatusListener) {
  */
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
-    const testDoc = doc(db, MAIN_COLLECTION, 'connection_test');
-    await getDocFromServer(testDoc);
+    const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
+    await getDocFromServer(docRef);
     notifyStatus('connected');
     return true;
   } catch (error) {
@@ -88,9 +89,27 @@ export async function testFirestoreConnection(): Promise<boolean> {
       notifyStatus('error');
       return false;
     }
-    // Any response from server (even "not found") means server is reachable
     notifyStatus('connected');
     return true;
+  }
+}
+
+/**
+ * Explicit one-shot fetch of the latest Cloud Database state
+ */
+export async function getCloudDatabaseState(): Promise<CloudSystemState | null> {
+  try {
+    const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      notifyStatus('connected');
+      return snap.data() as CloudSystemState;
+    }
+    return null;
+  } catch (error) {
+    console.warn('Error fetching Firestore state:', error);
+    notifyStatus('error');
+    return null;
   }
 }
 
@@ -114,8 +133,7 @@ export function subscribeToCloudDatabase(
           const data = docSnap.data() as CloudSystemState;
           onUpdate(data);
         } else {
-          // Document does not exist in Cloud yet
-          console.info('Firestore app_state_v1 is empty, ready for initial seed.');
+          console.info('Firestore app_state_v1 is empty.');
           if (onEmptyDatabase) {
             onEmptyDatabase();
           }
@@ -153,6 +171,19 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
     syncTimeout = setTimeout(async () => {
       try {
         const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
+        
+        // Safety guard: if pendingState branches is empty or missing, don't accidentally wipe existing branches
+        if (pendingState.branches !== undefined && pendingState.branches.length === 0) {
+          const currentDoc = await getDoc(docRef);
+          if (currentDoc.exists()) {
+            const currentBranches = currentDoc.data()?.branches;
+            if (Array.isArray(currentBranches) && currentBranches.length > 0) {
+              console.warn('Cloud sync guard: Protected cloud branches from accidental empty wipe.');
+              delete pendingState.branches;
+            }
+          }
+        }
+
         const payload = {
           ...pendingState,
           lastUpdated: new Date().toISOString()
@@ -166,12 +197,12 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
         notifyStatus('error');
         resolve(false);
       }
-    }, 400);
+    }, 500);
   });
 }
 
 /**
- * Immediate sync without debounce (for manual click or important events)
+ * Immediate sync without debounce (for manual click or critical events)
  */
 export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>): Promise<boolean> {
   notifyStatus('syncing');
@@ -187,22 +218,5 @@ export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>)
     console.error('Error in syncStateToCloudImmediate:', error);
     notifyStatus('error');
     return false;
-  }
-}
-
-/**
- * Fetch cloud state once
- */
-export async function getCloudDatabaseState(): Promise<CloudSystemState | null> {
-  try {
-    const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return snap.data() as CloudSystemState;
-    }
-    return null;
-  } catch (error) {
-    console.warn('Error fetching Firestore state:', error);
-    return null;
   }
 }

@@ -54,8 +54,12 @@ import {
   DEFAULT_BACKUP_SELECTION
 } from '../utils/backupRestoreUtils';
 import { realtimeService } from '../utils/realtimeService';
-import { syncStateToCloudDatabase, syncStateToCloudImmediate } from '../utils/firebaseSync';
-import { Cloud, CloudUpload, Loader2 } from 'lucide-react';
+import { 
+  syncStateToCloudDatabase, 
+  syncStateToCloudImmediate,
+  getCloudDatabaseState
+} from '../utils/firebaseSync';
+import { Cloud, CloudUpload, CloudDownload, Loader2 } from 'lucide-react';
 
 interface BackupRestorePanelProps {
   branches: Branch[];
@@ -123,6 +127,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
   // Toast Feedback State
   const [alertBanner, setAlertBanner] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [isPullingCloud, setIsPullingCloud] = useState<boolean>(false);
 
   useEffect(() => {
     setSnapshots(getLocalSnapshots());
@@ -481,6 +486,73 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                 {isSyncingCloud
                   ? lang === 'km' ? 'កំពុងបញ្ជូន...' : 'Syncing...'
                   : lang === 'km' ? 'បញ្ចូលទៅ Cloud ឥឡូវ' : 'Sync to Cloud Now'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isPullingCloud || isSyncingCloud}
+              onClick={async () => {
+                setIsPullingCloud(true);
+                try {
+                  const cloudData = await getCloudDatabaseState();
+                  if (cloudData && Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
+                    onRestoreBackup(
+                      {
+                        version: '1.0.0',
+                        exportDate: cloudData.lastUpdated || new Date().toISOString(),
+                        systemName: branding.companyNameEn || 'Multi-Branch Attendance System',
+                        summary: {
+                          branchesCount: cloudData.branches.length,
+                          employeesCount: cloudData.employees?.length || 0,
+                          attendanceRecordsCount: cloudData.attendanceRecords?.length || 0,
+                          leaveRequestsCount: cloudData.leaveRequests?.length || 0,
+                          transferRecordsCount: cloudData.transferRecords?.length || 0,
+                          auditLogsCount: cloudData.auditLogs?.length || 0,
+                        },
+                        branches: cloudData.branches,
+                        employees: cloudData.employees,
+                        attendanceRecords: cloudData.attendanceRecords,
+                        leaveRequests: cloudData.leaveRequests,
+                        transferRecords: cloudData.transferRecords,
+                        branding: cloudData.branding,
+                        rolePermissions: cloudData.rolePermissions,
+                        systemSettings: cloudData.systemSettings,
+                        auditLogs: cloudData.auditLogs,
+                      },
+                      'overwrite'
+                    );
+                    triggerAlert(
+                      'success',
+                      lang === 'km'
+                        ? `☁️ បានទាញយកទិន្នន័យ (${cloudData.branches.length} សាខា, ${cloudData.employees?.length || 0} បុគ្គលិក) ពី Cloud Firestore ជោគជ័យ!`
+                        : `☁️ Successfully pulled latest ${cloudData.branches.length} branches and ${cloudData.employees?.length || 0} staff from Cloud Firestore!`
+                    );
+                  } else {
+                    triggerAlert(
+                      'error',
+                      lang === 'km'
+                        ? 'មិនមានទិន្នន័យនៅលើ Cloud Database នៅឡើយទេ'
+                        : 'No data records found in Cloud Firestore database'
+                    );
+                  }
+                } catch (e) {
+                  triggerAlert('error', lang === 'km' ? 'មានបញ្ហាក្នុងការទាញយកពី Cloud' : 'Error pulling from Cloud');
+                } finally {
+                  setIsPullingCloud(false);
+                }
+              }}
+              className="px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs flex items-center space-x-2 transition cursor-pointer shadow-lg shadow-sky-600/30"
+            >
+              {isPullingCloud ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <CloudDownload className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {isPullingCloud
+                  ? lang === 'km' ? 'កំពុងទាញយក...' : 'Pulling...'
+                  : lang === 'km' ? 'ទាញយកពី Cloud ឡើងវិញ' : 'Pull from Cloud'}
               </span>
             </button>
 
