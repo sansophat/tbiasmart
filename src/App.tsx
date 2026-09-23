@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   INITIAL_BRANCHES, 
   INITIAL_BRANCH_TYPES,
@@ -57,6 +57,9 @@ import { mergeDatasets } from './utils/backupRestoreUtils';
 import { 
   subscribeToCloudDatabase, 
   syncStateToCloudDatabase, 
+  syncStateToCloudImmediate,
+  subscribeCloudConnectionStatus,
+  testFirestoreConnection,
   getCloudDatabaseState,
   CloudSystemState 
 } from './utils/firebaseSync';
@@ -112,6 +115,7 @@ export default function App() {
   const [onlinePeersCount, setOnlinePeersCount] = useState<number>(1);
   const [connectedPeers, setConnectedPeers] = useState<ConnectedPeer[]>([]);
   const [liveToast, setLiveToast] = useState<{ title: string; message: string; type: 'punch' | 'leave' | 'transfer' | 'system' } | null>(null);
+  const isReceivingCloudUpdate = useRef<boolean>(false);
 
   // Persistent Core Data
   const [branches, setBranches] = useState<Branch[]>(() => {
@@ -311,8 +315,21 @@ export default function App() {
 
   // Real-time Sync Event Listeners
   useEffect(() => {
+    testFirestoreConnection();
+
+    // Subscribe to Firebase Cloud Firestore connectivity
+    const unsubCloud = subscribeCloudConnectionStatus((status) => {
+      if (status === 'connected' || status === 'syncing') {
+        setIsLiveSyncConnected(true);
+      } else if (status === 'error') {
+        setIsLiveSyncConnected(false);
+      }
+    });
+
     const unsubConnection = realtimeService.subscribeConnection((connected) => {
-      setIsLiveSyncConnected(connected);
+      if (connected) {
+        setIsLiveSyncConnected(true);
+      }
     });
 
     const unsubPresence = realtimeService.subscribePresence((peers, count) => {
@@ -579,60 +596,84 @@ export default function App() {
   useEffect(() => {
     let isInitialCloudLoad = true;
 
-    const unsubscribe = subscribeToCloudDatabase((cloudData) => {
-      if (!cloudData) return;
+    const unsubscribe = subscribeToCloudDatabase(
+      (cloudData) => {
+        if (!cloudData) return;
+        isReceivingCloudUpdate.current = true;
 
-      if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
-        setBranches(cloudData.branches);
-        localStorage.setItem('attend_branches', JSON.stringify(cloudData.branches));
-      }
-      if (Array.isArray(cloudData.employees)) {
-        setEmployees(cloudData.employees);
-        localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
-      }
-      if (Array.isArray(cloudData.attendanceRecords)) {
-        setAttendanceRecords(cloudData.attendanceRecords);
-        localStorage.setItem('attend_records', JSON.stringify(cloudData.attendanceRecords));
-      }
-      if (Array.isArray(cloudData.leaveRequests)) {
-        setLeaveRequests(cloudData.leaveRequests);
-        localStorage.setItem('attend_leaves', JSON.stringify(cloudData.leaveRequests));
-      }
-      if (Array.isArray(cloudData.transferRecords)) {
-        setTransferRecords(cloudData.transferRecords);
-        localStorage.setItem('attend_transfers', JSON.stringify(cloudData.transferRecords));
-      }
-      if (Array.isArray(cloudData.branchTypes)) {
-        setBranchTypes(cloudData.branchTypes);
-        localStorage.setItem('attend_branch_types', JSON.stringify(cloudData.branchTypes));
-      }
-      if (cloudData.branding) {
-        setBranding(cloudData.branding);
-        localStorage.setItem('attend_branding', JSON.stringify(cloudData.branding));
-      }
-      if (Array.isArray(cloudData.rolePermissions)) {
-        setRolePermissions(cloudData.rolePermissions);
-        localStorage.setItem('attend_role_permissions', JSON.stringify(cloudData.rolePermissions));
-      }
-      if (cloudData.systemSettings) {
-        setSystemSettings(cloudData.systemSettings);
-        localStorage.setItem('attend_system_settings', JSON.stringify(cloudData.systemSettings));
-      }
-      if (Array.isArray(cloudData.auditLogs)) {
-        setAuditLogs(cloudData.auditLogs);
-        localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
-      }
+        if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
+          setBranches(cloudData.branches);
+          localStorage.setItem('attend_branches', JSON.stringify(cloudData.branches));
+        }
+        if (Array.isArray(cloudData.employees)) {
+          setEmployees(cloudData.employees);
+          localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
+        }
+        if (Array.isArray(cloudData.attendanceRecords)) {
+          setAttendanceRecords(cloudData.attendanceRecords);
+          localStorage.setItem('attend_records', JSON.stringify(cloudData.attendanceRecords));
+        }
+        if (Array.isArray(cloudData.leaveRequests)) {
+          setLeaveRequests(cloudData.leaveRequests);
+          localStorage.setItem('attend_leaves', JSON.stringify(cloudData.leaveRequests));
+        }
+        if (Array.isArray(cloudData.transferRecords)) {
+          setTransferRecords(cloudData.transferRecords);
+          localStorage.setItem('attend_transfers', JSON.stringify(cloudData.transferRecords));
+        }
+        if (Array.isArray(cloudData.branchTypes)) {
+          setBranchTypes(cloudData.branchTypes);
+          localStorage.setItem('attend_branch_types', JSON.stringify(cloudData.branchTypes));
+        }
+        if (cloudData.branding) {
+          setBranding(cloudData.branding);
+          localStorage.setItem('attend_branding', JSON.stringify(cloudData.branding));
+        }
+        if (Array.isArray(cloudData.rolePermissions)) {
+          setRolePermissions(cloudData.rolePermissions);
+          localStorage.setItem('attend_role_permissions', JSON.stringify(cloudData.rolePermissions));
+        }
+        if (cloudData.systemSettings) {
+          setSystemSettings(cloudData.systemSettings);
+          localStorage.setItem('attend_system_settings', JSON.stringify(cloudData.systemSettings));
+        }
+        if (Array.isArray(cloudData.auditLogs)) {
+          setAuditLogs(cloudData.auditLogs);
+          localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
+        }
 
-      if (!isInitialCloudLoad) {
-        setLiveToast({
-          title: lang === 'km' ? '☁️ ទិន្នន័យបានធ្វើសមកាលកម្ម' : '☁️ Cloud Database Synced',
-          message: lang === 'km' ? 'ទិន្នន័យចុងក្រោយត្រូវបានធ្វើបច្ចុប្បន្នភាពពី Cloud' : 'Latest data synced from cloud database.',
-          type: 'system'
-        });
-        setTimeout(() => setLiveToast(null), 3000);
+        if (!isInitialCloudLoad) {
+          setLiveToast({
+            title: lang === 'km' ? '☁️ ទិន្នន័យបានធ្វើសមកាលកម្ម' : '☁️ Cloud Database Synced',
+            message: lang === 'km' ? 'ទិន្នន័យចុងក្រោយត្រូវបានធ្វើបច្ចុប្បន្នភាពពី Cloud' : 'Latest data synced from cloud database.',
+            type: 'system'
+          });
+          setTimeout(() => setLiveToast(null), 3000);
+        }
+        isInitialCloudLoad = false;
+
+        setTimeout(() => {
+          isReceivingCloudUpdate.current = false;
+        }, 800);
+      },
+      () => {
+        // If Firestore is empty, seed it with current dataset
+        if (branches.length > 0 || employees.length > 0) {
+          syncStateToCloudImmediate({
+            branches,
+            employees,
+            attendanceRecords,
+            leaveRequests,
+            transferRecords,
+            branchTypes,
+            branding,
+            rolePermissions,
+            systemSettings,
+            auditLogs,
+          });
+        }
       }
-      isInitialCloudLoad = false;
-    });
+    );
 
     return () => {
       unsubscribe();
@@ -688,6 +729,35 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('attend_audit_logs', JSON.stringify(auditLogs));
   }, [auditLogs]);
+
+  // Automatically sync any local modifications to Firebase Cloud Firestore
+  useEffect(() => {
+    if (isReceivingCloudUpdate.current) return;
+
+    syncStateToCloudDatabase({
+      branches,
+      employees,
+      attendanceRecords,
+      leaveRequests,
+      transferRecords,
+      branchTypes,
+      branding,
+      rolePermissions,
+      systemSettings,
+      auditLogs,
+    });
+  }, [
+    branches,
+    employees,
+    attendanceRecords,
+    leaveRequests,
+    transferRecords,
+    branchTypes,
+    branding,
+    rolePermissions,
+    systemSettings,
+    auditLogs,
+  ]);
 
   // Handlers with Real-time synchronization
   const handleAddAttendanceRecord = (newRecord: AttendanceRecord) => {

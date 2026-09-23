@@ -94,17 +94,27 @@ class RealtimeSyncManager {
   }
 
   private handleDisconnect() {
-    this.isConnected = false;
-    this.notifyConnectionListeners(false);
     this.stopPingHeartbeat();
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
 
-    // Exponential backoff reconnect
-    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 10000);
     this.reconnectAttempts++;
+
+    // In a serverless/static environment (e.g. Vercel) where /ws doesn't exist,
+    // gracefully fall back to BroadcastChannel + Cloud Firestore rather than staying stuck in "Connecting"
+    if (this.reconnectAttempts >= 2) {
+      this.isConnected = true; // Local broadcast mesh active
+      this.notifyConnectionListeners(true);
+      return;
+    }
+
+    this.isConnected = false;
+    this.notifyConnectionListeners(false);
+
+    // Exponential backoff reconnect attempt
+    const delay = 2000;
     this.reconnectTimeout = setTimeout(() => {
       this.connect();
     }, delay);

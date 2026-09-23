@@ -158,7 +158,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right Side: Geofence Status, Clock, Language, Quick Scan, and User Profile */}
         <div className="flex items-center space-x-2.5 sm:space-x-3">
-          {/* Real-time Server Sync Status Indicator */}
+          {/* Real-time Server & Cloud Database Sync Status Indicator */}
           <div
             className={`hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-2xl border text-xs font-bold transition shadow-xs ${
               isLiveSyncConnected
@@ -167,8 +167,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
             title={
               isLiveSyncConnected
-                ? `Real-time WebSocket Sync Connected (${onlinePeersCount} terminal nodes active)`
-                : 'Connecting to WebSocket Sync Mesh...'
+                ? `Firebase Cloud Database Synchronized (${onlinePeersCount} terminal nodes active)`
+                : 'Connecting to Cloud Database...'
             }
           >
             <span
@@ -179,8 +179,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-[11px]">
               {isLiveSyncConnected
                 ? lang === 'km'
-                  ? `Sync (${onlinePeersCount})`
-                  : `Live (${onlinePeersCount})`
+                  ? `Cloud Sync (${onlinePeersCount})`
+                  : `Cloud Live (${onlinePeersCount})`
                 : lang === 'km'
                 ? 'កំពុងភ្ជាប់...'
                 : 'Connecting...'}

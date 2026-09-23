@@ -54,8 +54,8 @@ import {
   DEFAULT_BACKUP_SELECTION
 } from '../utils/backupRestoreUtils';
 import { realtimeService } from '../utils/realtimeService';
-import { syncStateToCloudDatabase } from '../utils/firebaseSync';
-import { Cloud, CloudUpload } from 'lucide-react';
+import { syncStateToCloudDatabase, syncStateToCloudImmediate } from '../utils/firebaseSync';
+import { Cloud, CloudUpload, Loader2 } from 'lucide-react';
 
 interface BackupRestorePanelProps {
   branches: Branch[];
@@ -122,6 +122,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
 
   // Toast Feedback State
   const [alertBanner, setAlertBanner] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
 
   useEffect(() => {
     setSnapshots(getLocalSnapshots());
@@ -440,28 +441,47 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
 
             <button
               type="button"
+              disabled={isSyncingCloud}
               onClick={async () => {
-                const ok = await syncStateToCloudDatabase({
-                  branches,
-                  employees,
-                  attendanceRecords,
-                  leaveRequests,
-                  transferRecords,
-                  branding,
-                  rolePermissions,
-                  systemSettings,
-                  auditLogs,
-                });
-                if (ok) {
-                  triggerAlert('success', lang === 'km' ? '☁️ បានរក្សាទុកទិន្នន័យទាំងអស់ទៅកាន់ Cloud Firestore ជោគជ័យ!' : '☁️ All database records pushed to Firebase Cloud Firestore!');
-                } else {
-                  triggerAlert('error', lang === 'km' ? 'មានបញ្ហាក្នុងការរក្សាទុកទៅកាន់ Cloud' : 'Failed to sync to Cloud database');
+                setIsSyncingCloud(true);
+                try {
+                  const ok = await syncStateToCloudImmediate({
+                    branches,
+                    employees,
+                    attendanceRecords,
+                    leaveRequests,
+                    transferRecords,
+                    branding,
+                    rolePermissions,
+                    systemSettings,
+                    auditLogs,
+                  });
+                  if (ok) {
+                    triggerAlert(
+                      'success',
+                      lang === 'km'
+                        ? `☁️ បានបញ្ជូនទិន្នន័យ (${branches.length} សាខា, ${employees.length} បុគ្គលិក, ${attendanceRecords.length} វត្តមាន) ទៅកាន់ Cloud Firestore រួចរាល់!`
+                        : `☁️ Synced ${branches.length} branches, ${employees.length} employees, and ${attendanceRecords.length} records to Cloud Firestore!`
+                    );
+                  } else {
+                    triggerAlert('error', lang === 'km' ? 'មានបញ្ហាក្នុងការរក្សាទុកទៅកាន់ Cloud' : 'Failed to sync to Cloud database');
+                  }
+                } finally {
+                  setIsSyncingCloud(false);
                 }
               }}
-              className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center space-x-2 transition cursor-pointer shadow-lg shadow-emerald-600/30"
+              className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center space-x-2 transition cursor-pointer shadow-lg shadow-emerald-600/30"
             >
-              <CloudUpload className="w-3.5 h-3.5" />
-              <span>{lang === 'km' ? 'បញ្ចូលទៅ Cloud ឥឡូវ' : 'Sync to Cloud Now'}</span>
+              {isSyncingCloud ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <CloudUpload className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {isSyncingCloud
+                  ? lang === 'km' ? 'កំពុងបញ្ជូន...' : 'Syncing...'
+                  : lang === 'km' ? 'បញ្ចូលទៅ Cloud ឥឡូវ' : 'Sync to Cloud Now'}
+              </span>
             </button>
 
             <button

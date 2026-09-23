@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "SystemState": {
+      "title": "SystemState",
+      "description": "Unified system state containing branches, staff directory, attendance records, leaves, transfers, and system configurations.",
+      "type": "object",
+      "properties": {
+        "branches": { "type": "array", "description": "List of active branch offices" },
+        "branchTypes": { "type": "array", "description": "Configured branch classifications" },
+        "employees": { "type": "array", "description": "Workforce personnel directory" },
+        "attendanceRecords": { "type": "array", "description": "Check-in and check-out punch logs" },
+        "leaveRequests": { "type": "array", "description": "Employee leave and vacation applications" },
+        "transferRecords": { "type": "array", "description": "Branch relocation logs" },
+        "branding": { "type": "object", "description": "Organization branding and themes" },
+        "rolePermissions": { "type": "array", "description": "Role-based access controls" },
+        "systemSettings": { "type": "object", "description": "Global application configurations" },
+        "auditLogs": { "type": "array", "description": "Security audit logs" },
+        "lastUpdated": { "type": "string", "description": "ISO timestamp of last update" },
+        "updatedBy": { "type": "string", "description": "Identifier of user or device who triggered update" }
+      },
+      "required": ["lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/attendance_system/{docId}": {
+      "schema": "SystemState",
+      "description": "Main application data store document"
+    }
+  }
+}
