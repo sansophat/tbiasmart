@@ -84,9 +84,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     status: 'active' as const,
     pinCode: '1234',
     annualLeaveQuota: 18,
-    annualLeaveUsed: 3,
+    annualLeaveUsed: 0,
     sickLeaveQuota: 7,
-    sickLeaveUsed: 1,
+    sickLeaveUsed: 0,
   };
 
   const branch = branches.find((b) => b.id === currentEmp.branchId);
@@ -186,13 +186,38 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }, 1200);
   };
 
-  // Quota computations
-  const totalAnnualQuota = currentEmp.annualLeaveQuota || 18;
-  const usedAnnual = currentEmp.annualLeaveUsed || 3;
+  // Helper to calculate days between two YYYY-MM-DD dates inclusive
+  const calculateDays = (start?: string, end?: string): number => {
+    if (!start || !end) return 1;
+    try {
+      const s = new Date(start);
+      const e = new Date(end);
+      const diffTime = e.getTime() - s.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      return isNaN(diffDays) || diffDays < 1 ? 1 : diffDays;
+    } catch {
+      return 1;
+    }
+  };
+
+  // Dynamically calculate approved leave days from submitted requests
+  const approvedAnnualDaysFromRequests = myRequests
+    .filter((r) => (r.category === 'leave' || r.type === 'annual') && r.status === 'approved')
+    .reduce((sum, r) => sum + calculateDays(r.startDate, r.endDate), 0);
+
+  const approvedSickDaysFromRequests = myRequests
+    .filter((r) => (r.category === 'sick' || r.type === 'sick') && r.status === 'approved')
+    .reduce((sum, r) => sum + calculateDays(r.startDate, r.endDate), 0);
+
+  // Quota computations: New staff with no approved requests start with 0 days used
+  const totalAnnualQuota = currentEmp.annualLeaveQuota !== undefined ? currentEmp.annualLeaveQuota : 18;
+  const recordedAnnualUsed = currentEmp.annualLeaveUsed !== undefined ? currentEmp.annualLeaveUsed : 0;
+  const usedAnnual = Math.max(recordedAnnualUsed, approvedAnnualDaysFromRequests);
   const remainingAnnual = Math.max(0, totalAnnualQuota - usedAnnual);
 
-  const totalSickQuota = currentEmp.sickLeaveQuota || 7;
-  const usedSick = currentEmp.sickLeaveUsed || 1;
+  const totalSickQuota = currentEmp.sickLeaveQuota !== undefined ? currentEmp.sickLeaveQuota : 7;
+  const recordedSickUsed = currentEmp.sickLeaveUsed !== undefined ? currentEmp.sickLeaveUsed : 0;
+  const usedSick = Math.max(recordedSickUsed, approvedSickDaysFromRequests);
   const remainingSick = Math.max(0, totalSickQuota - usedSick);
 
   const totalOtHoursApproved = myRequests

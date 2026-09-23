@@ -169,6 +169,10 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       email: `${newEmpNameEn.toLowerCase().replace(/\s+/g, '.')}@enterprise.com.kh`,
       status: 'active',
       pinCode: newEmpPin,
+      annualLeaveQuota: 18,
+      annualLeaveUsed: 0,
+      sickLeaveQuota: 7,
+      sickLeaveUsed: 0,
     };
 
     onAddEmployee(newEmp);

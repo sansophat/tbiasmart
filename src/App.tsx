@@ -886,12 +886,19 @@ export default function App() {
   };
 
   const handleAddEmployee = (newEmp: Employee) => {
-    setEmployees((prev) => [newEmp, ...prev]);
-    realtimeService.emit('ADD_EMPLOYEE', newEmp);
+    const preparedEmp: Employee = {
+      ...newEmp,
+      annualLeaveQuota: newEmp.annualLeaveQuota !== undefined ? newEmp.annualLeaveQuota : 18,
+      annualLeaveUsed: newEmp.annualLeaveUsed !== undefined ? newEmp.annualLeaveUsed : 0,
+      sickLeaveQuota: newEmp.sickLeaveQuota !== undefined ? newEmp.sickLeaveQuota : 7,
+      sickLeaveUsed: newEmp.sickLeaveUsed !== undefined ? newEmp.sickLeaveUsed : 0,
+    };
+    setEmployees((prev) => [preparedEmp, ...prev]);
+    realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
     fetch('/api/employees/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee: newEmp, isNew: true, senderId: realtimeService.getClientId() }),
+      body: JSON.stringify({ employee: preparedEmp, isNew: true, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
 
@@ -1151,6 +1158,8 @@ export default function App() {
 
   const handleUpdateLeaveStatus = (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => {
     const approver = (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator';
+    const targetReq = leaveRequests.find((r) => r.id === requestId);
+
     setLeaveRequests((prev) =>
       prev.map((r) =>
         r.id === requestId
@@ -1163,6 +1172,63 @@ export default function App() {
           : r
       )
     );
+
+    // Adjust employee leave used balance when status transitions
+    if (targetReq && targetReq.status !== newStatus) {
+      const calculateDays = (start?: string, end?: string): number => {
+        if (!start || !end) return 1;
+        try {
+          const s = new Date(start);
+          const e = new Date(end);
+          const diffTime = e.getTime() - s.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+          return isNaN(diffDays) || diffDays < 1 ? 1 : diffDays;
+        } catch {
+          return 1;
+        }
+      };
+
+      const days = calculateDays(targetReq.startDate, targetReq.endDate);
+      const isAnnual = targetReq.category === 'leave' || targetReq.type === 'annual';
+      const isSick = targetReq.category === 'sick' || targetReq.type === 'sick';
+
+      if (isAnnual || isSick) {
+        setEmployees((prev) =>
+          prev.map((emp) => {
+            if (emp.id === targetReq.employeeId || emp.code === targetReq.employeeCode) {
+              const currentAnnualUsed = emp.annualLeaveUsed ?? 0;
+              const currentSickUsed = emp.sickLeaveUsed ?? 0;
+              let nextAnnualUsed = currentAnnualUsed;
+              let nextSickUsed = currentSickUsed;
+
+              if (newStatus === 'approved') {
+                if (isAnnual) nextAnnualUsed += days;
+                if (isSick) nextSickUsed += days;
+              } else if (targetReq.status === 'approved' && newStatus === 'rejected') {
+                if (isAnnual) nextAnnualUsed = Math.max(0, nextAnnualUsed - days);
+                if (isSick) nextSickUsed = Math.max(0, nextSickUsed - days);
+              }
+
+              const updatedEmp: Employee = {
+                ...emp,
+                annualLeaveUsed: nextAnnualUsed,
+                sickLeaveUsed: nextSickUsed,
+              };
+
+              realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
+              fetch('/api/employees/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
+              }).catch(() => {});
+
+              return updatedEmp;
+            }
+            return emp;
+          })
+        );
+      }
+    }
 
     realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
 

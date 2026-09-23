@@ -398,6 +398,8 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
         ...emp,
         annualLeaveUsed: 0,
         annualLeaveQuota: 18,
+        sickLeaveUsed: 0,
+        sickLeaveQuota: 7,
       }));
       onUpdateEmployeesList(updated);
     }
@@ -424,7 +426,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     if (!targetEmp) return;
 
     if (onUpdateEmployeesList) {
-      const updated = employees.map(e => e.id === empId ? { ...e, annualLeaveUsed: 0, annualLeaveQuota: 18 } : e);
+      const updated = employees.map(e => e.id === empId ? { ...e, annualLeaveUsed: 0, annualLeaveQuota: 18, sickLeaveUsed: 0, sickLeaveQuota: 7 } : e);
       onUpdateEmployeesList(updated);
     }
 
@@ -436,8 +438,8 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       action: 'Reset Employee Leave Balance',
       actionKh: `បាន Reset ច្បាប់បុគ្គលិក ${targetEmp.nameKh}`,
       module: 'leaves',
-      details: `Restored 18 annual leave days for ${targetEmp.nameEn} (${targetEmp.code}).`,
-      detailsKh: `បាន Reset ច្បាប់សម្រាកមកសល់ ១៨ ថ្ងៃពេញសម្រាប់ ${targetEmp.nameKh} (${targetEmp.code})។`,
+      details: `Restored full leave balances (18 annual days, 7 sick days) for ${targetEmp.nameEn} (${targetEmp.code}).`,
+      detailsKh: `បាន Reset ច្បាប់សម្រាកមកសល់ ១៨ ថ្ងៃពេញ (ច្បាប់ប្រចាំឆ្នាំ) និង ៧ ថ្ងៃពេញ (ច្បាប់ឈឺ) សម្រាប់ ${targetEmp.nameKh} (${targetEmp.code})។`,
       status: 'success',
     });
 
@@ -1646,6 +1648,9 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                   const totalQuota = targetEmp.annualLeaveQuota || 18;
                   const used = targetEmp.annualLeaveUsed || 0;
                   const remaining = Math.max(0, totalQuota - used);
+                  const totalSick = targetEmp.sickLeaveQuota || 7;
+                  const usedSick = targetEmp.sickLeaveUsed || 0;
+                  const remainingSick = Math.max(0, totalSick - usedSick);
                   return (
                     <div className="bg-indigo-50/60 p-3 rounded-2xl border border-indigo-100 space-y-1.5 text-xs">
                       <div className="flex justify-between">
@@ -1653,12 +1658,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         <span className="font-bold text-indigo-900">{targetEmp.nameKh} ({targetEmp.code})</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-600">{lang === 'km' ? 'ច្បាប់បានប្រើ:' : 'Days Used:'}</span>
-                        <span className="font-mono font-bold text-amber-700">{used} / {totalQuota} {lang === 'km' ? 'ថ្ងៃ' : 'days'}</span>
+                        <span className="text-slate-600">{lang === 'km' ? 'ច្បាប់ប្រចាំឆ្នាំបានប្រើ:' : 'Annual Leave Used:'}</span>
+                        <span className="font-mono font-bold text-blue-700">{used} / {totalQuota} {lang === 'km' ? 'ថ្ងៃ (សល់ ' + remaining + ' ថ្ងៃ)' : `days (${remaining} left)`}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-600">{lang === 'km' ? 'ច្បាប់នៅសល់:' : 'Days Remaining:'}</span>
-                        <span className="font-mono font-bold text-emerald-700">{remaining} {lang === 'km' ? 'ថ្ងៃ' : 'days'}</span>
+                        <span className="text-slate-600">{lang === 'km' ? 'ច្បាប់ឈឺបានប្រើ:' : 'Sick Leave Used:'}</span>
+                        <span className="font-mono font-bold text-rose-700">{usedSick} / {totalSick} {lang === 'km' ? 'ថ្ងៃ (សល់ ' + remainingSick + ' ថ្ងៃ)' : `days (${remainingSick} left)`}</span>
                       </div>
                     </div>
                   );
