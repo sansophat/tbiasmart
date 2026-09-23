@@ -24,10 +24,67 @@ import {
   Image as ImageIcon,
   ArrowRightLeft
 } from 'lucide-react';
-import { Employee, Branch, AttendanceRecord, Language, CompanyBranding } from '../types';
+import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole } from '../types';
 import { INITIAL_BRANDING } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
+
+export const DEPARTMENT_OPTIONS = [
+  { id: 'dept_branch_mgmt', nameKh: 'គ្រប់គ្រងសាខា (Branch Management)', nameEn: 'Branch Management' },
+  { id: 'dept_ops', nameKh: 'ប្រតិបត្តិការទូទៅ (Operations)', nameEn: 'Operations' },
+  { id: 'dept_hr', nameKh: 'ធនធានមនុស្ស (Human Resources)', nameEn: 'Human Resources' },
+  { id: 'dept_fb', nameKh: 'សេវាកម្មភេសជ្ជៈ & ម្ហូបអាហារ (F&B)', nameEn: 'Food & Beverage' },
+  { id: 'dept_service', nameKh: 'សេវាកម្មទូទៅ (General Services)', nameEn: 'General Services' },
+  { id: 'dept_finance', nameKh: 'គណនេយ្យ & ហិរញ្ញវត្ថុ (Finance)', nameEn: 'Accounting & Finance' },
+  { id: 'dept_security', nameKh: 'សន្តិសុខ & បច្ចេកទេស (Security & IT)', nameEn: 'Security & Maintenance' },
+];
+
+export const ROLE_PRESETS: {
+  roleType: UserRole;
+  titleKh: string;
+  titleEn: string;
+  defaultDeptKh: string;
+  defaultDeptEn: string;
+  prefix: string;
+  badgeClass: string;
+}[] = [
+  {
+    roleType: 'manager',
+    titleKh: 'ប្រធានគ្រប់គ្រងសាខា (Branch Manager)',
+    titleEn: 'Branch Manager',
+    defaultDeptKh: 'គ្រប់គ្រងសាខា (Branch Management)',
+    defaultDeptEn: 'Branch Management',
+    prefix: 'MGR',
+    badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+  },
+  {
+    roleType: 'supervisor',
+    titleKh: 'ប្រធានវេនការងារ (Shift Supervisor)',
+    titleEn: 'Shift Supervisor',
+    defaultDeptKh: 'ប្រតិបត្តិការទូទៅ (Operations)',
+    defaultDeptEn: 'Operations',
+    prefix: 'SUP',
+    badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
+  },
+  {
+    roleType: 'hr',
+    titleKh: 'មន្ត្រីធនធានមនុស្ស (HR Officer)',
+    titleEn: 'HR Officer',
+    defaultDeptKh: 'ធនធានមនុស្ស (Human Resources)',
+    defaultDeptEn: 'Human Resources',
+    prefix: 'HR',
+    badgeClass: 'bg-teal-100 text-teal-800 border-teal-200',
+  },
+  {
+    roleType: 'employee',
+    titleKh: 'បុគ្គលិកទូទៅ (General Staff)',
+    titleEn: 'General Staff',
+    defaultDeptKh: 'សេវាកម្មទូទៅ (General Services)',
+    defaultDeptEn: 'General Services',
+    prefix: 'EMP',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
+  },
+];
 
 interface EmployeeDirectoryViewProps {
   employees: Employee[];
@@ -56,6 +113,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('all');
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
   const [selectedBadgeEmp, setSelectedBadgeEmp] = useState<Employee | null>(null);
   const [badgeQrUrl, setBadgeQrUrl] = useState<string>('');
   
@@ -65,17 +123,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [photoEditEmp, setPhotoEditEmp] = useState<Employee | null>(null);
 
   // New Employee Form State
+  const [newEmpRoleType, setNewEmpRoleType] = useState<UserRole>('employee');
   const [newEmpNameKh, setNewEmpNameKh] = useState('');
   const [newEmpNameEn, setNewEmpNameEn] = useState('');
   const [newEmpCode, setNewEmpCode] = useState(`EMP-${Math.floor(100 + Math.random() * 900)}`);
   const [newEmpBranchId, setNewEmpBranchId] = useState(branches[0]?.id || 'br_office');
-  const [newEmpDeptKh, setNewEmpDeptKh] = useState('សេវាកម្មទូទៅ');
-  const [newEmpRoleKh, setNewEmpRoleKh] = useState('បុគ្គលិក');
+  const [newEmpDeptKh, setNewEmpDeptKh] = useState(DEPARTMENT_OPTIONS[1].nameKh);
+  const [newEmpRoleKh, setNewEmpRoleKh] = useState('បុគ្គលិកទូទៅ');
   const [newEmpPhone, setNewEmpPhone] = useState('012 345 678');
   const [newEmpPin, setNewEmpPin] = useState(String(Math.floor(1000 + Math.random() * 9000)));
   const [newEmpAvatar, setNewEmpAvatar] = useState(DEFAULT_AVATAR);
 
   // Edit Employee Form State
+  const [editRoleType, setEditRoleType] = useState<UserRole>('employee');
   const [editNameKh, setEditNameKh] = useState('');
   const [editNameEn, setEditNameEn] = useState('');
   const [editCode, setEditCode] = useState('');
@@ -85,6 +145,21 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [editPhone, setEditPhone] = useState('');
   const [editPin, setEditPin] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+
+  // Handle Role preset quick selection in Add form
+  const handleSelectAddRolePreset = (preset: typeof ROLE_PRESETS[0]) => {
+    setNewEmpRoleType(preset.roleType);
+    setNewEmpRoleKh(lang === 'km' ? preset.titleKh : preset.titleEn);
+    setNewEmpDeptKh(preset.defaultDeptKh);
+    setNewEmpCode(`${preset.prefix}-${Math.floor(100 + Math.random() * 900)}`);
+  };
+
+  // Handle Role preset quick selection in Edit form
+  const handleSelectEditRolePreset = (preset: typeof ROLE_PRESETS[0]) => {
+    setEditRoleType(preset.roleType);
+    setEditRoleKh(lang === 'km' ? preset.titleKh : preset.titleEn);
+    setEditDeptKh(preset.defaultDeptKh);
+  };
 
   // Generate Digital Badge QR
   const handleOpenBadge = async (emp: Employee) => {
@@ -114,8 +189,15 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditNameEn(emp.nameEn);
     setEditCode(emp.code);
     setEditBranchId(emp.branchId);
-    setEditDeptKh(emp.departmentKh);
+    setEditDeptKh(emp.departmentKh || DEPARTMENT_OPTIONS[1].nameKh);
     setEditRoleKh(emp.role);
+    setEditRoleType(
+      emp.roleType ||
+      (emp.role?.toLowerCase().includes('manager') ? 'manager' :
+       emp.role?.toLowerCase().includes('supervisor') ? 'supervisor' :
+       (emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស')) ? 'hr' :
+       'employee')
+    );
     setEditPhone(emp.phone);
     setEditPin(emp.pinCode || '1234');
     setEditAvatar(emp.avatar || DEFAULT_AVATAR);
@@ -153,16 +235,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     e.preventDefault();
     if (!newEmpNameKh.trim() || !newEmpNameEn.trim()) return;
 
+    const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === newEmpDeptKh);
+
     const newEmp: Employee = {
       id: `emp_${Date.now()}`,
       code: newEmpCode,
       nameKh: newEmpNameKh,
       nameEn: newEmpNameEn,
       branchId: newEmpBranchId,
-      department: 'Operations',
+      department: matchedDept?.nameEn || 'Operations',
       departmentKh: newEmpDeptKh,
       role: newEmpRoleKh,
       roleKh: newEmpRoleKh,
+      roleType: newEmpRoleType,
       shiftId: 'shift_office',
       avatar: newEmpAvatar || DEFAULT_AVATAR,
       phone: newEmpPhone,
@@ -180,6 +265,9 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     // Reset Form
     setNewEmpNameKh('');
     setNewEmpNameEn('');
+    setNewEmpRoleType('employee');
+    setNewEmpRoleKh('បុគ្គលិកទូទៅ');
+    setNewEmpDeptKh(DEPARTMENT_OPTIONS[1].nameKh);
     setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
     setNewEmpAvatar(DEFAULT_AVATAR);
   };
@@ -188,15 +276,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     e.preventDefault();
     if (!editingEmp || !onUpdateEmployee) return;
 
+    const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === editDeptKh);
+
     const updated: Employee = {
       ...editingEmp,
       nameKh: editNameKh,
       nameEn: editNameEn,
       code: editCode,
       branchId: editBranchId,
+      department: matchedDept?.nameEn || editingEmp.department,
       departmentKh: editDeptKh,
       role: editRoleKh,
       roleKh: editRoleKh,
+      roleType: editRoleType,
       phone: editPhone,
       pinCode: editPin,
       avatar: editAvatar || DEFAULT_AVATAR,
@@ -226,13 +318,23 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   // Filter employees
   const filteredEmployees = employees.filter((emp) => {
     const matchesBranch = selectedBranchFilter === 'all' || emp.branchId === selectedBranchFilter;
+
+    const matchesRole =
+      selectedRoleFilter === 'all' ||
+      (selectedRoleFilter === 'manager' && (emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager'))) ||
+      (selectedRoleFilter === 'supervisor' && (emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor'))) ||
+      (selectedRoleFilter === 'hr' && (emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស'))) ||
+      (selectedRoleFilter === 'employee' && (emp.roleType === 'employee' || (!emp.role?.toLowerCase().includes('manager') && !emp.role?.toLowerCase().includes('supervisor') && !emp.role?.toLowerCase().includes('hr'))));
+
     const matchesSearch =
       emp.nameKh.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.nameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      emp.departmentKh?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.phone.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesBranch && matchesSearch;
+
+    return matchesBranch && matchesRole && matchesSearch;
   });
 
   const getBranch = (branchId: string) => branches.find((b) => b.id === branchId);
@@ -275,7 +377,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
 
       {/* Filter and Search Controls */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-        <div className="sm:col-span-8 relative">
+        <div className="sm:col-span-6 relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -286,7 +388,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           />
         </div>
 
-        <div className="sm:col-span-4">
+        <div className="sm:col-span-3">
           <select
             value={selectedBranchFilter}
             onChange={(e) => setSelectedBranchFilter(e.target.value)}
@@ -301,12 +403,31 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
             ))}
           </select>
         </div>
+
+        <div className="sm:col-span-3">
+          <select
+            value={selectedRoleFilter}
+            onChange={(e) => setSelectedRoleFilter(e.target.value)}
+            aria-label={lang === 'km' ? 'ជ្រើសរើសតួនាទី' : 'Filter by role'}
+            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
+          >
+            <option value="all">{lang === 'km' ? 'គ្រប់តួនាទី (All Roles)' : 'All Roles'}</option>
+            <option value="manager">{lang === 'km' ? '★ ប្រធានគ្រប់គ្រងសាខា (Branch Managers)' : '★ Branch Managers'}</option>
+            <option value="supervisor">{lang === 'km' ? '⏱ ប្រធានវេន (Shift Supervisors)' : '⏱ Shift Supervisors'}</option>
+            <option value="hr">{lang === 'km' ? '👥 ធនធានមនុស្ស (HR Officers)' : '👥 HR Officers'}</option>
+            <option value="employee">{lang === 'km' ? '👤 បុគ្គលិកទូទៅ (General Staff)' : '👤 General Staff'}</option>
+          </select>
+        </div>
       </div>
 
       {/* Employee Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {filteredEmployees.map((emp) => {
           const branch = getBranch(emp.branchId);
+          const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
+          const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
+          const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+
           return (
             <div
               key={emp.id}
@@ -347,7 +468,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   <h4 className="text-sm font-bold text-slate-800 truncate mt-1">
                     {lang === 'km' ? emp.nameKh : emp.nameEn}
                   </h4>
-                  <p className="text-xs text-indigo-600 font-medium truncate">{emp.role}</p>
+                  <div className="mt-1">
+                    <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
+                      isManager
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : isSupervisor
+                        ? 'bg-purple-50 text-purple-700 border-purple-200'
+                        : isHr
+                        ? 'bg-teal-50 text-teal-700 border-teal-200'
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                    }`}>
+                      {emp.role}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -548,6 +681,35 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 </div>
               </div>
 
+              {/* Quick Select Role Presets */}
+              <div>
+                <label className="block text-slate-600 mb-1.5 font-bold">
+                  {lang === 'km' ? 'ជ្រើសរើសប្រភេទតួនាទី (Role Classification):' : 'Role Classification:'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {ROLE_PRESETS.map((preset) => {
+                    const isSelected = editRoleType === preset.roleType;
+                    return (
+                      <button
+                        key={preset.roleType}
+                        type="button"
+                        onClick={() => handleSelectEditRolePreset(preset)}
+                        className={`p-2 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                          isSelected
+                            ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500 shadow-xs'
+                            : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{lang === 'km' ? preset.titleKh : preset.titleEn}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ${preset.badgeClass}`}>
+                          {preset.prefix}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-600 mb-1 font-semibold">
                   {lang === 'km' ? 'សាខាដែលត្រូវបំពេញការងារ (Branch):' : 'Assigned Branch:'}
@@ -568,26 +730,44 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-slate-600 mb-1 font-semibold">
-                    {lang === 'km' ? 'តួនាទី (Role):' : 'Role / Position:'}
+                    {lang === 'km' ? 'ផ្នែក / ដេប៉ាតឺម៉ង់ (Department):' : 'Department:'}
+                  </label>
+                  <select
+                    value={editDeptKh}
+                    onChange={(e) => setEditDeptKh(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  >
+                    {DEPARTMENT_OPTIONS.map((dept) => (
+                      <option key={dept.id} value={dept.nameKh}>
+                        {lang === 'km' ? dept.nameKh : dept.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'តួនាទីជាក់ស្តែង (Role / Title):' : 'Role / Title:'}
                   </label>
                   <input
                     type="text"
+                    required
                     value={editRoleKh}
                     onChange={(e) => setEditRoleKh(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-slate-600 mb-1 font-semibold">
-                    {lang === 'km' ? 'លេខទូរស័ព្ទ (Phone):' : 'Phone Number:'}
-                  </label>
-                  <input
-                    type="text"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold">
+                  {lang === 'km' ? 'លេខទូរស័ព្ទ (Phone Number):' : 'Phone Number:'}
+                </label>
+                <input
+                  type="text"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">
@@ -691,6 +871,35 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 </div>
               </div>
 
+              {/* Quick Select Role Presets */}
+              <div>
+                <label className="block text-slate-600 mb-1.5 font-bold">
+                  {lang === 'km' ? 'ជ្រើសរើសប្រភេទតួនាទី (Role Classification):' : 'Role Classification:'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {ROLE_PRESETS.map((preset) => {
+                    const isSelected = newEmpRoleType === preset.roleType;
+                    return (
+                      <button
+                        key={preset.roleType}
+                        type="button"
+                        onClick={() => handleSelectAddRolePreset(preset)}
+                        className={`p-2 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                          isSelected
+                            ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500 shadow-xs'
+                            : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{lang === 'km' ? preset.titleKh : preset.titleEn}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ${preset.badgeClass}`}>
+                          {preset.prefix}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-600 mb-1 font-semibold">
                   {lang === 'km' ? 'សាខាដែលត្រូវបំពេញការងារ (Branch):' : 'Assigned Branch:'}
@@ -711,26 +920,44 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-slate-600 mb-1 font-semibold">
-                    {lang === 'km' ? 'តួនាទី (Role):' : 'Role / Position:'}
+                    {lang === 'km' ? 'ផ្នែក / ដេប៉ាតឺម៉ង់ (Department):' : 'Department:'}
+                  </label>
+                  <select
+                    value={newEmpDeptKh}
+                    onChange={(e) => setNewEmpDeptKh(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  >
+                    {DEPARTMENT_OPTIONS.map((dept) => (
+                      <option key={dept.id} value={dept.nameKh}>
+                        {lang === 'km' ? dept.nameKh : dept.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'តួនាទីជាក់ស្តែង (Role / Title):' : 'Role / Title:'}
                   </label>
                   <input
                     type="text"
+                    required
                     value={newEmpRoleKh}
                     onChange={(e) => setNewEmpRoleKh(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-slate-600 mb-1 font-semibold">
-                    {lang === 'km' ? 'លេខទូរស័ព្ទ (Phone):' : 'Phone Number:'}
-                  </label>
-                  <input
-                    type="text"
-                    value={newEmpPhone}
-                    onChange={(e) => setNewEmpPhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold">
+                  {lang === 'km' ? 'លេខទូរស័ព្ទ (Phone Number):' : 'Phone Number:'}
+                </label>
+                <input
+                  type="text"
+                  value={newEmpPhone}
+                  onChange={(e) => setNewEmpPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">

@@ -209,7 +209,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           username: matchedEmp.code.toLowerCase(),
           role:
             matchedEmp.roleType ||
-            (matchedEmp.role?.toLowerCase().includes('manager') ? 'manager' : 'employee'),
+            (matchedEmp.role?.toLowerCase().includes('manager')
+              ? 'manager'
+              : matchedEmp.role?.toLowerCase().includes('supervisor')
+              ? 'supervisor'
+              : matchedEmp.role?.toLowerCase().includes('hr') || matchedEmp.departmentKh?.includes('ធនធានមនុស្ស')
+              ? 'hr'
+              : 'employee'),
           nameKh: matchedEmp.nameKh,
           nameEn: matchedEmp.nameEn,
           avatar: matchedEmp.avatar,

@@ -35,7 +35,7 @@ export interface Branch {
   gpsSetAt?: string;
 }
 
-export type UserRole = 'admin' | 'manager' | 'employee';
+export type UserRole = 'admin' | 'manager' | 'supervisor' | 'hr' | 'employee';
 
 export interface AuthUser {
   id: string;
