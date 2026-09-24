@@ -4,6 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import {
   INITIAL_BRANCH_TYPES,
   INITIAL_BRANCHES,
@@ -30,6 +32,36 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // ==========================================
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'system_database.json');
+const CONFIG_FILE = path.join(process.cwd(), 'firebase-applet-config.json');
+
+// Initialize Firebase Firestore on server if configuration exists
+let firestoreDb: any = null;
+if (fs.existsSync(CONFIG_FILE)) {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    const fApp = !getApps().length ? initializeApp(config) : getApps()[0];
+    firestoreDb = getFirestore(fApp, config.firestoreDatabaseId || '(default)');
+    console.log('[Firebase] Server initialized Firestore client successfully.');
+  } catch (err) {
+    console.warn('[Firebase] Server could not initialize Firestore:', err);
+  }
+}
+
+async function syncToFirestore(patch: any) {
+  if (!firestoreDb) return;
+  try {
+    await setDoc(
+      doc(firestoreDb, 'attendance_system', 'app_state_v1'),
+      {
+        ...patch,
+        lastUpdated: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[Firebase] Error syncing to Firestore from server:', err);
+  }
+}
 
 const DEFAULT_STARTER_BRANCH = {
   id: 'br_main_hq',
