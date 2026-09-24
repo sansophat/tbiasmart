@@ -66,6 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   pendingLeavesCount = 0,
   branding,
   onUpdateBranding,
+  onNavigateToSettingsTypography,
   broadcastNoticeKh,
   broadcastNoticeEn,
   broadcastActive = true,
@@ -227,6 +228,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Globe className="w-3.5 h-3.5 text-indigo-600" />
             <span>{lang === 'km' ? '🇰🇭 ខ្មែរ' : '🇬🇧 EN'}</span>
           </button>
+
+          {/* Quick Khmer Typography & Zoom Widget */}
+          {branding && onUpdateBranding && (
+            <AdminQuickVisualWidget
+              currentUser={currentUser}
+              lang={lang}
+              branding={branding}
+              onUpdateBranding={onUpdateBranding}
+              onNavigateToSettingsTypography={onNavigateToSettingsTypography}
+            />
+          )}
 
           {/* Quick Scan Punch Button */}
           <button

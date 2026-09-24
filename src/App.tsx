@@ -52,6 +52,7 @@ import { LoginModal } from './components/LoginModal';
 import { InstallAppModal } from './components/InstallAppModal';
 import { DigitalIdCardModal } from './components/DigitalIdCardModal';
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
+import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
 import { Cloud, Loader2 } from 'lucide-react';
@@ -813,6 +814,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('attend_branding', JSON.stringify(branding));
     updateDynamicAppBranding(branding, lang);
+    applyKhmerTypography(branding.typography, lang);
   }, [branding, lang]);
 
   useEffect(() => {
@@ -1596,6 +1598,8 @@ export default function App() {
           onOpenLoginModal={() => setShowLoginModal(true)}
           pendingLeavesCount={pendingLeavesCount}
           branding={branding}
+          onUpdateBranding={(partial) => handleUpdateBranding({ ...branding, ...partial })}
+          onNavigateToSettingsTypography={() => setActiveTab('settings')}
           broadcastNoticeKh={systemSettings.broadcastNoticeKh}
           broadcastNoticeEn={systemSettings.broadcastNoticeEn}
           broadcastActive={systemSettings.broadcastActive}

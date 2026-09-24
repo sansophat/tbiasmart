@@ -137,19 +137,20 @@ export function saveTypographyToStorage(config: KhmerTypographyConfig): void {
  * Applies the typography configuration to the DOM by setting CSS variables on :root
  * and updating HTML classes.
  */
-export function applyKhmerTypography(config: KhmerTypographyConfig, lang: Language): void {
+export function applyKhmerTypography(config?: KhmerTypographyConfig | null, lang: Language = 'km'): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
+  const currentConfig = config || DEFAULT_KHMER_TYPOGRAPHY;
   const root = document.documentElement;
   const isKhmer = lang === 'km';
-  const shouldApply = isKhmer || config.enableGlobalKhmerScaling;
+  const shouldApply = isKhmer || currentConfig.enableGlobalKhmerScaling;
 
-  const scale = (config.fontSizeScale || 112) / 100;
-  const bodyFont = config.fontFamily || 'Kantumruy Pro';
-  const headingFont = config.headingFontFamily || 'Battambang';
-  const weight = config.fontWeight || '500';
-  const lineHeight = config.lineHeight || 1.7;
-  const letterSpacing = config.letterSpacing || '0.012em';
+  const scale = (currentConfig.fontSizeScale || 112) / 100;
+  const bodyFont = currentConfig.fontFamily || 'Kantumruy Pro';
+  const headingFont = currentConfig.headingFontFamily || 'Battambang';
+  const weight = currentConfig.fontWeight || '500';
+  const lineHeight = currentConfig.lineHeight || 1.7;
+  const letterSpacing = currentConfig.letterSpacing || '0.012em';
 
   // Apply CSS custom variables
   root.style.setProperty('--kh-font-body', `'${bodyFont}', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`);
@@ -161,7 +162,7 @@ export function applyKhmerTypography(config: KhmerTypographyConfig, lang: Langua
 
   if (shouldApply) {
     root.classList.add('khmer-active');
-    if (config.textContrast === 'high') {
+    if (currentConfig.textContrast === 'high') {
       root.classList.add('khmer-high-contrast');
     } else {
       root.classList.remove('khmer-high-contrast');
