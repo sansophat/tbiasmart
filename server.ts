@@ -201,7 +201,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   connectedPeers.set(ws, peerInfo);
   broadcastPresence();
 
-  // Send welcome confirmation WITH current canonical state
+  // Send welcome confirmation without overriding client database
   ws.send(
     JSON.stringify({
       type: 'INIT_ACK',
@@ -209,7 +209,6 @@ wss.on('connection', (ws: WebSocket, req) => {
         clientId,
         serverTime: new Date().toISOString(),
         onlineNodes: connectedPeers.size,
-        state: serverDb,
       },
       senderId: 'server',
       timestamp: new Date().toISOString(),
@@ -246,6 +245,56 @@ wss.on('connection', (ws: WebSocket, req) => {
           })
         );
         return;
+      }
+
+      // If client submits a leave request over WebSocket
+      if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload && payload.id) {
+        serverDb.leaveRequests = [payload, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== payload.id)];
+        persistDatabase();
+
+        // Broadcast to all other clients with both event types so neither is missed
+        broadcastToClients({
+          type: 'SUBMIT_LEAVE',
+          payload,
+          senderId: senderId || 'client',
+          senderName,
+          serverTimestamp: new Date().toISOString(),
+        }, ws);
+        broadcastToClients({
+          type: 'SUBMIT_LEAVE_REQUEST',
+          payload,
+          senderId: senderId || 'client',
+          senderName,
+          serverTimestamp: new Date().toISOString(),
+        }, ws);
+        return;
+      }
+
+      // If client updates leave status over WebSocket
+      if (type === 'UPDATE_LEAVE_STATUS' && payload && payload.requestId) {
+        const { requestId, status, approvedBy, comment } = payload;
+        if (Array.isArray(serverDb.leaveRequests)) {
+          serverDb.leaveRequests = serverDb.leaveRequests.map((l: any) =>
+            l.id === requestId
+              ? {
+                  ...l,
+                  status,
+                  approvedBy: approvedBy || l.approvedBy,
+                  adminComment: comment || l.adminComment,
+                }
+              : l
+          );
+          persistDatabase();
+        }
+      }
+
+      // If client punches attendance over WebSocket
+      if (type === 'PUNCH_ATTENDANCE' && payload) {
+        const record = payload.record || payload;
+        if (record && record.id) {
+          serverDb.attendanceRecords = [record, ...(serverDb.attendanceRecords || []).filter((r: any) => r.id !== record.id).slice(0, 499)];
+          persistDatabase();
+        }
       }
 
       // Ensure timestamp and forward to all other clients
@@ -531,14 +580,22 @@ app.post('/api/leaves/submit', (req, res) => {
   serverDb.leaveRequests = [request, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== request.id)];
   persistDatabase();
 
-  const eventPayload = {
+  const eventPayload1 = {
+    type: 'SUBMIT_LEAVE',
+    payload: request,
+    senderId: senderId || 'employee_client',
+    timestamp: new Date().toISOString(),
+  };
+
+  const eventPayload2 = {
     type: 'SUBMIT_LEAVE_REQUEST',
     payload: request,
     senderId: senderId || 'employee_client',
     timestamp: new Date().toISOString(),
   };
 
-  broadcastToClients(eventPayload);
+  broadcastToClients(eventPayload1);
+  broadcastToClients(eventPayload2);
   res.json({ success: true, request });
 });
 

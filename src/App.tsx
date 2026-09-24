@@ -197,6 +197,12 @@ export default function App() {
     setActionAlerts((prev) => [newAlert, ...prev.slice(0, 30)]);
   };
 
+  const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
+    setLiveToast({ title, message, type });
+    setTimeout(() => setLiveToast(null), 5000);
+    playAlertChime(type === 'leave' ? 'leave' : type === 'punch' ? 'punch' : 'alert');
+  };
+
   // Keep actionAlerts populated with pending leave requests
   useEffect(() => {
     const pending = leaveRequests.filter((r) => r.status === 'pending');
@@ -360,16 +366,25 @@ export default function App() {
 
           isCloudInitializedRef.current = true;
           setIsCloudSyncLoading(false);
+
+          // Update server memory state with true cloud data
+          fetch('/api/system/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state: cloudState, senderId: 'cloud_sync_client' }),
+          }).catch(() => {});
+
           return;
         }
 
-        // 2. Fallback to local server API if running in fullstack dev server
-        try {
-          const res = await fetch('/api/system/state');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.state && isMounted) {
-              const s = data.state;
+        // 2. Fallback to local server API ONLY if this device has no local cache
+        if (!hasLocalCache) {
+          try {
+            const res = await fetch('/api/system/state');
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && data.state && isMounted) {
+                const s = data.state;
               if (Array.isArray(s.branches) && s.branches.length > 0) {
                 setBranches(s.branches);
                 localStorage.setItem('attend_branches', JSON.stringify(s.branches));
@@ -423,6 +438,7 @@ export default function App() {
         } catch (err) {
           // Expected on static environments like Vercel
         }
+      }
       } catch (err) {
         console.warn('Failed to fetch initial canonical state:', err);
       } finally {
@@ -464,18 +480,12 @@ export default function App() {
       setOnlinePeersCount(Math.max(1, count));
     });
 
-    const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
-      setLiveToast({ title, message, type });
-      setTimeout(() => setLiveToast(null), 5000);
-      playAlertChime(type === 'leave' ? 'leave' : type === 'punch' ? 'punch' : 'alert');
-    };
-
     const unsubSync = realtimeService.subscribe((message: SyncMessage) => {
       const { type, payload, senderName } = message;
 
-      if (type === 'INIT_ACK' || type === 'SYSTEM_STATE_SYNC' || type === 'CANONICAL_STATE_RESPONSE') {
+      if (type === 'SYSTEM_STATE_SYNC' || type === 'CANONICAL_STATE_RESPONSE') {
         const s = payload?.state;
-        if (s) {
+        if (s && (s.isReset === true || s.isRestore === true)) {
           if (Array.isArray(s.branches)) {
             setBranches(s.branches);
             localStorage.setItem('attend_branches', JSON.stringify(s.branches));
@@ -582,11 +592,14 @@ export default function App() {
           `${empName} ${actionType} - ${record.branchNameEn || ''}`,
           'punch'
         );
-      } else if (type === 'SUBMIT_LEAVE' && payload) {
+      } else if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload) {
+        isReceivingCloudUpdate.current = true;
         setLeaveRequests((prev) => {
           if (prev.some((l) => l.id === payload.id)) return prev;
           return [payload, ...prev];
         });
+
+        playAlertChime('leave');
 
         addActionAlert({
           type: 'leave_submit',
@@ -601,9 +614,13 @@ export default function App() {
 
         showLiveAlert(
           lang === 'km' ? '📋 ស្នើសុំច្បាប់ថ្មី (Live Sync)' : '📋 New Leave Request',
-          `${payload.employeeNameKh || payload.employeeNameEn || 'Staff'}: ${payload.reason || ''}`,
+          `${payload.employeeNameKh || payload.employeeNameEn || 'Staff'}: ${payload.reason || ''} (${payload.startDate} → ${payload.endDate})`,
           'leave'
         );
+
+        setTimeout(() => {
+          isReceivingCloudUpdate.current = false;
+        }, 500);
       } else if (type === 'UPDATE_LEAVE_STATUS' && payload) {
         const { requestId, status, approvedBy, comment } = payload;
         setLeaveRequests((prev) =>
@@ -775,7 +792,33 @@ export default function App() {
           localStorage.setItem('attend_records', JSON.stringify(cloudData.attendanceRecords));
         }
         if (Array.isArray(cloudData.leaveRequests)) {
-          setLeaveRequests(cloudData.leaveRequests);
+          setLeaveRequests((prevLeaves) => {
+            const prevIds = new Set(prevLeaves.map((l) => l.id));
+            const newPending = cloudData.leaveRequests!.filter(
+              (l) => !prevIds.has(l.id) && l.status === 'pending'
+            );
+            if (newPending.length > 0 && !isInitialCloudLoad) {
+              playAlertChime('leave');
+              newPending.forEach((req) => {
+                addActionAlert({
+                  type: 'leave_submit',
+                  titleKh: 'សំណើសុំច្បាប់ថ្មី',
+                  titleEn: 'New Staff Leave Request',
+                  detailKh: `${req.employeeNameKh || req.employeeNameEn || 'បុគ្គលិក'}: ${req.reason || ''} (${req.typeKh || req.category || 'ច្បាប់'})`,
+                  detailEn: `${req.employeeNameEn || 'Staff'}: ${req.reason || ''} (${req.startDate} → ${req.endDate})`,
+                  leaveRequestId: req.id,
+                  actorName: req.employeeNameKh || req.employeeNameEn,
+                  actorAvatar: req.employeeAvatar,
+                });
+                showLiveAlert(
+                  lang === 'km' ? '📋 ស្នើសុំច្បាប់ថ្មី (Cloud Sync)' : '📋 New Leave Request Submitted',
+                  `${req.employeeNameKh || req.employeeNameEn || 'Staff'}: ${req.reason || ''} (${req.startDate} → ${req.endDate})`,
+                  'leave'
+                );
+              });
+            }
+            return cloudData.leaveRequests!;
+          });
           localStorage.setItem('attend_leaves', JSON.stringify(cloudData.leaveRequests));
         }
         if (Array.isArray(cloudData.transferRecords)) {
@@ -1230,6 +1273,7 @@ export default function App() {
     const nextLeaves = [newRequest, ...leaveRequests];
     setLeaveRequests(nextLeaves);
     realtimeService.emit('SUBMIT_LEAVE', newRequest);
+    realtimeService.emit('SUBMIT_LEAVE_REQUEST', newRequest);
     playAlertChime('leave');
 
     // Add instant visual action alert
