@@ -48,7 +48,8 @@ import {
   Laptop,
   Monitor,
   ExternalLink,
-  LayoutGrid
+  LayoutGrid,
+  Type
 } from 'lucide-react';
 import { 
   Branch, 
@@ -69,6 +70,7 @@ import {
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { BackupRestorePanel } from './BackupRestorePanel';
 import { updateDynamicAppBranding } from '../utils/pwaBrandUtils';
+import { KhmerTypographySettings } from './KhmerTypographySettings';
 
 interface AdminSettingsViewProps {
   branches: Branch[];
@@ -85,10 +87,12 @@ interface AdminSettingsViewProps {
   auditLogs: AuditLogEntry[];
   onAddAuditLog: (log: AuditLogEntry) => void;
   employees: Employee[];
+  currentUser?: AuthUser | null;
   adminProfile?: AuthUser;
   attendanceRecords?: AttendanceRecord[];
   leaveRequests?: LeaveRequest[];
   transferRecords?: BranchTransferRecord[];
+  initialActiveTab?: 'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
   onRestoreBackup?: (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => void;
   onResetSystem?: (type: 'demo_seed' | 'clean_fresh') => void;
   onUpdateLeaveRequests?: (leaves: LeaveRequest[]) => void;
@@ -141,10 +145,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   auditLogs,
   onAddAuditLog,
   employees,
+  currentUser,
   adminProfile,
   attendanceRecords = [],
   leaveRequests = [],
   transferRecords = [],
+  initialActiveTab,
   onRestoreBackup = () => {},
   onResetSystem = () => {},
   onUpdateLeaveRequests,
@@ -154,7 +160,9 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   connectedPeers = [],
   lang,
 }) => {
-  const [activeTab, setActiveTab] = useState<'branches' | 'branding' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup'>('branches');
+  const [activeTab, setActiveTab] = useState<'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup'>(
+    initialActiveTab || 'branches'
+  );
 
   // Branch Management State
   const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
@@ -627,6 +635,22 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
         <button
           type="button"
+          onClick={() => setActiveTab('typography')}
+          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
+            activeTab === 'typography'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <Type className="w-4 h-4 text-amber-300" />
+          <span>{lang === 'km' ? '៣. អក្សរ & Visual (Khmer Fonts)' : '3. Khmer Typography & Visual'}</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === 'typography' ? 'bg-indigo-700 text-white' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
+            ADMIN ONLY
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('roles')}
           className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
             activeTab === 'roles'
@@ -635,7 +659,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Shield className="w-4 h-4" />
-          <span>{lang === 'km' ? '៣. សិទ្ធិតួនាទី (RBAC Permissions)' : '3. RBAC Role Permissions'}</span>
+          <span>{lang === 'km' ? '៤. សិទ្ធិតួនាទី (RBAC Permissions)' : '4. RBAC Role Permissions'}</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'roles' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
             {rolesForm.length} Roles
           </span>
@@ -651,7 +675,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <CalendarCheck className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៤. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត' : '4. Leave & Quota Controls'}</span>
+          <span>{lang === 'km' ? '៥. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត' : '5. Leave & Quota Controls'}</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'leaves' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
             {leaveRequests.length}
           </span>
@@ -667,7 +691,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Zap className="w-4 h-4" />
-          <span>{lang === 'km' ? '៥. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស' : '5. System Rules & Broadcast'}</span>
+          <span>{lang === 'km' ? '៦. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស' : '6. System Rules & Broadcast'}</span>
         </button>
 
         <button
@@ -680,7 +704,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <History className="w-4 h-4" />
-          <span>{lang === 'km' ? '៦. កំណត់ត្រាសវនកម្ម (Audit Trail)' : '6. Audit Trail & Logs'}</span>
+          <span>{lang === 'km' ? '៧. កំណត់ត្រាសវនកម្ម (Audit Trail)' : '7. Audit Trail & Logs'}</span>
         </button>
 
         <button
@@ -693,7 +717,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Database className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៧. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)' : '7. Backup, Restore & Sync'}</span>
+          <span>{lang === 'km' ? '៨. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)' : '8. Backup, Restore & Sync'}</span>
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </button>
       </div>
@@ -1414,7 +1438,39 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: RBAC ROLE PERMISSIONS MATRIX */}
+      {/* TAB 3: KHMER TYPOGRAPHY & VISUAL SUITE (ADMIN ONLY) */}
+      {/* ========================================================================= */}
+      {activeTab === 'typography' && (
+        <KhmerTypographySettings
+          currentUser={currentUser || adminProfile}
+          lang={lang}
+          branding={brandForm}
+          onUpdateBranding={(partial) => {
+            const updated = { ...brandForm, ...partial };
+            setBrandForm(updated);
+            onUpdateBranding(updated);
+            updateDynamicAppBranding(updated, lang);
+          }}
+          onAddAuditLog={(action, actionKh, details, detailsKh, status = 'success') => {
+            const logEntry: AuditLogEntry = {
+              id: `log_${Date.now()}`,
+              timestamp: new Date().toISOString(),
+              actorName: currentUser?.nameKh || currentUser?.nameEn || adminProfile?.nameKh || 'Super Admin',
+              actorRole: 'admin',
+              action,
+              actionKh,
+              module: 'system',
+              details,
+              detailsKh,
+              status,
+            };
+            onAddAuditLog(logEntry);
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 4: RBAC ROLE PERMISSIONS MATRIX */}
       {/* ========================================================================= */}
       {activeTab === 'roles' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

@@ -901,6 +901,16 @@ export const INITIAL_BRANDING: import('../types').CompanyBranding = {
   qrWatermarkText: 'VERIFIED GEO-ATTENDANCE • PPHG',
   qrRefreshIntervalSecs: 30,
   loginStyle: 'option_b',
+  typography: {
+    fontFamily: 'Kantumruy Pro',
+    headingFontFamily: 'Battambang',
+    fontSizeScale: 112,
+    fontWeight: '500',
+    lineHeight: 1.7,
+    letterSpacing: '0.012em',
+    textContrast: 'normal',
+    enableGlobalKhmerScaling: true,
+  },
 };
 
 export const INITIAL_ROLE_PERMISSIONS: import('../types').RolePermission[] = [

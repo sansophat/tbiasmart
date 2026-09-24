@@ -179,6 +179,21 @@ export interface BranchTransferRecord {
 
 export type Language = 'km' | 'en';
 
+export type KhmerFontWeight = '400' | '500' | '600' | '700';
+
+export interface KhmerTypographyConfig {
+  fontFamily: string; // 'Kantumruy Pro' | 'Battambang' | 'Noto Sans Khmer' | 'Siemreap' | 'Hanuman' | 'Koh Santepheap'
+  headingFontFamily: string; // 'Battambang' | 'Koulen' | 'Kantumruy Pro' | 'Noto Sans Khmer' | 'Hanuman'
+  fontSizeScale: number; // percentage: e.g. 100, 108, 114, 122, 130
+  fontWeight: KhmerFontWeight; // '400' | '500' | '600' | '700'
+  lineHeight: number; // 1.5, 1.65, 1.75, 1.9
+  letterSpacing: string; // '0em' | '0.01em' | '0.015em' | '0.02em'
+  textContrast: 'normal' | 'high';
+  enableGlobalKhmerScaling: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface CompanyBranding {
   companyNameKh: string;
   companyNameEn: string;
@@ -194,6 +209,7 @@ export interface CompanyBranding {
   qrWatermarkText: string;
   qrRefreshIntervalSecs: number;
   loginStyle?: 'option_a' | 'option_b' | 'option_c';
+  typography?: KhmerTypographyConfig;
 }
 
 export interface RolePermission {

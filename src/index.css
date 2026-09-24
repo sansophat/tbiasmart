@@ -1,20 +1,36 @@
 @import "tailwindcss";
 
+:root {
+  --kh-font-body: 'Kantumruy Pro', 'Battambang', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --kh-font-heading: 'Battambang', 'Kantumruy Pro', sans-serif;
+  --kh-font-size-scale: 1.12;
+  --kh-font-weight: 500;
+  --kh-line-height: 1.7;
+  --kh-letter-spacing: 0.012em;
+}
+
 @layer base {
   body {
-    font-family: 'Hanuman', Arial, 'Helvetica Neue', Helvetica, sans-serif;
-    line-height: 1.6;
-    letter-spacing: 0.01em;
+    font-family: var(--kh-font-body);
+    line-height: var(--kh-line-height);
+    letter-spacing: var(--kh-letter-spacing);
+    font-weight: var(--kh-font-weight);
     color: #1e293b;
     background-color: #f8fafc;
+  }
+
+  /* HTML root scaling for rem units */
+  html.khmer-active,
+  html[lang="km"] {
+    font-size: calc(16px * var(--kh-font-size-scale, 1.12));
   }
 
   h1, h2, h3, h4, h5, h6,
   .font-title,
   .font-heading,
   .font-brand {
-    font-family: 'Battambang', Arial, 'Helvetica Neue', Helvetica, sans-serif;
-    letter-spacing: 0.02em;
+    font-family: var(--kh-font-heading);
+    letter-spacing: 0.015em;
   }
 
   /* Subtitles & Descriptions */
@@ -22,17 +38,17 @@
   .sub-title,
   .text-subtitle,
   p, span, label, input, select, textarea, td, th {
-    font-family: 'Hanuman', Arial, 'Helvetica Neue', Helvetica, sans-serif;
+    font-family: var(--kh-font-body);
   }
 
-  /* Card elements use Battambang font for titles and card containers */
+  /* Card elements use custom heading font for titles and card containers */
   .card,
   .stat-card,
   .kpi-card,
   .card-header,
   .card-title,
   .card-battambang {
-    font-family: 'Battambang', Arial, 'Helvetica Neue', Helvetica, sans-serif;
+    font-family: var(--kh-font-body);
   }
 
   button, input, select, textarea {
@@ -40,44 +56,78 @@
   }
 }
 
+/* High Contrast Mode for Enhanced Khmer Readability */
+html.khmer-high-contrast {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.khmer-high-contrast .text-slate-500 {
+  color: #334155 !important; /* darker slate-700 instead of faint slate-500 */
+}
+
+html.khmer-high-contrast .text-slate-400 {
+  color: #475569 !important; /* darker slate-600 */
+}
+
+html.khmer-high-contrast .text-slate-600 {
+  color: #1e293b !important; /* deeper slate-800 */
+}
+
 /* Specific Font Utilities */
+.font-kantumruy {
+  font-family: 'Kantumruy Pro', Arial, sans-serif !important;
+}
+
 .font-battambang {
-  font-family: 'Battambang', Arial, 'Helvetica Neue', Helvetica, sans-serif !important;
+  font-family: 'Battambang', Arial, sans-serif !important;
+}
+
+.font-noto-khmer {
+  font-family: 'Noto Sans Khmer', Arial, sans-serif !important;
+}
+
+.font-siemreap {
+  font-family: 'Siemreap', Arial, sans-serif !important;
 }
 
 .font-hanuman {
-  font-family: 'Hanuman', Arial, 'Helvetica Neue', Helvetica, sans-serif !important;
+  font-family: 'Hanuman', Arial, sans-serif !important;
 }
 
-.font-arial {
-  font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif !important;
+.font-koulen {
+  font-family: 'Koulen', cursive, sans-serif !important;
 }
 
-/* Sidebar Specific Font Rules - strictly Hanuman */
+.font-koh-santepheap {
+  font-family: 'Koh Santepheap', serif, sans-serif !important;
+}
+
+/* Sidebar follows active typography font */
 .sidebar-container,
 .sidebar-container * {
-  font-family: 'Hanuman', Arial, 'Helvetica Neue', Helvetica, sans-serif !important;
+  font-family: var(--kh-font-body);
 }
 
-/* Card Specific Styling with Battambang for headings and Hanuman for body */
+/* Card Specific Styling */
 .card,
 .stat-card,
 .kpi-card {
-  font-family: 'Battambang', Arial, 'Helvetica Neue', Helvetica, sans-serif;
+  font-family: var(--kh-font-body);
 }
 
 .card p,
-.card span:not(.font-battambang):not(.font-bold-number),
+.card span:not(.font-battambang):not(.font-bold-number):not(.font-koulen),
 .card li,
 .card td,
 .card label {
-  font-family: 'Hanuman', Arial, 'Helvetica Neue', Helvetica, sans-serif;
+  font-family: var(--kh-font-body);
 }
 
 .card h1, .card h2, .card h3, .card h4, .card h5, .card h6,
 .card-title,
 .card-header {
-  font-family: 'Battambang', Arial, 'Helvetica Neue', Helvetica, sans-serif !important;
+  font-family: var(--kh-font-heading);
 }
 
 /* Custom Leaflet Map styling */

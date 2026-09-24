@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
+import { AdminQuickVisualWidget } from './AdminQuickVisualWidget';
 
 interface NavbarProps {
   activeTab: string;
@@ -38,6 +39,8 @@ interface NavbarProps {
   onOpenLoginModal: () => void;
   pendingLeavesCount?: number;
   branding?: CompanyBranding;
+  onUpdateBranding?: (branding: Partial<CompanyBranding>) => void;
+  onNavigateToSettingsTypography?: () => void;
   broadcastNoticeKh?: string;
   broadcastNoticeEn?: string;
   broadcastActive?: boolean;
@@ -62,6 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenLoginModal,
   pendingLeavesCount = 0,
   branding,
+  onUpdateBranding,
   broadcastNoticeKh,
   broadcastNoticeEn,
   broadcastActive = true,
