@@ -28,14 +28,19 @@ import {
   User,
   HeartPulse
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language } from '../types';
+import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest } from '../types';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
+import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
+import { RealtimeActionAlertCenter, ActionAlertItem } from './RealtimeActionAlertCenter';
 
 interface DashboardViewProps {
   branches: Branch[];
   employees: Employee[];
   attendanceRecords: AttendanceRecord[];
   transferRecords?: BranchTransferRecord[];
+  leaveRequests?: LeaveRequest[];
+  onUpdateLeaveStatus?: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
+  actionAlerts?: ActionAlertItem[];
   currentUser?: AuthUser | null;
   selectedBranchId: string;
   setSelectedBranchId: (id: string) => void;
@@ -49,6 +54,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   employees,
   attendanceRecords,
   transferRecords = [],
+  leaveRequests = [],
+  onUpdateLeaveStatus,
+  actionAlerts = [],
   currentUser,
   selectedBranchId,
   setSelectedBranchId,
@@ -373,117 +381,184 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* KPI Metric Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* Present Today */}
-        <div className="card stat-card bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-              {lang === 'km' ? 'វត្តមានថ្ងៃនេះ' : 'Present Today'}
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
-              <UserCheck className="w-4 h-4" />
+      {(() => {
+        const pendingLeavesCount = leaveRequests.filter((r) => r.status === 'pending').length;
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+            {/* Present Today */}
+            <div className="card stat-card bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'វត្តមានថ្ងៃនេះ' : 'Present Today'}
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className="text-3xl font-bold text-slate-800">
+                  {lang === 'km' ? toKhmerNumeral(presentCount) : presentCount}
+                </span>
+                <span className="text-xs text-slate-400 font-medium">
+                  / {relevantEmployees.length} {lang === 'km' ? 'នាក់' : 'staff'}
+                </span>
+              </div>
+              <p className="text-xs text-emerald-600 font-bold flex items-center gap-1 font-hanuman">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>
+                  {relevantEmployees.length > 0 ? Math.round((presentCount / relevantEmployees.length) * 100) : 0}% {lang === 'km' ? 'អត្រាវត្តមាន' : 'rate'}
+                </span>
+              </p>
             </div>
-          </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-3xl font-bold text-slate-800">
-              {lang === 'km' ? toKhmerNumeral(presentCount) : presentCount}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">
-              / {relevantEmployees.length} {lang === 'km' ? 'នាក់' : 'staff'}
-            </span>
-          </div>
-          <p className="text-xs text-emerald-600 font-bold flex items-center gap-1 font-hanuman">
-            <TrendingUp className="w-3.5 h-3.5" />
-            <span>
-              {relevantEmployees.length > 0 ? Math.round((presentCount / relevantEmployees.length) * 100) : 0}% {lang === 'km' ? 'អត្រាវត្តមាន' : 'rate'}
-            </span>
-          </p>
-        </div>
 
-        {/* On-Time Arrival */}
-        <div className="card stat-card bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-              {lang === 'km' ? 'មកទៀងម៉ោង' : 'On-Time'}
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100">
-              <CheckCircle2 className="w-4 h-4" />
+            {/* On-Time Arrival */}
+            <div className="card stat-card bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'មកទៀងម៉ោង' : 'On-Time'}
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className="text-3xl font-bold text-teal-600">
+                  {lang === 'km' ? toKhmerNumeral(onTimeCount) : onTimeCount}
+                </span>
+                <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium font-hanuman">
+                {lang === 'km' ? 'ក្នុងកំឡុងអនុគ្រោះ' : 'Within grace period'}
+              </p>
             </div>
-          </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-3xl font-bold text-teal-600">
-              {lang === 'km' ? toKhmerNumeral(onTimeCount) : onTimeCount}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
-          </div>
-          <p className="text-xs text-slate-500 font-medium font-hanuman">
-            {lang === 'km' ? 'ក្នុងកំឡុងពេលអនុគ្រោះ' : 'Within grace period'}
-          </p>
-        </div>
 
-        {/* Late Arrivals */}
-        <div className="card stat-card bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-              {lang === 'km' ? 'មកយឺត' : 'Late Arrivals'}
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
-              <Clock className="w-4 h-4" />
+            {/* Late Arrivals */}
+            <div className="card stat-card bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'មកយឺត' : 'Late Arrivals'}
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
+                  <Clock className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className="text-3xl font-bold text-rose-600">
+                  {lang === 'km' ? toKhmerNumeral(lateCount) : lateCount}
+                </span>
+                <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
+              </div>
+              <p className="text-xs text-rose-600 font-bold font-hanuman">
+                {lang === 'km' ? 'កត់ត្រាម៉ោងយឺត' : 'Auto-penalized time'}
+              </p>
             </div>
-          </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-3xl font-bold text-rose-600">
-              {lang === 'km' ? toKhmerNumeral(lateCount) : lateCount}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
-          </div>
-          <p className="text-xs text-rose-600 font-bold font-hanuman">
-            {lang === 'km' ? 'កត់ត្រាម៉ោងយឺតស្វ័យប្រវត្តិ' : 'Auto-penalized time'}
-          </p>
-        </div>
 
-        {/* Overtime */}
-        <div className="card stat-card bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-              {lang === 'km' ? 'ថែមម៉ោង (OT)' : 'Overtime'}
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
-              <Sparkles className="w-4 h-4" />
+            {/* Overtime */}
+            <div className="card stat-card bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'ថែមម៉ោង (OT)' : 'Overtime'}
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className="text-3xl font-bold text-indigo-600">
+                  {lang === 'km' ? toKhmerNumeral(overtimeCount) : overtimeCount}
+                </span>
+                <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
+              </div>
+              <p className="text-xs text-indigo-600 font-medium font-hanuman">
+                {lang === 'km' ? 'ក្លិប & ឃ្លាំង OT' : 'Clubs & Logistics OT'}
+              </p>
             </div>
-          </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-3xl font-bold text-indigo-600">
-              {lang === 'km' ? toKhmerNumeral(overtimeCount) : overtimeCount}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'នាក់' : 'pax'}</span>
-          </div>
-          <p className="text-xs text-indigo-600 font-medium font-hanuman">
-            {lang === 'km' ? 'ក្លិបរាត្រី & ឃ្លាំង' : 'Clubs & Logistics OT'}
-          </p>
-        </div>
 
-        {/* GPS Geofence Compliance Rate */}
-        <div className="col-span-2 lg:col-span-1 card stat-card bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-              {lang === 'km' ? 'សុក្រឹតភាព GPS' : 'GPS Compliance'}
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
-              <ShieldCheck className="w-4 h-4" />
+            {/* Pending Leaves Card */}
+            <div 
+              onClick={() => {
+                const el = document.getElementById('dashboard-leave-approvals-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className={`card stat-card p-4 sm:p-5 rounded-2xl border transition cursor-pointer ${
+                pendingLeavesCount > 0 
+                  ? 'bg-amber-50/80 border-amber-300 shadow-sm hover:shadow-md ring-1 ring-amber-400/50' 
+                  : 'bg-white border-slate-200 shadow-sm hover:shadow-md'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'ច្បាប់រង់ចាំ' : 'Pending Leaves'}
+                </span>
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center border ${
+                  pendingLeavesCount > 0 ? 'bg-amber-100 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-200'
+                }`}>
+                  <Calendar className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className={`text-3xl font-bold ${pendingLeavesCount > 0 ? 'text-amber-700' : 'text-slate-800'}`}>
+                  {lang === 'km' ? toKhmerNumeral(pendingLeavesCount) : pendingLeavesCount}
+                </span>
+                <span className="text-xs text-slate-400 font-medium">{lang === 'km' ? 'ពាក្យ' : 'reqs'}</span>
+              </div>
+              <p className="text-xs text-amber-700 font-bold font-hanuman flex items-center gap-1">
+                <span>{pendingLeavesCount > 0 ? '⚡ ពិនិត្យភ្លាមៗ' : '✅ រួចរាល់ទាំងអស់'}</span>
+              </p>
+            </div>
+
+            {/* GPS Compliance */}
+            <div className="card stat-card bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2 hover:shadow-md transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                  {lang === 'km' ? 'សុក្រឹតភាព GPS' : 'GPS Compliance'}
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline space-x-2">
+                <span className="text-3xl font-bold text-emerald-600">
+                  {gpsComplianceRate}%
+                </span>
+              </div>
+              <p className="text-xs text-emerald-700 font-bold flex items-center gap-1 font-hanuman">
+                <span>🛡️</span>
+                <span>{lang === 'km' ? '១០០% On-Site' : '100% On-Site'}</span>
+              </p>
             </div>
           </div>
-          <div className="flex items-baseline space-x-2">
-            <span className="text-3xl font-bold text-emerald-600">
-              {gpsComplianceRate}%
-            </span>
-          </div>
-          <p className="text-xs text-emerald-700 font-bold flex items-center gap-1 font-hanuman">
-            <span>🛡️</span>
-            <span>{lang === 'km' ? 'គ្មានការក្លែងបន្លំ' : '100% On-Site'}</span>
-          </p>
+        );
+      })()}
+
+      {/* Real-time Live Action Feed & Alerts Ticker */}
+      <RealtimeActionAlertCenter
+        alerts={actionAlerts}
+        pendingLeavesCount={leaveRequests.filter((r) => r.status === 'pending').length}
+        onApproveLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'approved') : undefined}
+        onRejectLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'rejected') : undefined}
+        onNavigateToLeaves={() => {
+          const el = document.getElementById('dashboard-leave-approvals-section');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }}
+        onNavigateToAttendance={() => onNavigateTab('scan')}
+        lang={lang}
+      />
+
+      {/* Staff Leave Requests & Approvals Queue (Actionable Center) */}
+      {onUpdateLeaveStatus && (
+        <div id="dashboard-leave-approvals-section">
+          <DashboardLeaveApprovals
+            leaveRequests={leaveRequests}
+            employees={employees}
+            branches={branches}
+            currentUser={currentUser}
+            onUpdateLeaveStatus={onUpdateLeaveStatus}
+            onNavigateToLeavesTab={() => onNavigateTab('settings')}
+            lang={lang}
+          />
         </div>
-      </div>
+      )}
 
       {/* 7 Branches Archetype Filter & Status Cards Grid */}
       <div className="space-y-4">

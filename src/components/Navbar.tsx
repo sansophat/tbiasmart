@@ -19,7 +19,9 @@ import {
   LayoutDashboard,
   Lock,
   ChevronRight,
-  Download
+  Download,
+  Calendar,
+  Bell
 } from 'lucide-react';
 import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
@@ -215,6 +217,30 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Download className="w-3.5 h-3.5 text-indigo-600" />
               <span className="hidden md:inline">{lang === 'km' ? 'ដំឡើង App' : 'Install'}</span>
+            </button>
+          )}
+
+          {/* Pending Leaves Alert Pill */}
+          {pendingLeavesCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('dashboard');
+                setTimeout(() => {
+                  const el = document.getElementById('dashboard-leave-approvals-section');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }, 100);
+              }}
+              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 shadow-xs cursor-pointer animate-pulse transition"
+              title={lang === 'km' ? `មាន ${pendingLeavesCount} ពាក្យស្នើសុំច្បាប់រង់ចាំអនុម័ត` : `${pendingLeavesCount} pending leave requests waiting for approval`}
+            >
+              <Calendar className="w-3.5 h-3.5 text-rose-600" />
+              <span className="hidden sm:inline font-battambang">
+                {lang === 'km' ? 'ច្បាប់រង់ចាំ' : 'Leaves'}
+              </span>
+              <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center">
+                {pendingLeavesCount}
+              </span>
             </button>
           )}
 

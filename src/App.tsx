@@ -55,6 +55,8 @@ import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
+import { playAlertChime } from './utils/soundUtils';
+import { ActionAlertItem } from './components/RealtimeActionAlertCenter';
 import { Cloud, Loader2 } from 'lucide-react';
 import { 
   subscribeToCloudDatabase, 
@@ -179,6 +181,48 @@ export default function App() {
     const saved = localStorage.getItem('attend_audit_logs');
     return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
   });
+
+  // Real-time Action Alerts State (instant feedback for all staff activities)
+  const [actionAlerts, setActionAlerts] = useState<ActionAlertItem[]>(() => {
+    return [];
+  });
+
+  const addActionAlert = (alert: Omit<ActionAlertItem, 'id' | 'timestamp'>) => {
+    const newAlert: ActionAlertItem = {
+      ...alert,
+      id: `alert_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      timestamp: new Date().toLocaleTimeString(lang === 'km' ? 'km-KH' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      isUnread: true,
+    };
+    setActionAlerts((prev) => [newAlert, ...prev.slice(0, 30)]);
+  };
+
+  // Keep actionAlerts populated with pending leave requests
+  useEffect(() => {
+    const pending = leaveRequests.filter((r) => r.status === 'pending');
+    if (pending.length > 0) {
+      setActionAlerts((prev) => {
+        const existingReqIds = new Set(prev.filter((a) => a.leaveRequestId).map((a) => a.leaveRequestId));
+        const newItems: ActionAlertItem[] = pending
+          .filter((r) => !existingReqIds.has(r.id))
+          .map((r) => ({
+            id: `alert_leave_${r.id}`,
+            type: 'leave_submit',
+            titleKh: 'សំណើសុំច្បាប់រង់ចាំអនុម័ត',
+            titleEn: 'Pending Leave Approval',
+            detailKh: `${r.employeeNameKh || r.employeeNameEn}: ${r.reason} (${r.typeKh})`,
+            detailEn: `${r.employeeNameEn || 'Staff'}: ${r.reason} (${r.startDate} → ${r.endDate})`,
+            timestamp: r.appliedAt || new Date().toISOString().split('T')[0],
+            isUnread: true,
+            leaveRequestId: r.id,
+            actorName: r.employeeNameKh || r.employeeNameEn,
+            actorAvatar: r.employeeAvatar,
+          }));
+        if (newItems.length === 0) return prev;
+        return [...newItems, ...prev].slice(0, 30);
+      });
+    }
+  }, [leaveRequests]);
 
   // Transfer modal state
   const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
@@ -422,7 +466,8 @@ export default function App() {
 
     const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
       setLiveToast({ title, message, type });
-      setTimeout(() => setLiveToast(null), 4500);
+      setTimeout(() => setLiveToast(null), 5000);
+      playAlertChime(type === 'leave' ? 'leave' : type === 'punch' ? 'punch' : 'alert');
     };
 
     const unsubSync = realtimeService.subscribe((message: SyncMessage) => {
@@ -522,6 +567,16 @@ export default function App() {
           ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
           : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
         
+        addActionAlert({
+          type: 'punch',
+          titleKh: 'វត្តមានស្កេនថ្មី',
+          titleEn: 'Attendance Punch',
+          detailKh: `${empName} ${actionType} - ${record.branchNameKh || record.branchNameEn || ''}`,
+          detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''}`,
+          actorName: empName,
+          actorAvatar: record.employeeAvatar,
+        });
+
         showLiveAlert(
           lang === 'km' ? '🟢 វត្តមានថ្មី (Live Sync)' : '🟢 Real-time Attendance Sync',
           `${empName} ${actionType} - ${record.branchNameEn || ''}`,
@@ -532,9 +587,21 @@ export default function App() {
           if (prev.some((l) => l.id === payload.id)) return prev;
           return [payload, ...prev];
         });
+
+        addActionAlert({
+          type: 'leave_submit',
+          titleKh: 'សំណើសុំច្បាប់ថ្មី',
+          titleEn: 'New Staff Leave Request',
+          detailKh: `${payload.employeeNameKh || payload.employeeNameEn || 'បុគ្គលិក'}: ${payload.reason || ''} (${payload.typeKh || payload.category || 'ច្បាប់'})`,
+          detailEn: `${payload.employeeNameEn || 'Staff'}: ${payload.reason || ''} (${payload.startDate} → ${payload.endDate})`,
+          leaveRequestId: payload.id,
+          actorName: payload.employeeNameKh || payload.employeeNameEn,
+          actorAvatar: payload.employeeAvatar,
+        });
+
         showLiveAlert(
           lang === 'km' ? '📋 ស្នើសុំច្បាប់ថ្មី (Live Sync)' : '📋 New Leave Request',
-          `${payload.employeeNameEn || 'Staff'}: ${payload.reason || ''}`,
+          `${payload.employeeNameKh || payload.employeeNameEn || 'Staff'}: ${payload.reason || ''}`,
           'leave'
         );
       } else if (type === 'UPDATE_LEAVE_STATUS' && payload) {
@@ -551,6 +618,17 @@ export default function App() {
               : l
           )
         );
+
+        addActionAlert({
+          type: 'leave_status',
+          titleKh: status === 'approved' ? 'ការអនុម័តច្បាប់ (Approved)' : 'ការបដិសេធច្បាប់ (Rejected)',
+          titleEn: `Leave Request ${status.toUpperCase()}`,
+          detailKh: `ពាក្យសុំច្បាប់ត្រូវបាន ${status === 'approved' ? 'អនុម័ត' : 'បដិសេធ'} ដោយ ${approvedBy || 'Admin'}${comment ? ` ("${comment}")` : ''}`,
+          detailEn: `Request ${status.toUpperCase()} by ${approvedBy || 'Admin'}${comment ? ` ("${comment}")` : ''}`,
+          leaveRequestId: requestId,
+          actorName: approvedBy,
+        });
+
         showLiveAlert(
           lang === 'km' ? '⚖️ ការអនុម័តច្បាប់ (Live Sync)' : '⚖️ Leave Status Updated',
           `Request status updated to "${status.toUpperCase()}"`,
@@ -1149,8 +1227,52 @@ export default function App() {
   };
 
   const handleSubmitLeaveRequest = (newRequest: LeaveRequest) => {
-    setLeaveRequests((prev) => [newRequest, ...prev]);
+    const nextLeaves = [newRequest, ...leaveRequests];
+    setLeaveRequests(nextLeaves);
     realtimeService.emit('SUBMIT_LEAVE', newRequest);
+    playAlertChime('leave');
+
+    // Add instant visual action alert
+    addActionAlert({
+      type: 'leave_submit',
+      titleKh: 'សំណើសុំច្បាប់ថ្មី',
+      titleEn: 'New Staff Leave Request',
+      detailKh: `${newRequest.employeeNameKh || newRequest.employeeNameEn}: ${newRequest.reason} (${newRequest.typeKh || newRequest.category})`,
+      detailEn: `${newRequest.employeeNameEn || 'Staff'}: ${newRequest.reason} (${newRequest.startDate} → ${newRequest.endDate})`,
+      leaveRequestId: newRequest.id,
+      actorName: newRequest.employeeNameKh || newRequest.employeeNameEn,
+      actorAvatar: newRequest.employeeAvatar,
+    });
+
+    // High visibility instant toast
+    setLiveToast({
+      title: lang === 'km' ? '📋 សំណើសុំច្បាប់ថ្មី (New Leave Request)' : '📋 New Leave Request Submitted',
+      message: `${newRequest.employeeNameKh || newRequest.employeeNameEn}: ${newRequest.reason} (${newRequest.startDate} → ${newRequest.endDate})`,
+      type: 'leave',
+    });
+    setTimeout(() => setLiveToast(null), 5000);
+
+    // Audit Log Entry
+    const logEntry: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actorName: newRequest.employeeNameKh || newRequest.employeeNameEn,
+      actorRole: 'employee',
+      action: `Submitted ${newRequest.category} request: ${newRequest.reason}`,
+      actionKh: `បានដាក់ពាក្យស្នើសុំ ${newRequest.typeKh}: ${newRequest.reason}`,
+      module: 'system',
+      details: `${newRequest.startDate} to ${newRequest.endDate}`,
+      detailsKh: `${newRequest.startDate} ដល់ ${newRequest.endDate}`,
+      status: 'warning',
+    };
+    handleAddAuditLog(logEntry);
+
+    // Sync to Cloud Firestore Universal DB immediately
+    syncStateToCloudImmediate({
+      leaveRequests: nextLeaves,
+      auditLogs: [logEntry, ...auditLogs],
+    });
+
     fetch('/api/leaves/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1162,20 +1284,58 @@ export default function App() {
     const approver = (currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) : 'Administrator') || 'Administrator';
     const targetReq = leaveRequests.find((r) => r.id === requestId);
 
-    setLeaveRequests((prev) =>
-      prev.map((r) =>
-        r.id === requestId
-          ? {
-              ...r,
-              status: newStatus,
-              approvedBy: approver,
-              adminComment: comment || r.adminComment,
-            }
-          : r
-      )
+    const nextLeaves = leaveRequests.map((r) =>
+      r.id === requestId
+        ? {
+            ...r,
+            status: newStatus,
+            approvedBy: approver,
+            adminComment: comment || r.adminComment,
+          }
+        : r
     );
 
+    setLeaveRequests(nextLeaves);
+    playAlertChime(newStatus === 'approved' ? 'approval' : 'rejection');
+
+    // Add real-time action alert
+    addActionAlert({
+      type: 'leave_status',
+      titleKh: newStatus === 'approved' ? 'ការអនុម័តច្បាប់ (Approved)' : 'ការបដិសេធច្បាប់ (Rejected)',
+      titleEn: `Leave Request ${newStatus.toUpperCase()}`,
+      detailKh: `${targetReq?.employeeNameKh || targetReq?.employeeNameEn || 'បុគ្គលិក'}: ${newStatus === 'approved' ? 'ត្រូវបានអនុម័ត' : 'ត្រូវបានបដិសេធ'} ដោយ ${approver}${comment ? ` ("${comment}")` : ''}`,
+      detailEn: `${targetReq?.employeeNameEn || 'Staff'}: ${newStatus.toUpperCase()} by ${approver}${comment ? ` ("${comment}")` : ''}`,
+      leaveRequestId: requestId,
+      actorName: approver,
+    });
+
+    // High visibility instant toast
+    setLiveToast({
+      title: newStatus === 'approved'
+        ? (lang === 'km' ? '✅ បានអនុម័តច្បាប់ជោគជ័យ' : '✅ Leave Request Approved')
+        : (lang === 'km' ? '❌ បានបដិសេធពាក្យសុំច្បាប់' : '❌ Leave Request Rejected'),
+      message: `${targetReq?.employeeNameKh || targetReq?.employeeNameEn || 'Staff'}: ${newStatus === 'approved' ? 'Approved' : 'Rejected'} by ${approver}`,
+      type: 'leave',
+    });
+    setTimeout(() => setLiveToast(null), 5000);
+
+    // Audit Log Entry
+    const logEntry: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      actorName: approver,
+      actorRole: 'admin',
+      action: `${newStatus === 'approved' ? 'Approved' : 'Rejected'} leave request for ${targetReq?.employeeNameEn || 'employee'}`,
+      actionKh: `${newStatus === 'approved' ? 'បានអនុម័ត' : 'បានបដិសេធ'} ពាក្យស្នើសុំច្បាប់របស់ ${targetReq?.employeeNameKh || targetReq?.employeeNameEn}`,
+      module: 'system',
+      details: comment ? `Comment: ${comment}` : `Status: ${newStatus}`,
+      detailsKh: comment ? `កំណត់សម្គាល់: ${comment}` : `ស្ថានភាព: ${newStatus}`,
+      status: newStatus === 'approved' ? 'success' : 'warning',
+    };
+    handleAddAuditLog(logEntry);
+
     // Adjust employee leave used balance when status transitions
+    let nextEmployees = employees;
     if (targetReq && targetReq.status !== newStatus) {
       const calculateDays = (start?: string, end?: string): number => {
         if (!start || !end) return 1;
@@ -1195,42 +1355,48 @@ export default function App() {
       const isSick = targetReq.category === 'sick' || targetReq.type === 'sick';
 
       if (isAnnual || isSick) {
-        setEmployees((prev) =>
-          prev.map((emp) => {
-            if (emp.id === targetReq.employeeId || emp.code === targetReq.employeeCode) {
-              const currentAnnualUsed = emp.annualLeaveUsed ?? 0;
-              const currentSickUsed = emp.sickLeaveUsed ?? 0;
-              let nextAnnualUsed = currentAnnualUsed;
-              let nextSickUsed = currentSickUsed;
+        nextEmployees = employees.map((emp) => {
+          if (emp.id === targetReq.employeeId || emp.code === targetReq.employeeCode) {
+            const currentAnnualUsed = emp.annualLeaveUsed ?? 0;
+            const currentSickUsed = emp.sickLeaveUsed ?? 0;
+            let nextAnnualUsed = currentAnnualUsed;
+            let nextSickUsed = currentSickUsed;
 
-              if (newStatus === 'approved') {
-                if (isAnnual) nextAnnualUsed += days;
-                if (isSick) nextSickUsed += days;
-              } else if (targetReq.status === 'approved' && newStatus === 'rejected') {
-                if (isAnnual) nextAnnualUsed = Math.max(0, nextAnnualUsed - days);
-                if (isSick) nextSickUsed = Math.max(0, nextSickUsed - days);
-              }
-
-              const updatedEmp: Employee = {
-                ...emp,
-                annualLeaveUsed: nextAnnualUsed,
-                sickLeaveUsed: nextSickUsed,
-              };
-
-              realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
-              fetch('/api/employees/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
-              }).catch(() => {});
-
-              return updatedEmp;
+            if (newStatus === 'approved') {
+              if (isAnnual) nextAnnualUsed += days;
+              if (isSick) nextSickUsed += days;
+            } else if (targetReq.status === 'approved' && newStatus === 'rejected') {
+              if (isAnnual) nextAnnualUsed = Math.max(0, nextAnnualUsed - days);
+              if (isSick) nextSickUsed = Math.max(0, nextSickUsed - days);
             }
-            return emp;
-          })
-        );
+
+            const updatedEmp: Employee = {
+              ...emp,
+              annualLeaveUsed: nextAnnualUsed,
+              sickLeaveUsed: nextSickUsed,
+            };
+
+            realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
+            fetch('/api/employees/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
+            }).catch(() => {});
+
+            return updatedEmp;
+          }
+          return emp;
+        });
+        setEmployees(nextEmployees);
       }
     }
+
+    // Immediate Firestore synchronization
+    syncStateToCloudImmediate({
+      leaveRequests: nextLeaves,
+      employees: nextEmployees,
+      auditLogs: [logEntry, ...auditLogs],
+    });
 
     realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
 
@@ -1618,6 +1784,9 @@ export default function App() {
               employees={employees}
               attendanceRecords={attendanceRecords}
               transferRecords={transferRecords}
+              leaveRequests={leaveRequests}
+              onUpdateLeaveStatus={handleUpdateLeaveStatus}
+              actionAlerts={actionAlerts}
               currentUser={currentUser}
               selectedBranchId={selectedBranchId}
               setSelectedBranchId={setSelectedBranchId}
@@ -1748,9 +1917,11 @@ export default function App() {
               auditLogs={auditLogs}
               onAddAuditLog={handleAddAuditLog}
               employees={employees}
+              currentUser={currentUser}
               adminProfile={adminProfile}
               attendanceRecords={attendanceRecords}
               leaveRequests={leaveRequests}
+              onUpdateLeaveStatus={handleUpdateLeaveStatus}
               transferRecords={transferRecords}
               onRestoreBackup={handleRestoreBackup}
               onResetSystem={handleResetSystem}

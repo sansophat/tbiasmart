@@ -71,6 +71,7 @@ import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { BackupRestorePanel } from './BackupRestorePanel';
 import { updateDynamicAppBranding } from '../utils/pwaBrandUtils';
 import { KhmerTypographySettings } from './KhmerTypographySettings';
+import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 
 interface AdminSettingsViewProps {
   branches: Branch[];
@@ -91,6 +92,7 @@ interface AdminSettingsViewProps {
   adminProfile?: AuthUser;
   attendanceRecords?: AttendanceRecord[];
   leaveRequests?: LeaveRequest[];
+  onUpdateLeaveStatus?: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
   transferRecords?: BranchTransferRecord[];
   initialActiveTab?: 'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
   onRestoreBackup?: (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => void;
@@ -149,6 +151,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   adminProfile,
   attendanceRecords = [],
   leaveRequests = [],
+  onUpdateLeaveStatus,
   transferRecords = [],
   initialActiveTab,
   onRestoreBackup = () => {},
@@ -1628,6 +1631,20 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Section: Live Leave Requests & Approvals Queue */}
+          {onUpdateLeaveStatus && (
+            <div className="space-y-4">
+              <DashboardLeaveApprovals
+                leaveRequests={leaveRequests}
+                employees={employees}
+                branches={branches}
+                currentUser={currentUser || adminProfile}
+                onUpdateLeaveStatus={onUpdateLeaveStatus}
+                lang={lang}
+              />
+            </div>
+          )}
 
           {/* Grid of Reset Controls & Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-hanuman">
