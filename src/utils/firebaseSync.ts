@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -14,6 +15,25 @@ import firebaseConfig from '../../firebase-applet-config.json';
 export const firebaseApp = !getApps().length 
   ? initializeApp(firebaseConfig) 
   : getApp();
+
+// Safely attempt to access Firebase Auth instance without throwing if not registered
+export let auth: any = null;
+try {
+  auth = getAuth(firebaseApp);
+} catch {
+  auth = null;
+}
+
+export function getSafeAuthUser() {
+  try {
+    if (!auth) {
+      auth = getAuth(firebaseApp);
+    }
+    return auth?.currentUser || null;
+  } catch {
+    return null;
+  }
+}
 
 // Initialize Firestore safely with database ID support
 let firestoreInstance: Firestore;
@@ -35,6 +55,77 @@ const MAIN_COLLECTION = 'attendance_system';
 
 export type CloudSyncStatus = 'connected' | 'connecting' | 'syncing' | 'error';
 
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const currentUser = getSafeAuthUser();
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: currentUser?.uid || null,
+      email: currentUser?.email || null,
+      emailVerified: currentUser?.emailVerified || null,
+      isAnonymous: currentUser?.isAnonymous || null,
+      tenantId: currentUser?.tenantId || null,
+      providerInfo: currentUser?.providerData?.map((p: any) => ({
+        providerId: p?.providerId,
+        email: p?.email,
+      })) || [],
+    },
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  return errInfo;
+}
+
+/**
+ * Recursively strips all undefined properties and converts undefined in arrays to null,
+ * guaranteeing that Firestore setDoc will NEVER fail with "Unsupported field value: undefined".
+ */
+export function sanitizeForFirestore<T>(obj: T): T {
+  if (obj === undefined) {
+    return null as any;
+  }
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => (item === undefined ? null : sanitizeForFirestore(item))) as any;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      result[key] = sanitizeForFirestore(value);
+    }
+  }
+  return result as T;
+}
+
 export interface CloudSystemState {
   branches?: any[];
   branchTypes?: any[];
@@ -54,6 +145,7 @@ export interface CloudSystemState {
 type StatusListener = (status: CloudSyncStatus) => void;
 const statusListeners = new Set<StatusListener>();
 let currentStatus: CloudSyncStatus = 'connecting';
+let recoveryTimeout: any = null;
 
 function notifyStatus(status: CloudSyncStatus) {
   currentStatus = status;
@@ -64,6 +156,21 @@ function notifyStatus(status: CloudSyncStatus) {
       console.warn('Status listener error:', e);
     }
   });
+
+  // If status is 'error' or 'connecting', schedule an auto-recovery check to avoid getting permanently stuck
+  if (status === 'error') {
+    if (recoveryTimeout) clearTimeout(recoveryTimeout);
+    recoveryTimeout = setTimeout(async () => {
+      try {
+        const isOnline = await testFirestoreConnection();
+        if (isOnline) {
+          notifyStatus('connected');
+        }
+      } catch {
+        // Retry silently later
+      }
+    }, 2500);
+  }
 }
 
 export function subscribeCloudConnectionStatus(listener: StatusListener) {
@@ -89,6 +196,7 @@ export async function testFirestoreConnection(): Promise<boolean> {
       notifyStatus('error');
       return false;
     }
+    // If permission or server reachable but other non-offline error
     notifyStatus('connected');
     return true;
   }
@@ -107,7 +215,7 @@ export async function getCloudDatabaseState(): Promise<CloudSystemState | null> 
     }
     return null;
   } catch (error) {
-    console.warn('Error fetching Firestore state:', error);
+    handleFirestoreError(error, OperationType.GET, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
     notifyStatus('error');
     return null;
   }
@@ -140,7 +248,7 @@ export function subscribeToCloudDatabase(
         }
       },
       (error) => {
-        console.error('Firestore real-time sync subscription error:', error);
+        handleFirestoreError(error, OperationType.GET, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
         notifyStatus('error');
       }
     );
@@ -161,7 +269,8 @@ let pendingState: Partial<CloudSystemState> = {};
  */
 export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>): Promise<boolean> {
   notifyStatus('syncing');
-  pendingState = { ...pendingState, ...data };
+  const sanitizedInput = sanitizeForFirestore(data);
+  pendingState = { ...pendingState, ...sanitizedInput };
 
   return new Promise((resolve) => {
     if (syncTimeout) {
@@ -184,16 +293,16 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
           }
         }
 
-        const payload = {
+        const payload = sanitizeForFirestore({
           ...pendingState,
           lastUpdated: new Date().toISOString()
-        };
+        });
         pendingState = {};
         await setDoc(docRef, payload, { merge: true });
         notifyStatus('connected');
         resolve(true);
       } catch (error) {
-        console.error('Error saving state to Firestore cloud:', error);
+        handleFirestoreError(error, OperationType.WRITE, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
         notifyStatus('error');
         resolve(false);
       }
@@ -208,14 +317,15 @@ export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>)
   notifyStatus('syncing');
   try {
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
-    await setDoc(docRef, {
+    const sanitizedPayload = sanitizeForFirestore({
       ...data,
       lastUpdated: new Date().toISOString()
-    }, { merge: true });
+    });
+    await setDoc(docRef, sanitizedPayload, { merge: true });
     notifyStatus('connected');
     return true;
   } catch (error) {
-    console.error('Error in syncStateToCloudImmediate:', error);
+    handleFirestoreError(error, OperationType.WRITE, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
     notifyStatus('error');
     return false;
   }

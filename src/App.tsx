@@ -65,6 +65,7 @@ import {
   subscribeCloudConnectionStatus,
   testFirestoreConnection,
   getCloudDatabaseState,
+  sanitizeForFirestore,
   CloudSystemState 
 } from './utils/firebaseSync';
 
@@ -465,7 +466,10 @@ export default function App() {
       if (status === 'connected' || status === 'syncing') {
         setIsLiveSyncConnected(true);
       } else if (status === 'error') {
-        setIsLiveSyncConnected(false);
+        // Test connectivity after brief delay to auto-heal status
+        setTimeout(() => {
+          testFirestoreConnection().catch(() => {});
+        }, 2000);
       }
     });
 
@@ -593,6 +597,11 @@ export default function App() {
           'punch'
         );
       } else if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload) {
+        // If message was originated by this client, skip duplicate toast and chime
+        if (message.senderId && message.senderId === realtimeService.getClientId()) {
+          return;
+        }
+
         isReceivingCloudUpdate.current = true;
         setLeaveRequests((prev) => {
           if (prev.some((l) => l.id === payload.id)) return prev;
@@ -1270,10 +1279,11 @@ export default function App() {
   };
 
   const handleSubmitLeaveRequest = (newRequest: LeaveRequest) => {
-    const nextLeaves = [newRequest, ...leaveRequests];
+    const cleanRequest = sanitizeForFirestore(newRequest);
+    const nextLeaves = [cleanRequest, ...leaveRequests.filter((l) => l.id !== cleanRequest.id)];
     setLeaveRequests(nextLeaves);
-    realtimeService.emit('SUBMIT_LEAVE', newRequest);
-    realtimeService.emit('SUBMIT_LEAVE_REQUEST', newRequest);
+    realtimeService.emit('SUBMIT_LEAVE', cleanRequest);
+    realtimeService.emit('SUBMIT_LEAVE_REQUEST', cleanRequest);
     playAlertChime('leave');
 
     // Add instant visual action alert
@@ -1281,17 +1291,17 @@ export default function App() {
       type: 'leave_submit',
       titleKh: 'សំណើសុំច្បាប់ថ្មី',
       titleEn: 'New Staff Leave Request',
-      detailKh: `${newRequest.employeeNameKh || newRequest.employeeNameEn}: ${newRequest.reason} (${newRequest.typeKh || newRequest.category})`,
-      detailEn: `${newRequest.employeeNameEn || 'Staff'}: ${newRequest.reason} (${newRequest.startDate} → ${newRequest.endDate})`,
-      leaveRequestId: newRequest.id,
-      actorName: newRequest.employeeNameKh || newRequest.employeeNameEn,
-      actorAvatar: newRequest.employeeAvatar,
+      detailKh: `${cleanRequest.employeeNameKh || cleanRequest.employeeNameEn || 'បុគ្គលិក'}: ${cleanRequest.reason} (${cleanRequest.typeKh || cleanRequest.category})`,
+      detailEn: `${cleanRequest.employeeNameEn || 'Staff'}: ${cleanRequest.reason} (${cleanRequest.startDate} → ${cleanRequest.endDate})`,
+      leaveRequestId: cleanRequest.id,
+      actorName: cleanRequest.employeeNameKh || cleanRequest.employeeNameEn,
+      actorAvatar: cleanRequest.employeeAvatar,
     });
 
     // High visibility instant toast
     setLiveToast({
       title: lang === 'km' ? '📋 សំណើសុំច្បាប់ថ្មី (New Leave Request)' : '📋 New Leave Request Submitted',
-      message: `${newRequest.employeeNameKh || newRequest.employeeNameEn}: ${newRequest.reason} (${newRequest.startDate} → ${newRequest.endDate})`,
+      message: `${cleanRequest.employeeNameKh || cleanRequest.employeeNameEn || 'Staff'}: ${cleanRequest.reason} (${cleanRequest.startDate} → ${cleanRequest.endDate})`,
       type: 'leave',
     });
     setTimeout(() => setLiveToast(null), 5000);
@@ -1300,27 +1310,27 @@ export default function App() {
     const logEntry: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
-      actorName: newRequest.employeeNameKh || newRequest.employeeNameEn,
+      actorName: cleanRequest.employeeNameKh || cleanRequest.employeeNameEn || 'Staff',
       actorRole: 'employee',
-      action: `Submitted ${newRequest.category} request: ${newRequest.reason}`,
-      actionKh: `បានដាក់ពាក្យស្នើសុំ ${newRequest.typeKh}: ${newRequest.reason}`,
+      action: `Submitted ${cleanRequest.category} request: ${cleanRequest.reason}`,
+      actionKh: `បានដាក់ពាក្យស្នើសុំ ${cleanRequest.typeKh || cleanRequest.category}: ${cleanRequest.reason}`,
       module: 'system',
-      details: `${newRequest.startDate} to ${newRequest.endDate}`,
-      detailsKh: `${newRequest.startDate} ដល់ ${newRequest.endDate}`,
+      details: `${cleanRequest.startDate} to ${cleanRequest.endDate}`,
+      detailsKh: `${cleanRequest.startDate} ដល់ ${cleanRequest.endDate}`,
       status: 'warning',
     };
     handleAddAuditLog(logEntry);
 
     // Sync to Cloud Firestore Universal DB immediately
     syncStateToCloudImmediate({
-      leaveRequests: nextLeaves,
-      auditLogs: [logEntry, ...auditLogs],
+      leaveRequests: sanitizeForFirestore(nextLeaves),
+      auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
 
     fetch('/api/leaves/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request: newRequest, senderId: realtimeService.getClientId() }),
+      body: JSON.stringify({ request: cleanRequest, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
 
@@ -1330,12 +1340,12 @@ export default function App() {
 
     const nextLeaves = leaveRequests.map((r) =>
       r.id === requestId
-        ? {
+        ? sanitizeForFirestore({
             ...r,
             status: newStatus,
             approvedBy: approver,
-            adminComment: comment || r.adminComment,
-          }
+            ...(comment ? { adminComment: comment } : (r.adminComment ? { adminComment: r.adminComment } : {})),
+          })
         : r
     );
 
@@ -1437,9 +1447,9 @@ export default function App() {
 
     // Immediate Firestore synchronization
     syncStateToCloudImmediate({
-      leaveRequests: nextLeaves,
-      employees: nextEmployees,
-      auditLogs: [logEntry, ...auditLogs],
+      leaveRequests: sanitizeForFirestore(nextLeaves),
+      employees: sanitizeForFirestore(nextEmployees),
+      auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
 
     realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });

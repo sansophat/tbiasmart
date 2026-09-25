@@ -47,15 +47,29 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
+function sanitizeForFirestore(obj: any): any {
+  if (obj === undefined) return null;
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map((item) => (item === undefined ? null : sanitizeForFirestore(item)));
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      result[key] = sanitizeForFirestore(value);
+    }
+  }
+  return result;
+}
+
 async function syncToFirestore(patch: any) {
   if (!firestoreDb) return;
   try {
+    const sanitizedPatch = sanitizeForFirestore({
+      ...patch,
+      lastUpdated: new Date().toISOString(),
+    });
     await setDoc(
       doc(firestoreDb, 'attendance_system', 'app_state_v1'),
-      {
-        ...patch,
-        lastUpdated: new Date().toISOString(),
-      },
+      sanitizedPatch,
       { merge: true }
     );
   } catch (err) {
@@ -609,19 +623,20 @@ app.post('/api/leaves/submit', (req, res) => {
     return res.status(400).json({ error: 'Missing leave request' });
   }
 
-  serverDb.leaveRequests = [request, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== request.id)];
+  const cleanRequest = sanitizeForFirestore(request);
+  serverDb.leaveRequests = [cleanRequest, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== cleanRequest.id)];
   persistDatabase();
 
   const eventPayload1 = {
     type: 'SUBMIT_LEAVE',
-    payload: request,
+    payload: cleanRequest,
     senderId: senderId || 'employee_client',
     timestamp: new Date().toISOString(),
   };
 
   const eventPayload2 = {
     type: 'SUBMIT_LEAVE_REQUEST',
-    payload: request,
+    payload: cleanRequest,
     senderId: senderId || 'employee_client',
     timestamp: new Date().toISOString(),
   };

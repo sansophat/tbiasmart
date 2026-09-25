@@ -156,24 +156,24 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }
 
     const newRequest: LeaveRequest = {
-      id: `req_${Date.now()}`,
-      employeeId: currentEmp.id,
-      employeeNameKh: currentEmp.nameKh,
-      employeeNameEn: currentEmp.nameEn,
-      employeeCode: currentEmp.code,
-      employeeAvatar: currentEmp.avatar,
-      branchId: currentEmp.branchId,
+      id: `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      employeeId: currentEmp.id || 'emp_default',
+      employeeNameKh: currentEmp.nameKh || 'បុគ្គលិក',
+      employeeNameEn: currentEmp.nameEn || 'Staff Member',
+      employeeCode: currentEmp.code || 'EMP-000',
+      employeeAvatar: currentEmp.avatar || '',
+      branchId: currentEmp.branchId || '',
       category: leaveCategory,
       type: leaveCategory === 'overtime' ? 'overtime' : leaveCategory === 'sick' ? 'sick' : leaveCategory === 'permission' ? 'half_day' : leaveType,
       typeKh: typeKhLabel,
       startDate,
       endDate,
-      hours: leaveCategory === 'overtime' || leaveCategory === 'permission' ? Number(otHours) : undefined,
-      otRateMultiplier: leaveCategory === 'overtime' ? otMultiplier : undefined,
-      reason,
-      attachmentUrl: attachmentNote.trim() || undefined,
+      reason: reason.trim(),
       status: 'pending',
       appliedAt: new Date().toISOString().split('T')[0],
+      ...(leaveCategory === 'overtime' || leaveCategory === 'permission' ? { hours: Number(otHours) || 0 } : {}),
+      ...(leaveCategory === 'overtime' && otMultiplier ? { otRateMultiplier: otMultiplier } : {}),
+      ...(attachmentNote.trim() ? { attachmentUrl: attachmentNote.trim() } : {}),
     };
 
     onSubmitLeaveRequest(newRequest);
