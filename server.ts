@@ -166,7 +166,20 @@ try {
       if (!Array.isArray(serverDb.branchTypes) || serverDb.branchTypes.length === 0) {
         serverDb.branchTypes = INITIAL_BRANCH_TYPES;
       }
-      console.log(`[DB] Loaded system database from disk. (${serverDb.branches.length} branches, ${serverDb.employees.length} employees)`);
+      // Ensure full staff list is available for roster & timesheet printing
+      if (!Array.isArray(serverDb.employees) || serverDb.employees.length < 5) {
+        const existingEmpIds = new Set((serverDb.employees || []).map((e: any) => e.id));
+        const missingEmps = INITIAL_EMPLOYEES.filter((e) => !existingEmpIds.has(e.id));
+        serverDb.employees = [...(serverDb.employees || []), ...missingEmps];
+      }
+      // Ensure complete leave, sick, and overtime approval stream requests exist
+      if (!Array.isArray(serverDb.leaveRequests) || serverDb.leaveRequests.length < 4) {
+        const existingReqIds = new Set((serverDb.leaveRequests || []).map((r: any) => r.id));
+        const missingReqs = INITIAL_LEAVE_REQUESTS.filter((r) => !existingReqIds.has(r.id));
+        serverDb.leaveRequests = [...(serverDb.leaveRequests || []), ...missingReqs];
+      }
+      persistDatabase();
+      console.log(`[DB] Loaded system database from disk. (${serverDb.branches.length} branches, ${serverDb.employees.length} employees, ${serverDb.leaveRequests.length} leave requests)`);
     }
   } else {
     fs.writeFileSync(DB_FILE, JSON.stringify(serverDb, null, 2), 'utf-8');
@@ -603,6 +616,7 @@ app.post('/api/leaves/status', (req, res) => {
         : l
     );
     persistDatabase();
+    syncToFirestore({ leaveRequests: serverDb.leaveRequests });
   }
 
   const eventPayload = {

@@ -64,6 +64,7 @@ export interface Employee {
   departmentKh: string;
   role: string;
   roleKh: string;
+  position?: string;
   roleType?: UserRole;
   password?: string;
   shiftId: string;

@@ -44,11 +44,18 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
   onNavigateToLeavesTab,
   lang,
 }) => {
-  const [filterStatus, setFilterStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const pendingRequests = leaveRequests.filter((r) => r.status === 'pending');
+  const approvedRequests = leaveRequests.filter((r) => r.status === 'approved');
+  const rejectedRequests = leaveRequests.filter((r) => r.status === 'rejected');
+
+  // Default to 'all' if no pending requests exist, otherwise start on 'all' so approved items stay in view
+  const [filterStatus, setFilterStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectComment, setRejectComment] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Keep recently acted upon requests visible in real-time so table never suddenly goes empty
+  const [justProcessedIds, setJustProcessedIds] = useState<Set<string>>(new Set());
 
   // Helper to calculate days between dates
   const calculateDays = (start?: string, end?: string): number => {
@@ -64,21 +71,20 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
     }
   };
 
-  const pendingRequests = leaveRequests.filter((r) => r.status === 'pending');
-  const approvedRequests = leaveRequests.filter((r) => r.status === 'approved');
-  const rejectedRequests = leaveRequests.filter((r) => r.status === 'rejected');
-
   const filteredRequests = leaveRequests.filter((req) => {
-    if (filterStatus !== 'all' && req.status !== filterStatus) return false;
+    const isJustProcessed = justProcessedIds.has(req.id);
+    if (filterStatus !== 'all' && req.status !== filterStatus && !isJustProcessed) return false;
     if (selectedCategory !== 'all' && req.category !== selectedCategory) return false;
     return true;
   });
 
   const handleApprove = (id: string) => {
+    setJustProcessedIds((prev) => new Set([...prev, id]));
     onUpdateLeaveStatus(id, 'approved');
   };
 
   const handleConfirmReject = (id: string) => {
+    setJustProcessedIds((prev) => new Set([...prev, id]));
     onUpdateLeaveStatus(id, 'rejected', rejectComment.trim() || undefined);
     setRejectingId(null);
     setRejectComment('');
@@ -285,6 +291,28 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
                 ? 'សូមជ្រើសរើសផ្ទាំងតម្រងផ្សេងទៀតដើម្បីមើលកំណត់ត្រា'
                 : 'Select another filter tab above to view historical requests'}
             </p>
+            {leaveRequests.length > 0 && (
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                {approvedRequests.length > 0 && filterStatus !== 'approved' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('approved')}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold transition border border-emerald-200 cursor-pointer"
+                  >
+                    {lang === 'km' ? `មើលពាក្យសុំបានអនុម័ត (${approvedRequests.length})` : `View Approved (${approvedRequests.length})`}
+                  </button>
+                )}
+                {filterStatus !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('all')}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 cursor-pointer"
+                  >
+                    {lang === 'km' ? `បង្ហាញទាំងអស់ (${leaveRequests.length})` : `Show All Requests (${leaveRequests.length})`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-3.5">
@@ -296,16 +324,19 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
               const daysCount = calculateDays(req.startDate, req.endDate);
               const isRejecting = rejectingId === req.id;
               const isExpanded = expandedId === req.id;
+              const isJustDone = justProcessedIds.has(req.id);
 
               return (
                 <div
                   key={req.id}
                   className={`p-4 sm:p-5 rounded-2xl border transition-all duration-200 ${
-                    req.status === 'pending'
-                      ? 'bg-amber-50/30 border-amber-200 hover:border-amber-300 shadow-xs'
+                    isJustDone
+                      ? 'border-emerald-500 bg-emerald-50/40 shadow-sm ring-1 ring-emerald-400'
+                      : req.status === 'pending'
+                      ? 'border-amber-200 bg-white hover:border-amber-300 shadow-xs'
                       : req.status === 'approved'
-                      ? 'bg-emerald-50/20 border-emerald-200 hover:border-emerald-300'
-                      : 'bg-slate-50/50 border-slate-200'
+                      ? 'border-slate-200 bg-slate-50/70 opacity-95'
+                      : 'border-slate-200 bg-slate-50/70 opacity-80'
                   }`}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

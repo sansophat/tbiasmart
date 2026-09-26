@@ -97,6 +97,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('all');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
 
+  // Dedicated Filter states for Leave, Sick & Overtime Approval Stream
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [leaveCategoryFilter, setLeaveCategoryFilter] = useState<string>('all');
+  const [streamBranchFilter, setStreamBranchFilter] = useState<string>('all');
+  const [justActionedLeaveIds, setJustActionedLeaveIds] = useState<Set<string>>(new Set());
+
+  // Interactive Filters inside the Timesheet & Roster Print Modal
+  const [printStaffFilter, setPrintStaffFilter] = useState<string>('all');
+  const [printDepartmentFilter, setPrintDepartmentFilter] = useState<string>('all');
+  const [printMonthYearCustom, setPrintMonthYearCustom] = useState<string>('');
+
   // Expanded Employee Accordion IDs (for Merged View)
   const [expandedEmployeeIds, setExpandedEmployeeIds] = useState<Record<string, boolean>>({});
 
@@ -105,7 +116,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [commentText, setCommentText] = useState('');
   const [isExportingBatch, setIsExportingBatch] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
-  const [printPreviewType, setPrintPreviewType] = useState<'merged' | 'detailed'>('merged');
+  const [printPreviewType, setPrintPreviewType] = useState<'detailed' | 'merged'>('detailed');
+
+  // Unique Departments across employees
+  const departmentsList = useMemo(() => {
+    const set = new Set<string>();
+    employees.forEach((e) => {
+      if (e.department && e.department.trim()) set.add(e.department.trim());
+    });
+    return Array.from(set).sort();
+  }, [employees]);
+
+  // Formatter for MM/YYYY
+  const formatMonthYearHeader = (dateStr?: string) => {
+    if (printMonthYearCustom) {
+      if (printMonthYearCustom.includes('/')) return printMonthYearCustom;
+      if (printMonthYearCustom.includes('-')) {
+        const parts = printMonthYearCustom.split('-');
+        if (parts.length >= 2) return `${parts[1]}/${parts[0]}`;
+      }
+    }
+    try {
+      const d = dateStr ? new Date(dateStr) : new Date();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      return `${mm}/${yyyy}`;
+    } catch {
+      return '09/2026';
+    }
+  };
+
+  const formatMonthYearKhHeader = (dateStr?: string) => {
+    if (printMonthYearCustom) {
+      if (printMonthYearCustom.includes('-')) {
+        const parts = printMonthYearCustom.split('-');
+        if (parts.length >= 2) return `${toKhmerNumeral(parts[1])}/${toKhmerNumeral(parts[0])}`;
+      }
+    }
+    try {
+      const d = dateStr ? new Date(dateStr) : new Date();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      return `${toKhmerNumeral(mm)}/${toKhmerNumeral(yyyy)}`;
+    } catch {
+      return '០៩/២០២៦';
+    }
+  };
 
   // Available employees for currently selected branch
   const branchEmployees = useMemo(() => {
@@ -256,22 +312,79 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
   }, [attendanceRecords, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, selectedStatusFilter, searchQuery]);
 
-  // Leave & OT Requests Filter
+  // Dedicated Leave, Sick & OT Requests Approval Stream Filter
   const filteredRequests = useMemo(() => {
-    return leaveRequests.filter((req) => {
-      const matchesBranch = selectedBranchFilter === 'all' || req.branchId === selectedBranchFilter;
+    const list = leaveRequests.filter((req) => {
+      const isJustActioned = justActionedLeaveIds.has(req.id);
+      const matchesBranch = streamBranchFilter === 'all' || !req.branchId || req.branchId === streamBranchFilter;
       const matchesEmployee = selectedEmployeeFilter === 'all' || req.employeeId === selectedEmployeeFilter || (req.employeeCode && req.employeeCode === selectedEmployeeFilter);
-      const matchesCategory = selectedCategoryFilter === 'all' || req.category === selectedCategoryFilter || req.type === selectedCategoryFilter;
-      const matchesStatus = selectedStatusFilter === 'all' || req.status === selectedStatusFilter;
+      const matchesCategory = leaveCategoryFilter === 'all' || req.category === leaveCategoryFilter || req.type === leaveCategoryFilter;
+      const matchesStatus = leaveStatusFilter === 'all' || req.status === leaveStatusFilter || isJustActioned;
+      const q = searchQuery.trim().toLowerCase();
       const matchesSearch =
-        req.employeeNameKh.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        req.employeeNameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (req.employeeCode && req.employeeCode.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        req.reason.toLowerCase().includes(searchQuery.toLowerCase());
+        !q ||
+        ((req.employeeNameKh || '').toLowerCase().includes(q)) ||
+        ((req.employeeNameEn || '').toLowerCase().includes(q)) ||
+        ((req.employeeCode || '').toLowerCase().includes(q)) ||
+        ((req.reason || '').toLowerCase().includes(q));
 
       return matchesBranch && matchesEmployee && matchesCategory && matchesStatus && matchesSearch;
     });
-  }, [leaveRequests, selectedBranchFilter, selectedEmployeeFilter, selectedCategoryFilter, selectedStatusFilter, searchQuery]);
+
+    // If list is empty because all pending were approved, fall back to showing all requests
+    // with matching branch/category so the approval table is NEVER empty after approval!
+    if (list.length === 0 && leaveRequests.length > 0 && leaveStatusFilter === 'pending') {
+      return leaveRequests.filter((req) => {
+        const matchesBranch = streamBranchFilter === 'all' || !req.branchId || req.branchId === streamBranchFilter;
+        const matchesCategory = leaveCategoryFilter === 'all' || req.category === leaveCategoryFilter || req.type === leaveCategoryFilter;
+        return matchesBranch && matchesCategory;
+      });
+    }
+
+    return list;
+  }, [leaveRequests, streamBranchFilter, selectedEmployeeFilter, leaveCategoryFilter, leaveStatusFilter, justActionedLeaveIds, searchQuery]);
+
+  // Group daily timesheet rows by employee for individual roster printing
+  const printableStaffGroups = useMemo(() => {
+    let targetEmps = employees;
+    if (selectedBranchFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.branchId === selectedBranchFilter);
+    }
+    if (printStaffFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.id === printStaffFilter || e.code === printStaffFilter);
+    }
+    if (printDepartmentFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.department && e.department.toLowerCase() === printDepartmentFilter.toLowerCase());
+    }
+
+    return targetEmps.map((emp) => {
+      const empRows = generateDailyTimesheetRows(
+        attendanceRecords,
+        [emp],
+        branches,
+        startDate,
+        endDate,
+        'all',
+        emp.id
+      ).filter((r) => !r.isSunday || r.employeeId === emp.id || r.employeeId === 'sunday_marker');
+
+      const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
+      const daysWorked = empRows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
+      const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
+      const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
+
+      return {
+        employee: emp,
+        rows: empRows,
+        summary: {
+          totalWorkHours: totalWork,
+          daysWorked,
+          lateDays,
+          otDays,
+        },
+      };
+    });
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, printStaffFilter, printDepartmentFilter]);
 
   // Selected Branch Name
   const currentBranchObj = branches.find((b) => b.id === selectedBranchFilter);
@@ -352,6 +465,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleConfirmAction = () => {
     if (!actionLeave) return;
+    setJustActionedLeaveIds((prev) => new Set([...prev, actionLeave.id]));
     onUpdateLeaveStatus(
       actionLeave.id,
       actionLeave.action,
@@ -1367,279 +1481,696 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {activeSubTab === 'leaves' && (
         <div className="space-y-5">
           <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 text-sm">
-                {lang === 'km' ? 'បញ្ជីពាក្យស្នើសុំច្បាប់ និងម៉ោងថែម OT' : 'Leave, Sick & Overtime Approval Stream'}
-              </h3>
-              <span className="text-xs font-bold text-indigo-600">
-                {filteredRequests.length} requests
-              </span>
+            {/* Stream Header */}
+            <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white">
+              <div className="flex items-center space-x-3.5">
+                <div className="p-2.5 rounded-2xl bg-indigo-600/40 border border-indigo-400/30 text-indigo-300">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base font-battambang">
+                    {lang === 'km' ? 'បញ្ជីពាក្យស្នើសុំច្បាប់ និងម៉ោងថែម OT (Approval Stream)' : 'Leave, Sick & Overtime Approval Stream'}
+                  </h3>
+                  <p className="text-xs text-slate-300 font-medium">
+                    {lang === 'km'
+                      ? 'ពិនិត្យ និងអនុម័តពាក្យសុំច្បាប់ដោយរក្សាទិន្នន័យជាក់ស្តែងក្នុងតារាងបន្ទាប់ពីអនុម័តរួច'
+                      : 'Review and approve staff leaves, sick days, and overtime. Records remain preserved in the table after approval.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 font-mono">
+                  {filteredRequests.length} {lang === 'km' ? 'សំណើ' : 'records'}
+                </span>
+              </div>
             </div>
 
+            {/* Stream Filter Bar */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              {/* Status Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLeaveStatusFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    leaveStatusFilter === 'all'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  <span>{lang === 'km' ? 'ទាំងអស់' : 'All'}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${leaveStatusFilter === 'all' ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-800'}`}>
+                    {leaveRequests.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLeaveStatusFilter('pending')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    leaveStatusFilter === 'pending'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  <span>{lang === 'km' ? 'រង់ចាំអនុម័ត' : 'Pending'}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${leaveStatusFilter === 'pending' ? 'bg-rose-700 text-white' : 'bg-slate-200 text-slate-800'}`}>
+                    {leaveRequests.filter((r) => r.status === 'pending').length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLeaveStatusFilter('approved')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    leaveStatusFilter === 'approved'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  <span>{lang === 'km' ? 'បានអនុម័ត' : 'Approved'}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${leaveStatusFilter === 'approved' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-800'}`}>
+                    {leaveRequests.filter((r) => r.status === 'approved').length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLeaveStatusFilter('rejected')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    leaveStatusFilter === 'rejected'
+                      ? 'bg-slate-800 text-white shadow-sm'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  <span>{lang === 'km' ? 'បានបដិសេធ' : 'Rejected'}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${leaveStatusFilter === 'rejected' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-800'}`}>
+                    {leaveRequests.filter((r) => r.status === 'rejected').length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Category Selector */}
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-medium text-slate-500 hidden sm:inline">
+                  {lang === 'km' ? 'ប្រភេទច្បាប់:' : 'Leave Type:'}
+                </span>
+                <select
+                  value={leaveCategoryFilter}
+                  onChange={(e) => setLeaveCategoryFilter(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-xs focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="all">{lang === 'km' ? 'គ្រប់ប្រភេទ (All Categories)' : 'All Categories'}</option>
+                  <option value="leave">{lang === 'km' ? 'ច្បាប់ប្រចាំឆ្នាំ (Annual Leave)' : 'Annual Leave'}</option>
+                  <option value="sick">{lang === 'km' ? 'ច្បាប់ឈឺ (Sick Leave)' : 'Sick Leave'}</option>
+                  <option value="overtime">{lang === 'km' ? 'ថែមម៉ោង OT (Overtime)' : 'Overtime OT'}</option>
+                  <option value="permission">{lang === 'km' ? 'ចេញមុន/មកយឺត (Permission)' : 'Permission Pass'}</option>
+                  <option value="urgent">{lang === 'km' ? 'ច្បាប់បន្ទាន់ (Urgent Leave)' : 'Urgent Leave'}</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Approval Stream Table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-700">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[11px] tracking-wider border-b border-slate-200">
-                  <tr>
-                    <th className="py-4 px-6">{lang === 'km' ? 'បុគ្គលិក' : 'Employee'}</th>
-                    <th className="py-4 px-6">{lang === 'km' ? 'ប្រភេទស្នើសុំ' : 'Request Type'}</th>
-                    <th className="py-4 px-6">{lang === 'km' ? 'កាលបរិច្ឆេទ / ម៉ោង' : 'Dates / Duration'}</th>
-                    <th className="py-4 px-6">{lang === 'km' ? 'មូលហេតុ' : 'Reason'}</th>
-                    <th className="py-4 px-6">{lang === 'km' ? 'ស្ថានភាព' : 'Status'}</th>
-                    <th className="py-4 px-6 text-right">{lang === 'km' ? 'សកម្មភាព' : 'Action'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredRequests.map((req) => (
-                    <tr key={req.id} className="hover:bg-slate-50 transition">
-                      <td className="py-3.5 px-6">
-                        <div className="font-bold text-slate-800 text-sm">
-                          {lang === 'km' ? req.employeeNameKh : req.employeeNameEn}
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-medium">
-                          {branches.find((b) => b.id === req.branchId)?.nameEn || req.branchId}
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-6">
-                        <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-800 border border-slate-200">
-                          {req.category || req.type}
-                        </span>
-                      </td>
-
-                      <td className="py-3.5 px-6">
-                        <div className="font-mono text-slate-800 font-bold">
-                          {req.startDate} {req.endDate !== req.startDate ? `~ ${req.endDate}` : ''}
-                        </div>
-                        {req.hours && (
-                          <div className="text-[11px] text-indigo-600 font-bold">
-                            {req.hours} hrs ({req.otRateMultiplier || 1.5}x OT)
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-6 max-w-xs truncate text-slate-600">
-                        {req.reason}
-                      </td>
-
-                      <td className="py-3.5 px-6">
-                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          req.status === 'approved'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : req.status === 'rejected'
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}>
-                          {req.status.toUpperCase()}
-                        </span>
-                      </td>
-
-                      <td className="py-3.5 px-6 text-right">
-                        {req.status === 'pending' ? (
-                          <div className="flex items-center justify-end space-x-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setActionLeave({ id: req.id, action: 'approved', name: req.employeeNameEn })}
-                              className="p-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition"
-                              title="Approve"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActionLeave({ id: req.id, action: 'rejected', name: req.employeeNameEn })}
-                              className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 transition"
-                              title="Reject"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 font-medium">
-                            {req.approvedBy || 'Completed'}
-                          </span>
-                        )}
-                      </td>
+              {filteredRequests.length === 0 ? (
+                <div className="py-14 px-4 text-center">
+                  <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center mb-3">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <h4 className="text-base font-bold text-slate-800 font-battambang">
+                    {leaveStatusFilter === 'pending'
+                      ? (lang === 'km' ? 'គ្មានពាក្យស្នើសុំច្បាប់រង់ចាំទេ!' : 'No Pending Requests')
+                      : (lang === 'km' ? 'គ្មានទិន្នន័យច្បាប់ត្រូវបង្ហាញទេ' : 'No Leave Requests Found')}
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                    {leaveStatusFilter === 'pending'
+                      ? (lang === 'km'
+                          ? 'រាល់ពាក្យស្នើសុំទាំងអស់ត្រូវបានអនុម័តរួចរាល់។ អ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីមើលកំណត់ត្រាដែលបានអនុម័ត។'
+                          : 'All applications have been processed. Click below to view approved records.')
+                      : (lang === 'km'
+                          ? 'សូមជ្រើសរើសផ្ទាំងតម្រងផ្សេងទៀតដើម្បីមើលទិន្នន័យ'
+                          : 'Select another filter tab above or reset filters to view all records.')}
+                  </p>
+                  {leaveRequests.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                      {leaveStatusFilter !== 'approved' && (
+                        <button
+                          type="button"
+                          onClick={() => setLeaveStatusFilter('approved')}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold transition border border-emerald-200 cursor-pointer"
+                        >
+                          {lang === 'km' ? `មើលពាក្យសុំបានអនុម័ត (${leaveRequests.filter(r => r.status === 'approved').length})` : `View Approved (${leaveRequests.filter(r => r.status === 'approved').length})`}
+                        </button>
+                      )}
+                      {leaveStatusFilter !== 'all' && (
+                        <button
+                          type="button"
+                          onClick={() => setLeaveStatusFilter('all')}
+                          className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 cursor-pointer"
+                        >
+                          {lang === 'km' ? `បង្ហាញទាំងអស់ (${leaveRequests.length})` : `Show All Requests (${leaveRequests.length})`}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs text-slate-700">
+                  <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[11px] tracking-wider border-b border-slate-200">
+                    <tr>
+                      <th className="py-4 px-6">{lang === 'km' ? 'បុគ្គលិក' : 'Employee'}</th>
+                      <th className="py-4 px-6">{lang === 'km' ? 'ប្រភេទស្នើសុំ' : 'Request Type'}</th>
+                      <th className="py-4 px-6">{lang === 'km' ? 'កាលបរិច្ឆេទ / ម៉ោង' : 'Dates / Duration'}</th>
+                      <th className="py-4 px-6">{lang === 'km' ? 'មូលហេតុ' : 'Reason'}</th>
+                      <th className="py-4 px-6">{lang === 'km' ? 'ស្ថានភាព & ការអនុម័ត' : 'Status & Approval'}</th>
+                      <th className="py-4 px-6 text-right">{lang === 'km' ? 'សកម្មភាព' : 'Action'}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredRequests.map((req) => {
+                      const emp = employees.find((e) => e.id === req.employeeId || e.code === req.employeeCode);
+                      const branch = branches.find((b) => b.id === req.branchId || b.id === emp?.branchId);
+                      const isJustDone = justActionedLeaveIds.has(req.id);
+
+                      return (
+                        <tr
+                          key={req.id}
+                          className={`transition ${
+                            isJustDone
+                              ? 'bg-emerald-50/60 ring-1 ring-emerald-300'
+                              : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <td className="py-3.5 px-6">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
+                                {emp?.avatar ? (
+                                  <img src={emp.avatar} alt="avatar" className="w-full h-full rounded-full object-cover" />
+                                ) : (
+                                  (req.employeeNameEn || 'S').charAt(0)
+                                )}
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-800 text-sm">
+                                  {lang === 'km' ? req.employeeNameKh || req.employeeNameEn : req.employeeNameEn}
+                                </div>
+                                <div className="text-[11px] text-slate-500 font-medium">
+                                  {emp?.code || req.employeeCode || 'ID'} • {branch?.nameEn || req.branchId} • {emp?.department || 'Operations'}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-6">
+                            <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider border ${
+                              req.category === 'sick' || req.type === 'sick'
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : req.category === 'overtime' || req.type === 'overtime'
+                                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                : req.category === 'urgent' || req.type === 'urgent'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : req.category === 'permission' || req.type === 'half_day'
+                                ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                                : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            }`}>
+                              {req.category || req.type}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-6">
+                            <div className="font-mono text-slate-800 font-bold">
+                              {req.startDate} {req.endDate && req.endDate !== req.startDate ? `~ ${req.endDate}` : ''}
+                            </div>
+                            {req.hours ? (
+                              <div className="text-[11px] text-indigo-600 font-bold">
+                                {req.hours} hrs ({req.otRateMultiplier || 1.5}x OT)
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-slate-400">
+                                {lang === 'km' ? 'ច្បាប់ពេញមួយថ្ងៃ' : 'Full day leave'}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-6 max-w-xs text-slate-600">
+                            <div className="truncate font-medium">{req.reason || 'No reason provided'}</div>
+                            {req.attachmentUrl && (
+                              <div className="text-[10px] text-indigo-600 font-bold mt-0.5">📎 Attachment Included</div>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-6">
+                            <div className="space-y-0.5">
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : req.status === 'rejected'
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  req.status === 'approved' ? 'bg-emerald-500' : req.status === 'rejected' ? 'bg-rose-500' : 'bg-amber-500 animate-ping'
+                                }`} />
+                                <span>{req.status.toUpperCase()}</span>
+                              </span>
+                              {req.approvedBy && (
+                                <div className="text-[10px] text-slate-500 font-medium">
+                                  {lang === 'km' ? 'ដោយ:' : 'By:'} {req.approvedBy}
+                                </div>
+                              )}
+                              {req.adminComment && (
+                                <div className="text-[10px] text-slate-600 italic">
+                                  "{req.adminComment}"
+                                </div>
+                              )}
+                              {isJustDone && (
+                                <div className="text-[10px] font-bold text-emerald-700 animate-pulse">
+                                  ✨ {lang === 'km' ? 'ទើបតែធ្វើបច្ចុប្បន្នភាព' : 'Just Actioned'}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-6 text-right">
+                            {req.status === 'pending' ? (
+                              <div className="flex items-center justify-end space-x-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setActionLeave({ id: req.id, action: 'approved', name: req.employeeNameEn || req.employeeNameKh })}
+                                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1 shadow-xs transition cursor-pointer"
+                                  title="Approve Request"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>{lang === 'km' ? 'អនុម័ត' : 'Approve'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActionLeave({ id: req.id, action: 'rejected', name: req.employeeNameEn || req.employeeNameKh })}
+                                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center space-x-1 border border-rose-200 transition cursor-pointer"
+                                  title="Reject Request"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>{lang === 'km' ? 'បដិសេធ' : 'Reject'}</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end space-x-2">
+                                <button
+                                  type="button"
+                                  onClick={() => onUpdateLeaveStatus(req.id, req.status === 'approved' ? 'rejected' : 'approved')}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                                >
+                                  {lang === 'km' ? 'ប្តូរស្ថានភាព' : 'Change Decision'}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. In-Browser Official Timesheet Print/Preview Modal */}
+      {/* ========================================================================= */}
+      {/* 5. In-Browser Official Timesheet & Roster Print Modal */}
+      {/* ========================================================================= */}
       {showPrintModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          {/* Print CSS Stylesheet */}
+          <style>{`
+            @media print {
+              @page {
+                size: A4 landscape;
+                margin: 8mm;
+              }
+              body * {
+                visibility: hidden !important;
+              }
+              #printable-timesheet-area, #printable-timesheet-area * {
+                visibility: visible !important;
+              }
+              #printable-timesheet-area {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+                color: black !important;
+              }
+              .no-print {
+                display: none !important;
+              }
+              .page-break-after-staff {
+                page-break-after: always !important;
+                break-after: page !important;
+              }
+            }
+          `}</style>
+
+          <div className="bg-white rounded-3xl max-w-6xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Modal Header & Interactive Filter Bar (Hidden when printed) */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
               <div className="flex items-center space-x-3">
-                <Printer className="w-5 h-5 text-indigo-600" />
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-200">
+                  <Printer className="w-5 h-5" />
+                </div>
                 <div>
-                  <h3 className="font-black text-slate-800 text-sm">
-                    {lang === 'km' ? 'គំរូទម្រង់សន្លឹកម៉ោង & របាយការណ៍ផ្លូវការ (Timesheet Preview)' : 'Official Timesheet Print Preview'}
+                  <h3 className="font-black text-slate-800 text-sm sm:text-base font-battambang">
+                    {lang === 'km' ? 'ព្រីនសន្លឹកម៉ោង & Roster ផ្លូវការ (Official Timesheet Print)' : 'Official Timesheet & Roster Print Preview'}
                   </h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setPrintPreviewType('merged')}
-                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg transition ${
-                        printPreviewType === 'merged' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Merged Summary Preview
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPrintPreviewType('detailed')}
-                      className={`text-xs font-bold px-2.5 py-0.5 rounded-lg transition ${
-                        printPreviewType === 'detailed' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Detailed Daily Roster Preview
-                    </button>
-                  </div>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {lang === 'km'
+                      ? 'កំណត់តម្រងតាមបុគ្គលិក ផ្នែក និងព្រីនទម្រង់ស្តង់ដារជាមួយ Header & ហត្ថលេខា'
+                      : 'Print for all staff or filter by staff with Date, Day of week, Staff ID and department header.'}
+                  </p>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
+
+              {/* Print Modal Filter Bar */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Staff Filter Dropdown */}
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                  <User className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'បុគ្គលិក:' : 'Staff:'}</span>
+                  <select
+                    value={printStaffFilter}
+                    onChange={(e) => setPrintStaffFilter(e.target.value)}
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[170px]"
+                  >
+                    <option value="all">{lang === 'km' ? `👥 បុគ្គលិកទាំងអស់ (${employees.length} នាក់)` : `👥 All Staff (${employees.length} Staff)`}</option>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.code} - {emp.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Department Filter Dropdown */}
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'ផ្នែក:' : 'Dept:'}</span>
+                  <select
+                    value={printDepartmentFilter}
+                    onChange={(e) => setPrintDepartmentFilter(e.target.value)}
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[150px]"
+                  >
+                    <option value="all">{lang === 'km' ? '🏢 គ្រប់ផ្នែកទាំងអស់' : '🏢 All Departments'}</option>
+                    {departmentsList.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Preview Mode Selector */}
+                <div className="flex items-center bg-slate-200 p-0.5 rounded-xl text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPrintPreviewType('detailed')}
+                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                      printPreviewType === 'detailed' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {lang === 'km' ? 'តារាងលម្អិត Roster' : 'Daily Roster'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintPreviewType('merged')}
+                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                      printPreviewType === 'merged' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {lang === 'km' ? 'សរុបប្រចាំខែ' : 'Summary'}
+                  </button>
+                </div>
+
+                {/* Action Buttons */}
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-200 transition cursor-pointer"
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Print Document</span>
+                  <Printer className="w-4 h-4" />
+                  <span>{lang === 'km' ? 'ព្រីនឯកសារ (Print)' : 'Print Document'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowPrintModal(false)}
-                  className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                  className="p-2 rounded-xl text-slate-400 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                  title="Close Preview"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            {/* Printable Body Content */}
-            <div className="p-6 overflow-y-auto space-y-6 text-slate-800 font-sans">
-              {/* Official Header */}
-              <div className="border-b-2 border-slate-800 pb-4 flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-black tracking-tight text-slate-900">
-                    {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE MULTI-BRANCH HR SUITE'}
-                  </h2>
-                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    {printPreviewType === 'merged'
-                      ? 'CONSOLIDATED EMPLOYEE ATTENDANCE & PAYROLL SUMMARY'
-                      : 'OFFICIAL ATTENDANCE AUDIT & TIMESHEET REPORT'}
-                  </p>
-                </div>
-                <div className="text-right text-xs">
-                  <div className="font-bold text-indigo-700">{currentBranchTitle}</div>
-                  <div className="font-mono text-slate-500">Period: {dateRangeLabel}</div>
-                  <div className="text-[10px] text-slate-400">Generated: {new Date().toLocaleString()}</div>
-                </div>
-              </div>
+            {/* Printable Body Content (Targeted by #printable-timesheet-area) */}
+            <div className="p-6 sm:p-8 overflow-y-auto space-y-8 text-slate-800 font-sans" id="printable-timesheet-area">
+              {/* If preview type is 'detailed' and printing all staff grouped */}
+              {printPreviewType === 'detailed' ? (
+                <div className="space-y-10">
+                  {printableStaffGroups.map((group, gIdx) => {
+                    const emp = group.employee;
+                    const deptLabel = emp.department || (printDepartmentFilter !== 'all' ? printDepartmentFilter : 'Operations');
+                    const monthYearLabel = formatMonthYearHeader(startDate);
+                    const monthYearKhLabel = formatMonthYearKhHeader(startDate);
+                    const branchObj = branches.find((b) => b.id === emp.branchId);
 
-              {/* KPI Strip */}
-              <div className="grid grid-cols-4 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs font-medium">
-                <div><span className="text-slate-500">Staff Count:</span> <b className="text-slate-800">{filteredMergedSummaries.length}</b></div>
-                <div><span className="text-slate-500">Total Work Hours:</span> <b className="text-emerald-700">{totalConsolidatedWorkHours}h</b></div>
-                <div><span className="text-slate-500">Sundays Marked:</span> <b className="text-rose-600">{totalSundaysCount}</b></div>
-                <div><span className="text-slate-500">Late / OT:</span> <b className="text-amber-700">{totalLateRows} / {totalOvertimeRows}</b></div>
-              </div>
+                    return (
+                      <div
+                        key={`print_staff_${emp.id}`}
+                        className={`space-y-4 ${
+                          gIdx < printableStaffGroups.length - 1 ? 'page-break-after-staff pb-8 border-b border-dashed border-slate-300' : ''
+                        }`}
+                      >
+                        {/* Mandatory Header as explicitly requested:
+                            Employee Attendance for [mm/yyyy] <br> for [department] */}
+                        <div className="text-center pb-4 border-b-2 border-slate-900">
+                          <div className="text-xs uppercase tracking-widest font-black text-slate-500 mb-1">
+                            {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
+                          </div>
 
-              {/* Print Table */}
-              {printPreviewType === 'merged' ? (
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-[11px]">
-                    <thead className="bg-slate-800 text-white font-bold uppercase text-[9px]">
-                      <tr>
-                        <th className="p-2 w-8 text-center">No</th>
-                        <th className="p-2">ID</th>
-                        <th className="p-2">Employee Name</th>
-                        <th className="p-2">Department</th>
-                        <th className="p-2">Branch</th>
-                        <th className="p-2 text-center">Present</th>
-                        <th className="p-2 text-center">Late</th>
-                        <th className="p-2 text-center">Work Hrs</th>
-                        <th className="p-2 text-center">OT Hrs</th>
-                        <th className="p-2 text-center">Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
-                      {filteredMergedSummaries.map((s, sIdx) => (
-                        <tr key={`print_m_${s.employeeId}`} className="hover:bg-slate-50">
-                          <td className="p-2 text-center">{sIdx + 1}</td>
-                          <td className="p-2 font-bold">{s.enrollId}</td>
-                          <td className="p-2 font-sans font-bold">{s.nameEn} ({s.nameKh})</td>
-                          <td className="p-2 font-sans">{s.department}</td>
-                          <td className="p-2 font-sans">{s.branchNameEn}</td>
-                          <td className="p-2 text-center text-emerald-700 font-bold">{s.daysPresent}</td>
-                          <td className="p-2 text-center">{s.daysLate}</td>
-                          <td className="p-2 text-center font-bold">{s.totalWorkHours}h</td>
-                          <td className="p-2 text-center">{s.totalOtHours}h</td>
-                          <td className="p-2 text-center font-bold">{s.attendanceRate}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          <h1 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight font-sans">
+                            Employee Attendance for {monthYearLabel}
+                            <br />
+                            for {deptLabel}
+                          </h1>
+
+                          <p className="text-xs font-bold text-slate-600 mt-1 font-battambang">
+                            របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {monthYearKhLabel}
+                            <br />
+                            សម្រាប់ផ្នែក: {deptLabel}
+                          </p>
+
+                          {/* Employee Specific Sub-header Strip */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-left bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-3 font-medium">
+                            <div>
+                              <span className="text-slate-500">{lang === 'km' ? 'អត្តលេខ:' : 'Staff ID:'}</span>{' '}
+                              <b className="font-mono text-slate-900">{emp.code}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">{lang === 'km' ? 'ឈ្មោះបុគ្គលិក:' : 'Name:'}</span>{' '}
+                              <b className="text-slate-900">{emp.nameEn} ({emp.nameKh})</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">{lang === 'km' ? 'សាខា:' : 'Branch:'}</span>{' '}
+                              <b className="text-slate-900">{branchObj?.nameEn || emp.branchId}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">{lang === 'km' ? 'មុខតំណែង:' : 'Role:'}</span>{' '}
+                              <b className="text-slate-900">{emp.position || emp.role}</b>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Detailed Table with all requested columns:
+                            Date, Day of week, Staff ID, No, Name, Dept, Branch, Time In, Time Out, Work Hours, OT Hours, Status, Remark, Signature */}
+                        <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
+                          <table className="w-full text-left text-[11px] border-collapse">
+                            <thead className="bg-slate-800 text-white font-bold uppercase text-[9px] tracking-wider">
+                              <tr className="border-b border-slate-800">
+                                <th className="p-2 w-8 text-center border-r border-slate-700">No</th>
+                                <th className="p-2 border-r border-slate-700">Date</th>
+                                <th className="p-2 border-r border-slate-700">Day of Week</th>
+                                <th className="p-2 border-r border-slate-700">Staff ID</th>
+                                <th className="p-2 border-r border-slate-700">Employee Name</th>
+                                <th className="p-2 border-r border-slate-700">Department</th>
+                                <th className="p-2 border-r border-slate-700">Branch</th>
+                                <th className="p-2 text-center border-r border-slate-700">Time In</th>
+                                <th className="p-2 text-center border-r border-slate-700">Time Out</th>
+                                <th className="p-2 text-center border-r border-slate-700">Work Hours</th>
+                                <th className="p-2 text-center border-r border-slate-700">OT Hours</th>
+                                <th className="p-2 border-r border-slate-700">Status</th>
+                                <th className="p-2 border-r border-slate-700">Remark / Verification</th>
+                                <th className="p-2 w-20 text-center">Signature</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 font-mono text-[10px]">
+                              {group.rows.map((r, rIdx) => {
+                                const isSun = r.isSunday;
+                                return (
+                                  <tr
+                                    key={`row_${emp.id}_${r.date}_${rIdx}`}
+                                    className={isSun ? 'bg-rose-50/70 text-rose-900 font-bold' : rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}
+                                  >
+                                    <td className="p-1.5 text-center border-r border-slate-200">{rIdx + 1}</td>
+                                    <td className="p-1.5 font-bold border-r border-slate-200">{r.date}</td>
+                                    <td className="p-1.5 border-r border-slate-200 font-sans font-medium">{r.dayOfWeek}</td>
+                                    <td className="p-1.5 font-bold border-r border-slate-200">{emp.code}</td>
+                                    <td className="p-1.5 font-sans font-semibold border-r border-slate-200">{emp.nameEn}</td>
+                                    <td className="p-1.5 font-sans border-r border-slate-200">{emp.department || 'Operations'}</td>
+                                    <td className="p-1.5 font-sans border-r border-slate-200">{r.branchNameEn}</td>
+                                    <td className="p-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeIn}</td>
+                                    <td className="p-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeOut}</td>
+                                    <td className="p-1.5 text-center font-bold text-indigo-700 border-r border-slate-200">{r.durationHours}</td>
+                                    <td className="p-1.5 text-center text-purple-700 font-bold border-r border-slate-200">
+                                      {parseFloat(r.durationHours) > 9 ? `${(parseFloat(r.durationHours) - 9).toFixed(1)}h` : '0.0h'}
+                                    </td>
+                                    <td className="p-1.5 font-sans border-r border-slate-200">
+                                      <span className={isSun ? 'text-rose-700 font-bold' : r.status.toLowerCase().includes('late') ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
+                                        {r.status}
+                                      </span>
+                                    </td>
+                                    <td className="p-1.5 font-sans text-slate-500 border-r border-slate-200 text-[9px]">{r.remark}</td>
+                                    <td className="p-1.5 text-center border-slate-200">
+                                      <div className="w-16 h-4 border-b border-dotted border-slate-400 mx-auto" />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot className="bg-slate-100 text-slate-800 font-bold text-[10px] border-t-2 border-slate-300">
+                              <tr>
+                                <td colSpan={9} className="p-2 text-right font-sans uppercase">
+                                  {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
+                                </td>
+                                <td className="p-2 text-center text-indigo-700 font-bold font-mono">
+                                  {group.summary.totalWorkHours}h
+                                </td>
+                                <td className="p-2 text-center text-purple-700 font-bold font-mono">
+                                  {group.summary.otDays > 0 ? `${group.summary.otDays} OT Days` : '0.0h'}
+                                </td>
+                                <td colSpan={3} className="p-2 text-left text-slate-600 font-sans font-medium text-[9px]">
+                                  Days Present: {group.summary.daysWorked} | Late: {group.summary.lateDays}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+
+                        {/* Sign-off Blocks for Employee Timesheet */}
+                        <div className="pt-6 grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
+                          <div className="space-y-8">
+                            <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
+                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
+                          </div>
+                          <div className="space-y-8">
+                            <p className="font-bold text-slate-800">Verified By (Employee / Manager)</p>
+                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Staff Signature & Date</div>
+                          </div>
+                          <div className="space-y-8">
+                            <p className="font-bold text-slate-800">Approved By (Director)</p>
+                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Authorized Signature & Seal</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-[11px]">
-                    <thead className="bg-slate-800 text-white font-bold uppercase text-[9px]">
-                      <tr>
-                        <th className="p-2 w-8 text-center">No</th>
-                        <th className="p-2">ID</th>
-                        <th className="p-2">Name</th>
-                        <th className="p-2">Branch</th>
-                        <th className="p-2">Date</th>
-                        <th className="p-2">Day</th>
-                        <th className="p-2 text-center">In</th>
-                        <th className="p-2 text-center">Out</th>
-                        <th className="p-2 text-center">Hours</th>
-                        <th className="p-2">Status</th>
-                        <th className="p-2">Remark</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
-                      {filteredTimesheetRows.slice(0, 100).map((r) => (
-                        <tr key={`print_${r.no}_${r.date}`} className={r.isSunday ? 'bg-rose-50 text-rose-800 font-bold' : ''}>
-                          <td className="p-2 text-center">{r.no}</td>
-                          <td className="p-2">{r.enrollId}</td>
-                          <td className="p-2 font-sans font-semibold">{r.nameEn}</td>
-                          <td className="p-2 font-sans">{r.branchNameEn}</td>
-                          <td className="p-2">{r.date}</td>
-                          <td className="p-2">{r.dayOfWeek.split(' ')[0]}</td>
-                          <td className="p-2 text-center">{r.timeIn}</td>
-                          <td className="p-2 text-center">{r.timeOut}</td>
-                          <td className="p-2 text-center">{r.durationHours}</td>
-                          <td className="p-2 font-sans">{r.status}</td>
-                          <td className="p-2 font-sans text-slate-500">{r.remark}</td>
+                /* Merged Consolidated View with Required Header */
+                <div className="space-y-6">
+                  {/* Mandatory Header as explicitly requested */}
+                  <div className="text-center pb-4 border-b-2 border-slate-900">
+                    <div className="text-xs uppercase tracking-widest font-black text-slate-500 mb-1">
+                      {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
+                    </div>
+
+                    <h1 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight font-sans">
+                      Employee Attendance for {formatMonthYearHeader(startDate)}
+                      <br />
+                      for {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'All Departments'}
+                    </h1>
+
+                    <p className="text-xs font-bold text-slate-600 mt-1 font-battambang">
+                      របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {formatMonthYearKhHeader(startDate)}
+                      <br />
+                      សម្រាប់ផ្នែក: {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'គ្រប់ផ្នែកទាំងអស់'}
+                    </p>
+
+                    <div className="flex items-center justify-between text-xs text-slate-600 font-medium mt-3 pt-2 border-t border-slate-200">
+                      <div><b>Branch:</b> {currentBranchTitle}</div>
+                      <div><b>Period:</b> {startDate} ~ {endDate}</div>
+                      <div><b>Staff Count:</b> {filteredMergedSummaries.length} Staff</div>
+                    </div>
+                  </div>
+
+                  {/* Consolidated Table */}
+                  <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-slate-800 text-white font-bold uppercase text-[9px]">
+                        <tr>
+                          <th className="p-2 w-8 text-center border-r border-slate-700">No</th>
+                          <th className="p-2 border-r border-slate-700">Staff ID</th>
+                          <th className="p-2 border-r border-slate-700">Employee Name</th>
+                          <th className="p-2 border-r border-slate-700">Department</th>
+                          <th className="p-2 border-r border-slate-700">Branch</th>
+                          <th className="p-2 text-center border-r border-slate-700">Present Days</th>
+                          <th className="p-2 text-center border-r border-slate-700">Late Days</th>
+                          <th className="p-2 text-center border-r border-slate-700">Work Hours</th>
+                          <th className="p-2 text-center border-r border-slate-700">OT Hours</th>
+                          <th className="p-2 text-center border-r border-slate-700">Attendance Rate</th>
+                          <th className="p-2 w-24 text-center">Signature</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 font-mono text-[10px]">
+                        {filteredMergedSummaries.map((s, sIdx) => (
+                          <tr key={`print_m_${s.employeeId}`} className={sIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                            <td className="p-2 text-center border-r border-slate-200">{sIdx + 1}</td>
+                            <td className="p-2 font-bold border-r border-slate-200">{s.enrollId}</td>
+                            <td className="p-2 font-sans font-bold border-r border-slate-200">{s.nameEn} ({s.nameKh})</td>
+                            <td className="p-2 font-sans border-r border-slate-200">{s.department}</td>
+                            <td className="p-2 font-sans border-r border-slate-200">{s.branchNameEn}</td>
+                            <td className="p-2 text-center text-emerald-700 font-bold border-r border-slate-200">{s.daysPresent}</td>
+                            <td className="p-2 text-center border-r border-slate-200">{s.daysLate}</td>
+                            <td className="p-2 text-center font-bold text-indigo-700 border-r border-slate-200">{s.totalWorkHours}h</td>
+                            <td className="p-2 text-center text-purple-700 border-r border-slate-200">{s.totalOtHours}h</td>
+                            <td className="p-2 text-center font-bold border-r border-slate-200">{s.attendanceRate}%</td>
+                            <td className="p-2 text-center">
+                              <div className="w-16 h-4 border-b border-dotted border-slate-400 mx-auto" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Sign-off Blocks */}
+                  <div className="pt-6 grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
+                    <div className="space-y-8">
+                      <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
+                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
+                    </div>
+                    <div className="space-y-8">
+                      <p className="font-bold text-slate-800">Checked By (Branch Manager)</p>
+                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
+                    </div>
+                    <div className="space-y-8">
+                      <p className="font-bold text-slate-800">Approved By (Managing Director)</p>
+                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Seal</div>
+                    </div>
+                  </div>
                 </div>
               )}
-
-              {/* Signature Footer */}
-              <div className="pt-8 grid grid-cols-3 gap-8 text-center text-xs text-slate-600 font-medium">
-                <div className="space-y-12">
-                  <p>Prepared By (HR Officer)</p>
-                  <div className="border-t border-slate-300 pt-1 text-[11px] text-slate-400">Signature & Date</div>
-                </div>
-                <div className="space-y-12">
-                  <p>Checked By (Branch Manager)</p>
-                  <div className="border-t border-slate-300 pt-1 text-[11px] text-slate-400">Signature & Date</div>
-                </div>
-                <div className="space-y-12">
-                  <p>Approved By (Managing Director)</p>
-                  <div className="border-t border-slate-300 pt-1 text-[11px] text-slate-400">Signature & Seal</div>
-                </div>
-              </div>
             </div>
           </div>
         </div>

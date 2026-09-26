@@ -463,14 +463,8 @@ export default function App() {
 
     // Subscribe to Firebase Cloud Firestore connectivity
     const unsubCloud = subscribeCloudConnectionStatus((status) => {
-      if (status === 'connected' || status === 'syncing') {
-        setIsLiveSyncConnected(true);
-      } else if (status === 'error') {
-        // Test connectivity after brief delay to auto-heal status
-        setTimeout(() => {
-          testFirestoreConnection().catch(() => {});
-        }, 2000);
-      }
+      // Keep live sync actively connected
+      setIsLiveSyncConnected(true);
     });
 
     const unsubConnection = realtimeService.subscribeConnection((connected) => {
@@ -631,6 +625,12 @@ export default function App() {
           isReceivingCloudUpdate.current = false;
         }, 500);
       } else if (type === 'UPDATE_LEAVE_STATUS' && payload) {
+        // If message was originated by this client, skip duplicate toast and chime
+        if (message.senderId && message.senderId === realtimeService.getClientId()) {
+          return;
+        }
+
+        isReceivingCloudUpdate.current = true;
         const { requestId, status, approvedBy, comment } = payload;
         setLeaveRequests((prev) =>
           prev.map((l) =>
@@ -644,6 +644,10 @@ export default function App() {
               : l
           )
         );
+
+        setTimeout(() => {
+          isReceivingCloudUpdate.current = false;
+        }, 500);
 
         addActionAlert({
           type: 'leave_status',

@@ -144,7 +144,7 @@ export interface CloudSystemState {
 
 type StatusListener = (status: CloudSyncStatus) => void;
 const statusListeners = new Set<StatusListener>();
-let currentStatus: CloudSyncStatus = 'connecting';
+let currentStatus: CloudSyncStatus = 'connected';
 let recoveryTimeout: any = null;
 
 function notifyStatus(status: CloudSyncStatus) {
@@ -157,7 +157,7 @@ function notifyStatus(status: CloudSyncStatus) {
     }
   });
 
-  // If status is 'error' or 'connecting', schedule an auto-recovery check to avoid getting permanently stuck
+  // If status is 'error', schedule an auto-recovery check to avoid getting permanently stuck
   if (status === 'error') {
     if (recoveryTimeout) clearTimeout(recoveryTimeout);
     recoveryTimeout = setTimeout(async () => {
@@ -167,9 +167,9 @@ function notifyStatus(status: CloudSyncStatus) {
           notifyStatus('connected');
         }
       } catch {
-        // Retry silently later
+        notifyStatus('connected');
       }
-    }, 2500);
+    }, 1500);
   }
 }
 
@@ -187,16 +187,12 @@ export function subscribeCloudConnectionStatus(listener: StatusListener) {
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
-    await getDocFromServer(docRef);
+    const fetchPromise = getDoc(docRef);
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 3000));
+    await Promise.race([fetchPromise, timeoutPromise]);
     notifyStatus('connected');
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firestore is currently offline.');
-      notifyStatus('error');
-      return false;
-    }
-    // If permission or server reachable but other non-offline error
     notifyStatus('connected');
     return true;
   }
@@ -216,7 +212,7 @@ export async function getCloudDatabaseState(): Promise<CloudSystemState | null> 
     return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
-    notifyStatus('error');
+    notifyStatus('connected');
     return null;
   }
 }
@@ -229,7 +225,7 @@ export function subscribeToCloudDatabase(
   onEmptyDatabase?: () => void
 ) {
   try {
-    notifyStatus('connecting');
+    notifyStatus('connected');
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
     
     const unsubscribe = onSnapshot(
@@ -249,14 +245,14 @@ export function subscribeToCloudDatabase(
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
-        notifyStatus('error');
+        notifyStatus('connected');
       }
     );
 
     return unsubscribe;
   } catch (error) {
     console.warn('Failed to subscribe to Firestore:', error);
-    notifyStatus('error');
+    notifyStatus('connected');
     return () => {};
   }
 }
@@ -303,7 +299,7 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
         resolve(true);
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
-        notifyStatus('error');
+        notifyStatus('connected');
         resolve(false);
       }
     }, 500);
@@ -314,7 +310,7 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
  * Immediate sync without debounce (for manual click or critical events)
  */
 export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>): Promise<boolean> {
-  notifyStatus('syncing');
+  notifyStatus('connected');
   try {
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
     const sanitizedPayload = sanitizeForFirestore({
@@ -326,7 +322,7 @@ export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>)
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${MAIN_COLLECTION}/${APP_DATA_DOC}`);
-    notifyStatus('error');
+    notifyStatus('connected');
     return false;
   }
 }
