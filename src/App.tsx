@@ -1820,6 +1820,8 @@ export default function App() {
           onOpenQuickScan={() => setActiveTab('scan')}
           currentUser={currentUser}
           onOpenLoginModal={() => setShowLoginModal(true)}
+          onLogout={handleLogout}
+          employees={employees}
           pendingLeavesCount={pendingLeavesCount}
           branding={branding}
           onUpdateBranding={(partial) => handleUpdateBranding({ ...branding, ...partial })}

@@ -153,3 +153,25 @@ html.khmer-high-contrast .text-slate-600 {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Continuous Scrolling Reminder Marquee */
+@keyframes reminder-marquee {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-reminder-marquee {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: reminder-marquee 28s linear infinite;
+  will-change: transform;
+}
+
+.animate-reminder-marquee.is-paused,
+.animate-reminder-marquee:hover {
+  animation-play-state: paused !important;
+}

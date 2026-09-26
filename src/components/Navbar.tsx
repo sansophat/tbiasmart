@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   QrCode, 
   MapPin, 
@@ -19,11 +19,15 @@ import {
   LayoutDashboard,
   Lock,
   ChevronRight,
+  ChevronDown,
   Download,
   Calendar,
-  Bell
+  Bell,
+  Pause,
+  Play,
+  X
 } from 'lucide-react';
-import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation } from '../types';
+import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation, Employee } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
 import { AdminQuickVisualWidget } from './AdminQuickVisualWidget';
 
@@ -39,6 +43,8 @@ interface NavbarProps {
   onOpenQuickScan: () => void;
   currentUser: AuthUser | null;
   onOpenLoginModal: () => void;
+  onLogout?: () => void;
+  employees?: Employee[];
   pendingLeavesCount?: number;
   branding?: CompanyBranding;
   onUpdateBranding?: (branding: Partial<CompanyBranding>) => void;
@@ -66,6 +72,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenQuickScan,
   currentUser,
   onOpenLoginModal,
+  onLogout,
+  employees = [],
   pendingLeavesCount = 0,
   branding,
   onUpdateBranding,
@@ -81,6 +89,45 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenInstallModal,
 }) => {
   const [time, setTime] = useState(new Date());
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const [isTickerPaused, setIsTickerPaused] = useState(false);
+  const [isReminderDismissed, setIsReminderDismissed] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Sync / reset error if user or avatar changes
+  useEffect(() => {
+    setImgError(false);
+  }, [currentUser?.id, currentUser?.avatar]);
+
+  // Click outside to close user menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const matchingEmp = employees.find(
+    (e) => e.id === currentUser?.employeeId || e.code === currentUser?.employeeCode
+  );
+  const avatarUrl = currentUser?.avatar || matchingEmp?.avatar || '';
+  const userName = currentUser
+    ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) || currentUser.username
+    : 'Guest';
+
+  const getUserInitials = (name?: string) => {
+    if (!name || name === 'Guest') return 'U';
+    const clean = name.replace(/\(.*?\)/g, '').trim();
+    const parts = clean.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return clean.slice(0, 2).toUpperCase() || 'U';
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -124,19 +171,73 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 transition-all">
-      {/* Broadcast Announcement Bar */}
-      {broadcastActive && (broadcastNoticeKh || broadcastNoticeEn) && (
-        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white py-1.5 px-4 text-xs font-bold shadow-inner">
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-2 truncate">
-              <Megaphone className="w-4 h-4 shrink-0 animate-bounce" />
-              <span className="truncate">
-                {lang === 'km' ? broadcastNoticeKh : broadcastNoticeEn}
-              </span>
+      {/* Broadcast Announcement Scrolling Ticker Bar */}
+      {broadcastActive && !isReminderDismissed && (broadcastNoticeKh || broadcastNoticeEn) && (
+        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white py-1.5 px-3 sm:px-4 text-xs font-medium shadow-inner border-b border-amber-600/50 overflow-hidden">
+          <div className="max-w-7xl mx-auto flex items-center gap-3">
+            {/* Pinned Left Badge */}
+            <div className="flex items-center space-x-1.5 bg-black/25 backdrop-blur-xs px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider shrink-0 z-20 shadow-xs border border-white/20 select-none">
+              <Megaphone className="w-3.5 h-3.5 text-amber-200 animate-bounce shrink-0" />
+              <span>{lang === 'km' ? 'សាររំលឹក' : 'Reminder'}</span>
             </div>
-            <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-              {lang === 'km' ? 'សារផ្លូវការ' : 'Notice'}
-            </span>
+
+            {/* Continuous Scrolling Marquee Viewport */}
+            <div className="relative flex-1 overflow-hidden min-w-0 flex items-center">
+              {/* Left and Right Fade Gradients */}
+              <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-amber-500 to-transparent z-10" />
+              <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-orange-500 to-transparent z-10" />
+
+              {/* Scrolling Loop Container (Dual segments for seamless 100% infinite scroll) */}
+              <div
+                className={`animate-reminder-marquee items-center text-xs font-semibold py-0.5 select-none ${
+                  isTickerPaused ? 'is-paused' : ''
+                }`}
+                title={lang === 'km' ? 'ដាក់កណ្ដុរពីលើដើម្បីផ្អាកការរមូរ (Hover to pause)' : 'Hover to pause scrolling'}
+              >
+                <div className="flex items-center space-x-6 shrink-0 pr-12">
+                  {broadcastNoticeKh && <span className="font-battambang font-bold">{broadcastNoticeKh}</span>}
+                  {broadcastNoticeEn && broadcastNoticeKh && (
+                    <span className="text-amber-200/90 font-black text-sm">✦</span>
+                  )}
+                  {broadcastNoticeEn && (
+                    <span className="font-semibold text-amber-50">{broadcastNoticeEn}</span>
+                  )}
+                  <span className="text-amber-200/90 font-black text-sm">✦</span>
+                </div>
+                <div className="flex items-center space-x-6 shrink-0 pr-12" aria-hidden="true">
+                  {broadcastNoticeKh && <span className="font-battambang font-bold">{broadcastNoticeKh}</span>}
+                  {broadcastNoticeEn && broadcastNoticeKh && (
+                    <span className="text-amber-200/90 font-black text-sm">✦</span>
+                  )}
+                  {broadcastNoticeEn && (
+                    <span className="font-semibold text-amber-50">{broadcastNoticeEn}</span>
+                  )}
+                  <span className="text-amber-200/90 font-black text-sm">✦</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Action Controls: Pause/Play & Dismiss */}
+            <div className="flex items-center space-x-1 shrink-0 z-20">
+              <button
+                type="button"
+                onClick={() => setIsTickerPaused(!isTickerPaused)}
+                className="p-1 rounded-lg hover:bg-black/25 text-white/90 hover:text-white transition cursor-pointer"
+                title={isTickerPaused ? (lang === 'km' ? 'បន្តការរមូរ (Resume)' : 'Resume scrolling') : (lang === 'km' ? 'ផ្អាកការរមូរ (Pause)' : 'Pause scrolling')}
+                aria-label="Toggle ticker animation"
+              >
+                {isTickerPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsReminderDismissed(true)}
+                className="p-1 rounded-lg hover:bg-black/25 text-white/80 hover:text-white transition cursor-pointer"
+                title={lang === 'km' ? 'បិទការរំលឹកនេះ' : 'Dismiss reminder'}
+                aria-label="Dismiss reminder"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -291,31 +392,151 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">{lang === 'km' ? 'ស្កេនវត្តមាន' : 'Quick Punch'}</span>
           </button>
 
-          {/* User Account Capsule */}
-          <button
-            type="button"
-            onClick={onOpenLoginModal}
-            className="flex items-center space-x-2 p-1 sm:px-2.5 sm:py-1 rounded-2xl border border-slate-200 hover:border-indigo-300 bg-white hover:bg-slate-50 transition cursor-pointer"
-          >
-            <img
-              src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-              alt={currentUser?.nameKh || currentUser?.nameEn || 'User'}
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+          {/* User Account Capsule with Dropdown Menu */}
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => {
+                if (!currentUser) {
+                  onOpenLoginModal();
+                } else {
+                  setIsUserMenuOpen(!isUserMenuOpen);
+                }
               }}
-              className="w-7 h-7 rounded-xl object-cover border border-slate-300 shrink-0 bg-slate-200"
-            />
-            <div className="hidden lg:block text-left">
-              <span className="text-xs font-bold text-slate-800 block leading-tight truncate max-w-[100px]">
-                {currentUser ? (lang === 'km' ? currentUser.nameKh : currentUser.nameEn) || currentUser.username : 'Guest'}
-              </span>
-              <span className="text-[10px] text-slate-500 font-bold uppercase block leading-none">
-                {currentUser?.role || 'Sign In'}
-              </span>
-            </div>
-          </button>
+              className="flex items-center space-x-2 p-1 sm:px-2.5 sm:py-1 rounded-2xl border border-slate-200 hover:border-indigo-300 bg-white hover:bg-slate-50 transition cursor-pointer shadow-xs group"
+              title={currentUser ? (lang === 'km' ? 'ម៉ឺនុយគណនីអ្នកប្រើ' : 'User Account Menu') : (lang === 'km' ? 'ចូលប្រព័ន្ធ (Sign In)' : 'Sign In')}
+            >
+              {/* User Avatar Circle */}
+              <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0 border border-slate-300 shadow-inner bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center">
+                {avatarUrl && !imgError ? (
+                  <img
+                    src={avatarUrl}
+                    alt={userName}
+                    referrerPolicy="no-referrer"
+                    onError={() => setImgError(true)}
+                    className="w-full h-full object-cover object-center"
+                  />
+                ) : (
+                  <span className="text-white font-bold text-xs">
+                    {currentUser ? getUserInitials(userName) : <User className="w-4 h-4 text-white" />}
+                  </span>
+                )}
+                {currentUser && (
+                  <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 ring-2 ring-white rounded-full" />
+                )}
+              </div>
+
+              {/* User Text Info on Larger Screens */}
+              <div className="hidden lg:block text-left">
+                <span className="text-xs font-bold text-slate-800 block leading-tight truncate max-w-[110px]">
+                  {userName}
+                </span>
+                <span className="text-[10px] text-slate-500 font-bold uppercase block leading-none">
+                  {currentUser?.role || (lang === 'km' ? 'ចូលគណនី' : 'Sign In')}
+                </span>
+              </div>
+
+              {currentUser && (
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+              )}
+            </button>
+
+            {/* User Dropdown Menu Popover */}
+            {isUserMenuOpen && currentUser && (
+              <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-3xl shadow-2xl border border-slate-200/90 py-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                {/* Header with big photo & details */}
+                <div className="px-4 pb-3 border-b border-slate-100 flex items-center space-x-3">
+                  <div className="relative w-12 h-12 rounded-full overflow-hidden ring-2 ring-indigo-500/20 shadow-md shrink-0 bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center">
+                    {avatarUrl && !imgError ? (
+                      <img
+                        src={avatarUrl}
+                        alt={userName}
+                        referrerPolicy="no-referrer"
+                        onError={() => setImgError(true)}
+                        className="w-full h-full object-cover object-center"
+                      />
+                    ) : (
+                      <span className="text-white font-black text-base">
+                        {getUserInitials(userName)}
+                      </span>
+                    )}
+                    <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 ring-2 ring-white rounded-full" />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-black text-slate-800 text-sm truncate font-battambang">
+                      {userName}
+                    </h4>
+                    <div className="flex items-center space-x-1.5 mt-0.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        currentUser.role === 'admin' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                        currentUser.role === 'manager' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                        'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
+                        {currentUser.role}
+                      </span>
+                      {currentUser.employeeCode && (
+                        <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                          {currentUser.employeeCode}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 truncate mt-0.5 font-medium">
+                      {currentUser.email || (currentUser.branchId ? branches.find((b) => b.id === currentUser.branchId)?.nameEn : 'Enterprise User')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Menu Items */}
+                <div className="p-2 space-y-1 text-xs font-semibold text-slate-700">
+                  {/* Profile & PIN Settings */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      setActiveTab('profile');
+                    }}
+                    className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition cursor-pointer"
+                  >
+                    <User className="w-4 h-4 text-indigo-600" />
+                    <span className="font-battambang">
+                      {lang === 'km' ? 'ប្រវត្តិរូប & លេខសម្ងាត់ PIN' : 'My Profile & PIN Settings'}
+                    </span>
+                  </button>
+
+                  {/* Switch Account */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onOpenLoginModal();
+                    }}
+                    className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition cursor-pointer"
+                  >
+                    <Users className="w-4 h-4 text-blue-600" />
+                    <span className="font-battambang">
+                      {lang === 'km' ? 'ប្តូរគណនី / តួនាទី (Switch Role)' : 'Switch Account / Role'}
+                    </span>
+                  </button>
+
+                  {/* Sign Out */}
+                  {onLogout && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        onLogout();
+                      }}
+                      className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl hover:bg-rose-50 text-rose-600 hover:text-rose-700 transition cursor-pointer border-t border-slate-100 mt-1 pt-2 font-battambang"
+                    >
+                      <LogOut className="w-4 h-4 text-rose-600" />
+                      <span>{lang === 'km' ? 'ចាកចេញពីគណនី (Sign Out)' : 'Sign Out'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </header>
