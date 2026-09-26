@@ -1829,6 +1829,7 @@ export default function App() {
           broadcastActive={systemSettings.broadcastActive}
           onToggleMobileMenu={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
           isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebarCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           isLiveSyncConnected={isLiveSyncConnected}
           onlinePeersCount={onlinePeersCount}
           onOpenInstallModal={() => setShowInstallModal(true)}

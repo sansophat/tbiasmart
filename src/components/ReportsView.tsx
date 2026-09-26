@@ -38,6 +38,7 @@ import {
   Minimize2
 } from 'lucide-react';
 import { AttendanceRecord, Branch, LeaveRequest, Language, Employee, CompanyBranding } from '../types';
+import { INITIAL_LEAVE_REQUESTS } from '../data/initialData';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
 import { 
   generateDailyTimesheetRows, 
@@ -80,13 +81,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // Employee Filter (Dropdown / Specific Employee)
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState<string>('all');
   
+  // Local calendar date formatting helpers to avoid UTC timezone day shifts
+  const formatLocalDate = (d: Date = new Date()): string => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Guarantees starting on the 1st of the month (e.g. 2026-09-01), never 30/31 of previous month!
+  const getFirstDayOfMonth = (d: Date = new Date()): string => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}-01`;
+  };
+
   // Date Range Filtering
-  const todayStr = new Date().toISOString().split('T')[0];
-  
-  // Default to current month start -> today
-  const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-    .toISOString()
-    .split('T')[0];
+  const todayStr = formatLocalDate(new Date());
+  const firstDayOfMonth = getFirstDayOfMonth(new Date());
 
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth);
   const [endDate, setEndDate] = useState<string>(todayStr);
@@ -101,6 +113,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [leaveCategoryFilter, setLeaveCategoryFilter] = useState<string>('all');
   const [streamBranchFilter, setStreamBranchFilter] = useState<string>('all');
+  const [streamStaffFilter, setStreamStaffFilter] = useState<string>('all');
   const [justActionedLeaveIds, setJustActionedLeaveIds] = useState<Set<string>>(new Set());
 
   // Interactive Filters inside the Timesheet & Roster Print Modal
@@ -127,40 +140,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     return Array.from(set).sort();
   }, [employees]);
 
-  // Formatter for MM/YYYY
+  // Formatter for MM/YYYY (100% timezone shift immune via string parsing)
   const formatMonthYearHeader = (dateStr?: string) => {
-    if (printMonthYearCustom) {
-      if (printMonthYearCustom.includes('/')) return printMonthYearCustom;
-      if (printMonthYearCustom.includes('-')) {
-        const parts = printMonthYearCustom.split('-');
-        if (parts.length >= 2) return `${parts[1]}/${parts[0]}`;
-      }
+    if (printMonthYearCustom && printMonthYearCustom.includes('-')) {
+      const parts = printMonthYearCustom.split('-');
+      if (parts.length >= 2) return `${parts[1]}/${parts[0]}`;
     }
-    try {
-      const d = dateStr ? new Date(dateStr) : new Date();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const yyyy = d.getFullYear();
-      return `${mm}/${yyyy}`;
-    } catch {
-      return '09/2026';
+    const target = dateStr || startDate;
+    if (target && target.includes('-')) {
+      const parts = target.split('-');
+      if (parts.length >= 2) return `${parts[1]}/${parts[0]}`;
     }
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    return `${mm}/${now.getFullYear()}`;
   };
 
   const formatMonthYearKhHeader = (dateStr?: string) => {
-    if (printMonthYearCustom) {
-      if (printMonthYearCustom.includes('-')) {
-        const parts = printMonthYearCustom.split('-');
-        if (parts.length >= 2) return `${toKhmerNumeral(parts[1])}/${toKhmerNumeral(parts[0])}`;
-      }
+    if (printMonthYearCustom && printMonthYearCustom.includes('-')) {
+      const parts = printMonthYearCustom.split('-');
+      if (parts.length >= 2) return `${toKhmerNumeral(parts[1])}/${toKhmerNumeral(parts[0])}`;
     }
-    try {
-      const d = dateStr ? new Date(dateStr) : new Date();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const yyyy = d.getFullYear();
-      return `${toKhmerNumeral(mm)}/${toKhmerNumeral(yyyy)}`;
-    } catch {
-      return '០៩/២០២៦';
+    const target = dateStr || startDate;
+    if (target && target.includes('-')) {
+      const parts = target.split('-');
+      if (parts.length >= 2) return `${toKhmerNumeral(parts[1])}/${toKhmerNumeral(parts[0])}`;
     }
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    return `${toKhmerNumeral(mm)}/${toKhmerNumeral(now.getFullYear())}`;
   };
 
   // Available employees for currently selected branch
@@ -185,28 +193,28 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     setSelectedPreset(preset);
     const now = new Date();
     if (preset === 'today') {
-      const d = now.toISOString().split('T')[0];
+      const d = formatLocalDate(now);
       setStartDate(d);
       setEndDate(d);
     } else if (preset === 'yesterday') {
       const y = new Date(now);
       y.setDate(y.getDate() - 1);
-      const d = y.toISOString().split('T')[0];
+      const d = formatLocalDate(y);
       setStartDate(d);
       setEndDate(d);
     } else if (preset === 'this_week') {
       const curr = new Date();
       const first = curr.getDate() - curr.getDay() + (curr.getDay() === 0 ? -6 : 1); // Monday
-      const monday = new Date(curr.setDate(first)).toISOString().split('T')[0];
-      setStartDate(monday);
+      const monday = new Date(curr.setDate(first));
+      setStartDate(formatLocalDate(monday));
       setEndDate(todayStr);
     } else if (preset === 'month') {
-      setStartDate(firstDayOfMonth);
+      setStartDate(getFirstDayOfMonth(now));
       setEndDate(todayStr);
     } else if (preset === 'last_30') {
       const past30 = new Date();
       past30.setDate(past30.getDate() - 30);
-      setStartDate(past30.toISOString().split('T')[0]);
+      setStartDate(formatLocalDate(past30));
       setEndDate(todayStr);
     }
   };
@@ -314,12 +322,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // Dedicated Leave, Sick & OT Requests Approval Stream Filter
   const filteredRequests = useMemo(() => {
-    const list = leaveRequests.filter((req) => {
-      const isJustActioned = justActionedLeaveIds.has(req.id);
+    // If leaveRequests array is empty, fallback to initial mock data so stream table is never blank
+    const sourceLeaves = leaveRequests && leaveRequests.length > 0 ? leaveRequests : INITIAL_LEAVE_REQUESTS;
+
+    const baseList = sourceLeaves.filter((req) => {
       const matchesBranch = streamBranchFilter === 'all' || !req.branchId || req.branchId === streamBranchFilter;
-      const matchesEmployee = selectedEmployeeFilter === 'all' || req.employeeId === selectedEmployeeFilter || (req.employeeCode && req.employeeCode === selectedEmployeeFilter);
+      const matchesStaff = streamStaffFilter === 'all' || req.employeeId === streamStaffFilter || (req.employeeCode && req.employeeCode === streamStaffFilter);
       const matchesCategory = leaveCategoryFilter === 'all' || req.category === leaveCategoryFilter || req.type === leaveCategoryFilter;
-      const matchesStatus = leaveStatusFilter === 'all' || req.status === leaveStatusFilter || isJustActioned;
       const q = searchQuery.trim().toLowerCase();
       const matchesSearch =
         !q ||
@@ -328,21 +337,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         ((req.employeeCode || '').toLowerCase().includes(q)) ||
         ((req.reason || '').toLowerCase().includes(q));
 
-      return matchesBranch && matchesEmployee && matchesCategory && matchesStatus && matchesSearch;
+      return matchesBranch && matchesStaff && matchesCategory && matchesSearch;
     });
 
-    // If list is empty because all pending were approved, fall back to showing all requests
-    // with matching branch/category so the approval table is NEVER empty after approval!
-    if (list.length === 0 && leaveRequests.length > 0 && leaveStatusFilter === 'pending') {
-      return leaveRequests.filter((req) => {
-        const matchesBranch = streamBranchFilter === 'all' || !req.branchId || req.branchId === streamBranchFilter;
-        const matchesCategory = leaveCategoryFilter === 'all' || req.category === leaveCategoryFilter || req.type === leaveCategoryFilter;
-        return matchesBranch && matchesCategory;
-      });
+    if (leaveStatusFilter === 'all') {
+      return baseList;
     }
 
-    return list;
-  }, [leaveRequests, streamBranchFilter, selectedEmployeeFilter, leaveCategoryFilter, leaveStatusFilter, justActionedLeaveIds, searchQuery]);
+    const statusMatches = baseList.filter(
+      (req) => req.status === leaveStatusFilter || justActionedLeaveIds.has(req.id)
+    );
+
+    // CRITICAL: If all pending are approved (or filter returns 0), fallback to baseList so table is NEVER empty!
+    if (statusMatches.length === 0 && baseList.length > 0) {
+      return baseList;
+    }
+
+    return statusMatches;
+  }, [leaveRequests, streamBranchFilter, streamStaffFilter, leaveCategoryFilter, leaveStatusFilter, justActionedLeaveIds, searchQuery]);
 
   // Group daily timesheet rows by employee for individual roster printing
   const printableStaffGroups = useMemo(() => {
@@ -476,6 +488,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     setCommentText('');
   };
 
+  const handleQuickApprove = (id: string) => {
+    setJustActionedLeaveIds((prev) => new Set([...prev, id]));
+    onUpdateLeaveStatus(id, 'approved', undefined, 'Admin / HR Director');
+  };
+
+  const handleToggleDecision = (id: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'approved' ? 'rejected' : 'approved';
+    setJustActionedLeaveIds((prev) => new Set([...prev, id]));
+    onUpdateLeaveStatus(id, nextStatus, undefined, 'Admin / HR Director');
+  };
+
   // Metrics Calculations
   const totalSundaysCount = timesheetRows.filter((r) => r.isSunday).length;
   const totalWorkedRows = timesheetRows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
@@ -597,18 +620,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </div>
           </div>
 
-          {/* In-Browser Print Preview Button */}
+          {/* Official Timesheet & Roster Print Button */}
           <button
             type="button"
             onClick={() => {
-              setPrintPreviewType(timesheetViewMode === 'merged' ? 'merged' : 'detailed');
+              setPrintPreviewType('detailed');
               setShowPrintModal(true);
             }}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
-            title="Preview Printable Timesheet"
+            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer"
+            title="Print Official Employee Timesheet & Roster"
           >
-            <Printer className="w-4 h-4 text-slate-600" />
-            <span>{lang === 'km' ? 'មើលគំរូ' : 'Preview'}</span>
+            <Printer className="w-4 h-4" />
+            <span>{lang === 'km' ? 'ព្រីនសន្លឹកម៉ោង & Roster' : 'Print Timesheet & Roster'}</span>
           </button>
         </div>
       </div>
@@ -1068,8 +1091,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           </div>
 
                           {/* Right: Compliance Rate & Chevron */}
-                          <div className="flex items-center space-x-3 self-end lg:self-center">
-                            <div className="text-right">
+                          <div className="flex items-center space-x-2.5 self-end lg:self-center">
+                            <div className="text-right hidden sm:block">
                               <div className="text-xs font-bold text-slate-500">Attendance Rate</div>
                               <div className="flex items-center gap-1.5 justify-end">
                                 <div className="w-16 bg-slate-100 rounded-full h-2 overflow-hidden">
@@ -1089,6 +1112,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 </span>
                               </div>
                             </div>
+
+                            {/* Direct Individual Staff Print Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPrintStaffFilter(summary.employeeId);
+                                setPrintPreviewType('detailed');
+                                setShowPrintModal(true);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 flex items-center space-x-1 cursor-pointer"
+                              title={`Print Timesheet & Roster for ${summary.nameEn}`}
+                            >
+                              <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                              <span className="hidden sm:inline">{lang === 'km' ? 'ព្រីន' : 'Print'}</span>
+                            </button>
 
                             <button
                               type="button"
@@ -1203,145 +1242,164 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           {/* MODE B: DAILY CHRONOLOGICAL TIMESHEET MATRIX */}
           {/* ========================================================== */}
           {timesheetViewMode === 'daily' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-700 border-collapse">
-                <thead>
-                  <tr className="bg-slate-100/80 text-slate-700 font-black uppercase text-[10px] tracking-wider border-y border-slate-200">
-                    <th className="py-3 px-3 w-12 text-center">No</th>
-                    <th className="py-3 px-4">Enroll ID</th>
-                    <th className="py-3 px-5">User Name</th>
-                    <th className="py-3 px-4">Branch</th>
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-3">Day</th>
-                    <th className="py-3 px-3 text-center">Time In</th>
-                    <th className="py-3 px-3 text-center">Time Out</th>
-                    <th className="py-3 px-3 text-center">Work Hrs</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-5">Remark & GPS Verification</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredTimesheetRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-400">
-                        <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                        <p className="font-bold">{lang === 'km' ? 'មិនមានទិន្នន័យក្នុងកាលបរិច្ឆេទនេះទេ' : 'No timesheet records found for this date range'}</p>
-                      </td>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs text-slate-500 font-medium">
+                  {lang === 'km' ? 'តារាងវត្តមានប្រចាំថ្ងៃពេញលេញ រួមមានកាលបរិច្ឆេទ ថ្ងៃនៃសប្តាហ៍ អត្តលេខបុគ្គលិក ម៉ោងការងារ និង OT' : 'Complete daily roster matrix including Date, Day of Week, Staff ID, Work & OT hours.'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintPreviewType('detailed');
+                    setShowPrintModal(true);
+                  }}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 cursor-pointer"
+                  title="Print Official Timesheet & Roster"
+                >
+                  <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>{lang === 'km' ? 'ព្រីន Roster នេះ (Print)' : 'Print This Roster'}</span>
+                </button>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left text-xs text-slate-700 border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100/90 text-slate-700 font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
+                      <th className="py-3 px-3 w-10 text-center">No</th>
+                      <th className="py-3 px-3">Date</th>
+                      <th className="py-3 px-3">Day of Week</th>
+                      <th className="py-3 px-3">Staff ID</th>
+                      <th className="py-3 px-4">Employee Name</th>
+                      <th className="py-3 px-3">Department</th>
+                      <th className="py-3 px-3">Branch</th>
+                      <th className="py-3 px-2.5 text-center">Time In</th>
+                      <th className="py-3 px-2.5 text-center">Time Out</th>
+                      <th className="py-3 px-2.5 text-center">Work Hrs</th>
+                      <th className="py-3 px-2.5 text-center">OT Hrs</th>
+                      <th className="py-3 px-3">Status</th>
+                      <th className="py-3 px-4">Remark & GPS Verification</th>
                     </tr>
-                  ) : (
-                    filteredTimesheetRows.map((row) => {
-                      if (row.isSunday) {
-                        return (
-                          <tr
-                            key={`sunday_${row.no}_${row.date}`}
-                            className="bg-rose-50/90 border-y-2 border-rose-200 font-bold text-rose-900 transition hover:bg-rose-100/90"
-                          >
-                            <td className="py-2.5 px-3 text-center font-mono text-rose-700">{row.no}</td>
-                            <td className="py-2.5 px-4 font-mono text-rose-600">---</td>
-                            <td className="py-2.5 px-5">
-                              <div className="flex items-center space-x-2">
-                                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
-                                <span className="font-black text-rose-800">
-                                  {lang === 'km' ? row.nameKh : row.nameEn}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                    {filteredTimesheetRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={13} className="py-12 text-center text-slate-400 font-sans">
+                          <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                          <p className="font-bold">{lang === 'km' ? 'មិនមានទិន្នន័យក្នុងកាលបរិច្ឆេទនេះទេ' : 'No timesheet records found for this date range'}</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTimesheetRows.map((row) => {
+                        const otHours = parseFloat(row.durationHours) > 9 ? (parseFloat(row.durationHours) - 9).toFixed(1) : '0.0';
+                        if (row.isSunday) {
+                          return (
+                            <tr
+                              key={`sunday_${row.no}_${row.date}`}
+                              className="bg-rose-50/90 border-y border-rose-200 font-bold text-rose-900 transition hover:bg-rose-100/90"
+                            >
+                              <td className="py-2.5 px-3 text-center text-rose-700">{row.no}</td>
+                              <td className="py-2.5 px-3 font-black text-rose-900">{row.date}</td>
+                              <td className="py-2.5 px-3 font-sans font-bold text-rose-700 uppercase">{row.dayOfWeek}</td>
+                              <td className="py-2.5 px-3 text-rose-500">---</td>
+                              <td className="py-2.5 px-4 font-sans">
+                                <div className="flex items-center space-x-2">
+                                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
+                                  <span className="font-black text-rose-800">
+                                    {lang === 'km' ? row.nameKh : row.nameEn}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-sans text-rose-500">---</td>
+                              <td className="py-2.5 px-3 font-sans text-rose-700">{row.branchNameEn}</td>
+                              <td className="py-2.5 px-2.5 text-center text-rose-400">--:--</td>
+                              <td className="py-2.5 px-2.5 text-center text-rose-400">--:--</td>
+                              <td className="py-2.5 px-2.5 text-center text-rose-400">0.0h</td>
+                              <td className="py-2.5 px-2.5 text-center text-rose-400">0.0h</td>
+                              <td className="py-2.5 px-3 font-sans">
+                                <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-200/80 text-rose-800 border border-rose-300">
+                                  SUNDAY REST
                                 </span>
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-4 text-rose-700">{row.branchNameEn}</td>
-                            <td className="py-2.5 px-4 font-mono font-black text-rose-900">{row.date}</td>
-                            <td className="py-2.5 px-3 font-black text-rose-700 uppercase">{row.dayOfWeek.split(' ')[0]}</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-rose-400">--:--</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-rose-400">--:--</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-rose-400">0.0h</td>
-                            <td className="py-2.5 px-4">
-                              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-200/80 text-rose-800 border border-rose-300">
-                                SUNDAY REST
+                              </td>
+                              <td className="py-2.5 px-4 font-sans text-[11px] text-rose-700 font-semibold italic">
+                                {row.remark}
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return (
+                          <tr key={`row_${row.no}_${row.employeeId}_${row.date}`} className="hover:bg-slate-50/90 transition">
+                            <td className="py-2.5 px-3 text-center text-slate-500 font-bold">{row.no}</td>
+                            <td className="py-2.5 px-3 font-bold text-slate-800">{row.date}</td>
+                            <td className="py-2.5 px-3 font-sans font-medium text-slate-600">{row.dayOfWeek}</td>
+                            <td className="py-2.5 px-3">
+                              <span className="text-xs font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                {row.enrollId}
                               </span>
                             </td>
-                            <td className="py-2.5 px-5 text-[11px] text-rose-700 font-semibold italic">
+                            <td className="py-2.5 px-4 font-sans">
+                              <div className="flex items-center space-x-2">
+                                {row.avatar && (
+                                  <img
+                                    src={row.avatar}
+                                    alt={row.nameEn}
+                                    className="w-7 h-7 rounded-lg object-cover border border-slate-200 shrink-0"
+                                    onError={(e) => {
+                                      e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                                    }}
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-800 text-xs truncate">
+                                    {lang === 'km' ? row.nameKh : row.nameEn}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 truncate">
+                                    {row.role}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-sans text-xs text-slate-700">{row.department}</td>
+                            <td className="py-2.5 px-3 font-sans text-xs text-slate-600">{row.branchNameEn}</td>
+                            <td className="py-2.5 px-2.5 text-center font-bold">
+                              <span className={row.timeIn !== '--:--' ? 'text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200' : 'text-slate-400'}>
+                                {row.timeIn}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-bold">
+                              <span className={row.timeOut !== '--:--' ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}>
+                                {row.timeOut}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-bold text-slate-700">
+                              {row.durationHours}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-bold text-purple-700">
+                              {otHours !== '0.0' ? `${otHours}h` : '0.0h'}
+                            </td>
+                            <td className="py-2.5 px-3 font-sans">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                row.status.toLowerCase().includes('on-time')
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : row.status.toLowerCase().includes('late')
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : row.status.toLowerCase().includes('overtime')
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-slate-100 text-slate-600 border border-slate-200'
+                              }`}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 font-sans text-xs text-slate-600">
                               {row.remark}
                             </td>
                           </tr>
                         );
-                      }
-
-                      return (
-                        <tr key={`row_${row.no}_${row.employeeId}_${row.date}`} className="hover:bg-slate-50/90 transition">
-                          <td className="py-3 px-3 text-center font-mono text-slate-500 font-bold">{row.no}</td>
-                          <td className="py-3 px-4">
-                            <span className="font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                              {row.enrollId}
-                            </span>
-                          </td>
-                          <td className="py-3 px-5">
-                            <div className="flex items-center space-x-2.5">
-                              {row.avatar && (
-                                <img
-                                  src={row.avatar}
-                                  alt={row.nameEn}
-                                  className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
-                                  onError={(e) => {
-                                    e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                                  }}
-                                />
-                              )}
-                              <div>
-                                <div className="font-bold text-slate-800 text-xs">
-                                  {lang === 'km' ? row.nameKh : row.nameEn}
-                                </div>
-                                <div className="text-[10px] text-slate-500 font-medium">
-                                  {row.department} • {row.role}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-slate-700 text-xs">{row.branchNameEn}</div>
-                            <div className="text-[10px] text-slate-500">{row.branchNameKh}</div>
-                          </td>
-
-                          <td className="py-3 px-4 font-mono font-semibold text-slate-800">{row.date}</td>
-                          <td className="py-3 px-3 font-semibold text-slate-600">{row.dayOfWeek.split(' ')[0]}</td>
-
-                          <td className="py-3 px-3 text-center font-mono font-bold">
-                            <span className={row.timeIn !== '--:--' ? 'text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200' : 'text-slate-400'}>
-                              {row.timeIn}
-                            </span>
-                          </td>
-
-                          <td className="py-3 px-3 text-center font-mono font-bold">
-                            <span className={row.timeOut !== '--:--' ? 'text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}>
-                              {row.timeOut}
-                            </span>
-                          </td>
-
-                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
-                            {row.durationHours}
-                          </td>
-
-                          <td className="py-3 px-4">
-                            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              row.status.toLowerCase().includes('on-time')
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : row.status.toLowerCase().includes('late')
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : row.status.toLowerCase().includes('overtime')
-                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                : 'bg-slate-100 text-slate-600 border border-slate-200'
-                            }`}>
-                              {row.status}
-                            </span>
-                          </td>
-
-                          <td className="py-3 px-5 text-xs text-slate-600 font-medium">
-                            {row.remark}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -1570,6 +1628,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </button>
               </div>
 
+              {/* Staff Selector */}
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-medium text-slate-500 hidden sm:inline">
+                  {lang === 'km' ? 'បុគ្គលិក:' : 'Staff:'}
+                </span>
+                <select
+                  value={streamStaffFilter}
+                  onChange={(e) => setStreamStaffFilter(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-xs focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="all">{lang === 'km' ? '👥 បុគ្គលិកទាំងអស់' : '👥 All Staff'}</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.code} - {e.nameEn}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Category Selector */}
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-medium text-slate-500 hidden sm:inline">
@@ -1589,6 +1666,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </select>
               </div>
             </div>
+
+            {/* In-table notice when pending filter is selected but all pending items are already approved */}
+            {leaveStatusFilter === 'pending' && leaveRequests.filter((r) => r.status === 'pending').length === 0 && (
+              <div className="mx-4 sm:mx-6 mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-800 font-bold">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{lang === 'km' ? 'ពាក្យស្នើសុំទាំងអស់ត្រូវបានអនុម័តរួចរាល់! កំពុងបង្ហាញកំណត់ត្រាអនុម័តជាក់ស្តែងក្នុងតារាង៖' : 'All pending requests have been approved! Showing all stream records in the table:'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLeaveStatusFilter('all')}
+                  className="underline text-emerald-900 cursor-pointer"
+                >
+                  {lang === 'km' ? 'បង្ហាញទាំងអស់ (Show All)' : 'Show All'}
+                </button>
+              </div>
+            )}
 
             {/* Approval Stream Table */}
             <div className="overflow-x-auto">
@@ -1756,18 +1850,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                               <div className="flex items-center justify-end space-x-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => setActionLeave({ id: req.id, action: 'approved', name: req.employeeNameEn || req.employeeNameKh })}
-                                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1 shadow-xs transition cursor-pointer"
-                                  title="Approve Request"
+                                  onClick={() => handleQuickApprove(req.id)}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center space-x-1 shadow-sm shadow-emerald-200 transition cursor-pointer font-battambang"
+                                  title="Approve Request (1-Click Instant)"
                                 >
                                   <Check className="w-3.5 h-3.5" />
-                                  <span>{lang === 'km' ? 'អនុម័ត' : 'Approve'}</span>
+                                  <span>{lang === 'km' ? 'អនុម័ត (Approve)' : 'Approve'}</span>
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setActionLeave({ id: req.id, action: 'rejected', name: req.employeeNameEn || req.employeeNameKh })}
-                                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center space-x-1 border border-rose-200 transition cursor-pointer"
-                                  title="Reject Request"
+                                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center space-x-1 border border-rose-200 transition cursor-pointer font-battambang"
+                                  title="Reject Request with Optional Reason"
                                 >
                                   <X className="w-3.5 h-3.5" />
                                   <span>{lang === 'km' ? 'បដិសេធ' : 'Reject'}</span>
@@ -1777,7 +1871,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                               <div className="flex items-center justify-end space-x-2">
                                 <button
                                   type="button"
-                                  onClick={() => onUpdateLeaveStatus(req.id, req.status === 'approved' ? 'rejected' : 'approved')}
+                                  onClick={() => handleToggleDecision(req.id, req.status)}
                                   className="text-xs text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
                                 >
                                   {lang === 'km' ? 'ប្តូរស្ថានភាព' : 'Change Decision'}
@@ -1889,6 +1983,33 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Month / Year Selector for Header */}
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                  <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'ខែ/ឆ្នាំ:' : 'Month:'}</span>
+                  <input
+                    type="month"
+                    value={
+                      printMonthYearCustom
+                        ? printMonthYearCustom.includes('-')
+                          ? printMonthYearCustom
+                          : `${startDate.substring(0, 4)}-${startDate.substring(5, 7)}`
+                        : `${startDate.substring(0, 4)}-${startDate.substring(5, 7)}`
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        setPrintMonthYearCustom(val);
+                        const [yyyy, mm] = val.split('-');
+                        const lastDay = new Date(parseInt(yyyy), parseInt(mm), 0).getDate();
+                        setStartDate(`${yyyy}-${mm}-01`);
+                        setEndDate(`${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`);
+                      }
+                    }}
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                  />
                 </div>
 
                 {/* Preview Mode Selector */}

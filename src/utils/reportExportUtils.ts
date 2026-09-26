@@ -48,6 +48,30 @@ export interface EmployeeMergedSummary {
   dailyRecords: TimesheetRow[];
 }
 
+export function getDatesInRange(startDateStr: string, endDateStr: string): string[] {
+  if (!startDateStr || !endDateStr) return [];
+  const startParts = startDateStr.split('-').map(Number);
+  const endParts = endDateStr.split('-').map(Number);
+  if (startParts.length < 3 || endParts.length < 3) return [];
+
+  const [sY, sM, sD] = startParts;
+  const [eY, eM, eD] = endParts;
+
+  // Set to 12:00:00 (noon) local time: immune to DST or midnight rollover
+  const curr = new Date(sY, sM - 1, sD, 12, 0, 0);
+  const end = new Date(eY, eM - 1, eD, 12, 0, 0);
+
+  const dates: string[] = [];
+  while (curr <= end) {
+    const y = curr.getFullYear();
+    const m = String(curr.getMonth() + 1).padStart(2, '0');
+    const d = String(curr.getDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
+    curr.setDate(curr.getDate() + 1);
+  }
+  return dates;
+}
+
 export function generateDailyTimesheetRows(
   records: AttendanceRecord[],
   employees: Employee[],
@@ -57,14 +81,6 @@ export function generateDailyTimesheetRows(
   branchFilter: string = 'all',
   employeeFilter: string = 'all'
 ): TimesheetRow[] {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
-  
-  // Ensure valid date objects
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return [];
-  }
-
   // Filter employees by branch and by employee
   let targetEmployees = branchFilter === 'all'
     ? employees
@@ -76,18 +92,17 @@ export function generateDailyTimesheetRows(
     );
   }
 
-  const dates: string[] = [];
-  const curr = new Date(start);
-  while (curr <= end) {
-    dates.push(curr.toISOString().split('T')[0]);
-    curr.setDate(curr.getDate() + 1);
+  const dates = getDatesInRange(startDateStr, endDateStr);
+  if (dates.length === 0) {
+    return [];
   }
 
   const rows: TimesheetRow[] = [];
   let rowNumber = 1;
 
   dates.forEach((dateStr) => {
-    const d = new Date(dateStr + 'T00:00:00');
+    const [y, m, dNum] = dateStr.split('-').map(Number);
+    const d = new Date(y, m - 1, dNum, 12, 0, 0);
     const dayIndex = d.getDay(); // 0 is Sunday
     const isSunday = dayIndex === 0;
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -213,13 +228,6 @@ export function generateEmployeeMergedSummaries(
   branchFilter: string = 'all',
   employeeFilter: string = 'all'
 ): EmployeeMergedSummary[] {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return [];
-  }
-
   // Filter target employees
   let targetEmployees = branchFilter === 'all'
     ? employees
@@ -231,18 +239,17 @@ export function generateEmployeeMergedSummaries(
     );
   }
 
-  // Calculate days in range
-  const dates: string[] = [];
-  const curr = new Date(start);
-  let totalSundays = 0;
-  while (curr <= end) {
-    const dStr = curr.toISOString().split('T')[0];
-    dates.push(dStr);
-    if (curr.getDay() === 0) {
-      totalSundays++;
-    }
-    curr.setDate(curr.getDate() + 1);
+  // Calculate days in range using robust getDatesInRange
+  const dates = getDatesInRange(startDateStr, endDateStr);
+  if (dates.length === 0) {
+    return [];
   }
+  let totalSundays = 0;
+  dates.forEach((dStr) => {
+    const [y, m, d] = dStr.split('-').map(Number);
+    const day = new Date(y, m - 1, d, 12, 0, 0).getDay();
+    if (day === 0) totalSundays++;
+  });
 
   const workingDaysCount = dates.length - totalSundays;
 
@@ -259,7 +266,8 @@ export function generateEmployeeMergedSummaries(
     let totalOtHoursNum = 0;
 
     dates.forEach((dateStr, idx) => {
-      const d = new Date(dateStr + 'T00:00:00');
+      const [y, m, dNum] = dateStr.split('-').map(Number);
+      const d = new Date(y, m - 1, dNum, 12, 0, 0);
       const dayIndex = d.getDay();
       const isSunday = dayIndex === 0;
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

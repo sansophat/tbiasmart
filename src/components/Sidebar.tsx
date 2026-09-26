@@ -230,44 +230,95 @@ export const Sidebar: React.FC<SidebarProps> = ({
           isOpenMobile ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
+        {/* Floating Edge Toggle Button with [>] for instant expand/collapse on desktop */}
+        <button
+          type="button"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className={`hidden lg:flex absolute -right-3.5 top-6 z-50 w-7 h-7 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full items-center justify-center shadow-lg shadow-indigo-950/60 border-2 border-slate-900 transition-all duration-200 hover:scale-115 cursor-pointer ${
+            isCollapsed ? 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-900 animate-pulse' : ''
+          }`}
+          title={isCollapsed ? (lang === 'km' ? 'ពង្រីក Sidebar [>]' : 'Expand Sidebar [>]') : (lang === 'km' ? 'បង្រួម Sidebar [<]' : 'Collapse Sidebar [<]')}
+          aria-label={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+        >
+          {isCollapsed ? <ChevronRight className="w-4 h-4 stroke-[3]" /> : <ChevronLeft className="w-4 h-4 stroke-[3]" />}
+        </button>
+
         {/* Brand Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between min-h-[72px]">
-          <div className="flex items-center space-x-3 min-w-0">
-            <div className="relative shrink-0">
-              <img
-                src={branding.logoUrl}
-                alt="Logo"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  e.currentTarget.onerror = null;
-                  e.currentTarget.src = 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format&fit=crop&q=80';
-                }}
-                className="w-10 h-10 rounded-2xl object-cover border border-indigo-500/50 shadow-md ring-2 ring-indigo-500/20"
-              />
-              <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-slate-900 rounded-full" />
+        <div className={`border-b border-slate-800 flex items-center min-h-[72px] transition-all ${
+          isCollapsed ? 'flex-col justify-center py-2.5 px-2 gap-2' : 'p-4 justify-between'
+        }`}>
+          {isCollapsed ? (
+            <div className="flex flex-col items-center gap-1.5 w-full">
+              {/* Logo (clickable to expand) */}
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(false)}
+                className="relative group cursor-pointer focus:outline-none"
+                title={lang === 'km' ? 'ចុចដើម្បីពង្រីក Sidebar [>]' : 'Click to Expand Sidebar [>]'}
+              >
+                <img
+                  src={branding.logoUrl}
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format&fit=crop&q=80';
+                  }}
+                  className="w-9 h-9 rounded-xl object-cover border border-indigo-500/50 shadow-md ring-2 ring-indigo-500/20 group-hover:ring-indigo-400 transition"
+                />
+                <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full" />
+              </button>
+
+              {/* Explicit [>] Expand Button */}
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-indigo-600 text-indigo-400 hover:text-white flex items-center justify-center transition border border-slate-700 hover:border-indigo-500 cursor-pointer shadow-xs group"
+                title={lang === 'km' ? 'ពង្រីក Sidebar [>]' : 'Expand Sidebar [>]'}
+                aria-label="Expand Sidebar"
+              >
+                <ChevronRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
+              </button>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className="relative shrink-0">
+                  <img
+                    src={branding.logoUrl}
+                    alt="Logo"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format&fit=crop&q=80';
+                    }}
+                    className="w-10 h-10 rounded-2xl object-cover border border-indigo-500/50 shadow-md ring-2 ring-indigo-500/20"
+                  />
+                  <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-slate-900 rounded-full" />
+                </div>
 
-            {!isCollapsed && (
-              <div className="min-w-0">
-                <h2 className="text-sm font-black text-white truncate tracking-tight">
-                  {lang === 'km' ? branding.companyNameKh : branding.companyNameEn}
-                </h2>
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block truncate">
-                  {lang === 'km' ? 'ប្រព័ន្ធគ្រប់គ្រងវត្តមាន AMS' : 'Smart Attendance Suite'}
-                </span>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-black text-white truncate tracking-tight">
+                    {lang === 'km' ? branding.companyNameKh : branding.companyNameEn}
+                  </h2>
+                  <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block truncate">
+                    {lang === 'km' ? 'ប្រព័ន្ធគ្រប់គ្រងវត្តមាន AMS' : 'Smart Attendance Suite'}
+                  </span>
+                </div>
               </div>
-            )}
-          </div>
 
-          {/* Desktop Collapse Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden lg:flex p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
-            title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          >
-            {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-          </button>
+              {/* Desktop Collapse Toggle [<] */}
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(true)}
+                className="hidden lg:flex p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                title={lang === 'km' ? 'បង្រួម Sidebar [<]' : 'Collapse Sidebar [<]'}
+                aria-label="Collapse Sidebar"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Branch Quick Indicator (Non-collapsible view) */}
@@ -436,6 +487,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <LogIn className="w-4 h-4" />
               {!isCollapsed && <span>{lang === 'km' ? 'ចូលប្រព័ន្ធ (Sign In)' : 'Sign In / Switch Role'}</span>}
             </button>
+          )}
+
+          {/* Bottom Expand Prompt when Collapsed */}
+          {isCollapsed && (
+            <div className="pt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(false)}
+                className="w-full py-2 flex items-center justify-center space-x-1 rounded-xl bg-slate-800/80 hover:bg-indigo-600 text-indigo-400 hover:text-white transition border border-slate-700/80 hover:border-indigo-500 cursor-pointer shadow-xs group"
+                title={lang === 'km' ? 'ពង្រីក Sidebar [>]' : 'Expand Sidebar [>]'}
+                aria-label="Expand Sidebar"
+              >
+                <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            </div>
           )}
         </div>
       </aside>

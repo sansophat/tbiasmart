@@ -48,6 +48,7 @@ interface NavbarProps {
   broadcastActive?: boolean;
   onToggleMobileMenu?: () => void;
   isSidebarCollapsed?: boolean;
+  onToggleSidebarCollapse?: () => void;
   isLiveSyncConnected?: boolean;
   onlinePeersCount?: number;
   onOpenInstallModal?: () => void;
@@ -74,6 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   broadcastActive = true,
   onToggleMobileMenu,
   isSidebarCollapsed = false,
+  onToggleSidebarCollapse,
   isLiveSyncConnected = true,
   onlinePeersCount = 1,
   onOpenInstallModal,
@@ -151,6 +153,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Menu className="w-5 h-5" />
           </button>
+
+          {/* Desktop Expand Sidebar button with [>] symbol when sidebar is collapsed */}
+          {isSidebarCollapsed && onToggleSidebarCollapse && (
+            <button
+              type="button"
+              onClick={onToggleSidebarCollapse}
+              className="hidden lg:flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer text-xs font-bold shadow-xs group"
+              title={lang === 'km' ? 'ពង្រីក Sidebar [>]' : 'Expand Sidebar [>]'}
+            >
+              <ChevronRight className="w-4 h-4 text-indigo-600 group-hover:translate-x-0.5 transition-transform" />
+              <span>{lang === 'km' ? 'ពង្រីក' : 'Expand'}</span>
+            </button>
+          )}
 
           <div className="flex items-center space-x-2">
             <div className="hidden sm:flex items-center space-x-1.5 text-xs text-slate-400 font-medium">

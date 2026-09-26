@@ -71,12 +71,28 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
     }
   };
 
-  const filteredRequests = leaveRequests.filter((req) => {
-    const isJustProcessed = justProcessedIds.has(req.id);
-    if (filterStatus !== 'all' && req.status !== filterStatus && !isJustProcessed) return false;
-    if (selectedCategory !== 'all' && req.category !== selectedCategory) return false;
-    return true;
-  });
+  const filteredRequests = React.useMemo(() => {
+    const categoryMatches = leaveRequests.filter((req) => {
+      if (selectedCategory !== 'all' && req.category !== selectedCategory) return false;
+      return true;
+    });
+
+    if (filterStatus === 'all') {
+      return categoryMatches;
+    }
+
+    const statusMatches = categoryMatches.filter(
+      (req) => req.status === filterStatus || justProcessedIds.has(req.id)
+    );
+
+    // If filtering by pending, but all pending requests are processed,
+    // fallback to showing all matching category requests so table is NEVER empty after approval!
+    if (statusMatches.length === 0 && categoryMatches.length > 0) {
+      return categoryMatches;
+    }
+
+    return statusMatches;
+  }, [leaveRequests, filterStatus, selectedCategory, justProcessedIds]);
 
   const handleApprove = (id: string) => {
     setJustProcessedIds((prev) => new Set([...prev, id]));
@@ -268,6 +284,22 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
 
       {/* Requests List */}
       <div className="p-4 sm:p-6 space-y-4">
+        {filterStatus === 'pending' && pendingRequests.length === 0 && filteredRequests.length > 0 && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-800 font-bold">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{lang === 'km' ? 'ពាក្យស្នើសុំទាំងអស់ត្រូវបានអនុម័តរួចរាល់! កំពុងបង្ហាញកំណត់ត្រាអនុម័តចុងក្រោយ៖' : 'All pending requests have been approved! Showing approval stream records:'}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFilterStatus('all')}
+              className="underline text-emerald-900 cursor-pointer"
+            >
+              {lang === 'km' ? 'បង្ហាញទាំងអស់' : 'Show All'}
+            </button>
+          </div>
+        )}
+
         {filteredRequests.length === 0 ? (
           <div className="py-12 px-4 text-center">
             <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center mb-3">
@@ -501,7 +533,11 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
                         <div className="flex items-center space-x-2">
                           <button
                             type="button"
-                            onClick={() => onUpdateLeaveStatus(req.id, req.status === 'approved' ? 'rejected' : 'approved')}
+                            onClick={() => {
+                              const nextStatus = req.status === 'approved' ? 'rejected' : 'approved';
+                              setJustProcessedIds((prev) => new Set([...prev, req.id]));
+                              onUpdateLeaveStatus(req.id, nextStatus);
+                            }}
                             className="text-xs text-slate-500 hover:text-indigo-600 font-medium underline cursor-pointer"
                           >
                             {lang === 'km' ? 'ប្តូរស្ថានភាព' : 'Change Decision'}
