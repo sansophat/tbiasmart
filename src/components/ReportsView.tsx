@@ -50,6 +50,7 @@ import {
   TimesheetRow,
   EmployeeMergedSummary
 } from '../utils/reportExportUtils';
+import { getEmployeeDayOffName } from '../utils/dayOffUtils';
 
 interface ReportsViewProps {
   attendanceRecords: AttendanceRecord[];
@@ -219,7 +220,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     }
   };
 
-  // Generate Daily Timesheet Rows (Includes Sunday Rows)
+  // Generate Daily Timesheet Rows (Includes Sunday Rows, Day Off, and Leaves)
   const timesheetRows = useMemo(() => {
     return generateDailyTimesheetRows(
       attendanceRecords,
@@ -228,9 +229,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       startDate,
       endDate,
       selectedBranchFilter,
-      selectedEmployeeFilter
+      selectedEmployeeFilter,
+      leaveRequests
     );
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests]);
 
   // Generate Merged Employee Summaries (Grouped by Employee)
   const mergedEmployeeSummaries = useMemo(() => {
@@ -241,9 +243,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       startDate,
       endDate,
       selectedBranchFilter,
-      selectedEmployeeFilter
+      selectedEmployeeFilter,
+      leaveRequests
     );
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests]);
 
   // Filtered Timesheet Rows (via search query)
   const filteredTimesheetRows = useMemo(() => {
@@ -377,11 +380,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         startDate,
         endDate,
         'all',
-        emp.id
-      ).filter((r) => !r.isSunday || r.employeeId === emp.id || r.employeeId === 'sunday_marker');
+        emp.id,
+        leaveRequests
+      ).filter((r) => r.employeeId === emp.id);
 
       const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
-      const daysWorked = empRows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
+      const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
       const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
       const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
 
@@ -396,7 +400,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         },
       };
     });
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, printStaffFilter, printDepartmentFilter]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
+
+  // Group printable staff by department so footer signature appears only ONCE per department
+  const departmentStaffGroups = useMemo(() => {
+    const map = new Map<string, typeof printableStaffGroups>();
+    printableStaffGroups.forEach((group) => {
+      const dept = group.employee.department || (printDepartmentFilter !== 'all' ? printDepartmentFilter : 'Operations');
+      if (!map.has(dept)) map.set(dept, []);
+      map.get(dept)!.push(group);
+    });
+    return Array.from(map.entries()).map(([department, staffList]) => ({
+      department,
+      staffList,
+    }));
+  }, [printableStaffGroups, printDepartmentFilter]);
 
   // Selected Branch Name
   const currentBranchObj = branches.find((b) => b.id === selectedBranchFilter);
@@ -444,7 +462,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               startDate,
               endDate,
               b.id,
-              selectedEmployeeFilter
+              selectedEmployeeFilter,
+              leaveRequests
             );
             if (format === 'csv') {
               exportMergedSummaryToCsv(branchSummaries, b.nameEn, dateRangeLabel);
@@ -459,7 +478,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               startDate,
               endDate,
               b.id,
-              selectedEmployeeFilter
+              selectedEmployeeFilter,
+              leaveRequests
             );
             if (format === 'csv') {
               exportTimesheetToCsv(branchRows, b.nameEn, dateRangeLabel);
@@ -1265,43 +1285,39 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <table className="w-full text-left text-xs text-slate-700 border-collapse">
                   <thead>
                     <tr className="bg-slate-100/90 text-slate-700 font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
-                      <th className="py-3 px-3 w-10 text-center">No</th>
-                      <th className="py-3 px-3">Date</th>
-                      <th className="py-3 px-3">Day of Week</th>
-                      <th className="py-3 px-3">Staff ID</th>
-                      <th className="py-3 px-4">Employee Name</th>
-                      <th className="py-3 px-3">Department</th>
-                      <th className="py-3 px-3">Branch</th>
-                      <th className="py-3 px-2.5 text-center">Time In</th>
-                      <th className="py-3 px-2.5 text-center">Time Out</th>
-                      <th className="py-3 px-2.5 text-center">Work Hrs</th>
-                      <th className="py-3 px-2.5 text-center">OT Hrs</th>
-                      <th className="py-3 px-3">Status</th>
-                      <th className="py-3 px-4">Remark & GPS Verification</th>
+                      <th className="py-2 px-2.5 w-10 text-center">No</th>
+                      <th className="py-2 px-2.5">Date</th>
+                      <th className="py-2 px-2.5">Day of Week</th>
+                      <th className="py-2 px-3">Employee Name</th>
+                      <th className="py-2 px-2.5">Department</th>
+                      <th className="py-2 px-2.5">Branch</th>
+                      <th className="py-2 px-2 text-center">Time In</th>
+                      <th className="py-2 px-2 text-center">Time Out</th>
+                      <th className="py-2 px-2 text-center">Work Hrs</th>
+                      <th className="py-2 px-2.5">Status</th>
+                      <th className="py-2 px-3">Remark & GPS Verification</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                  <tbody className="divide-y divide-slate-100 font-mono text-[11px] leading-tight">
                     {filteredTimesheetRows.length === 0 ? (
                       <tr>
-                        <td colSpan={13} className="py-12 text-center text-slate-400 font-sans">
+                        <td colSpan={11} className="py-10 text-center text-slate-400 font-sans">
                           <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                           <p className="font-bold">{lang === 'km' ? 'មិនមានទិន្នន័យក្នុងកាលបរិច្ឆេទនេះទេ' : 'No timesheet records found for this date range'}</p>
                         </td>
                       </tr>
                     ) : (
                       filteredTimesheetRows.map((row) => {
-                        const otHours = parseFloat(row.durationHours) > 9 ? (parseFloat(row.durationHours) - 9).toFixed(1) : '0.0';
                         if (row.isSunday) {
                           return (
                             <tr
                               key={`sunday_${row.no}_${row.date}`}
                               className="bg-rose-50/90 border-y border-rose-200 font-bold text-rose-900 transition hover:bg-rose-100/90"
                             >
-                              <td className="py-2.5 px-3 text-center text-rose-700">{row.no}</td>
-                              <td className="py-2.5 px-3 font-black text-rose-900">{row.date}</td>
-                              <td className="py-2.5 px-3 font-sans font-bold text-rose-700 uppercase">{row.dayOfWeek}</td>
-                              <td className="py-2.5 px-3 text-rose-500">---</td>
-                              <td className="py-2.5 px-4 font-sans">
+                              <td className="py-1.5 px-2.5 text-center text-rose-700">{row.no}</td>
+                              <td className="py-1.5 px-2.5 font-black text-rose-900">{row.date}</td>
+                              <td className="py-1.5 px-2.5 font-sans font-bold text-rose-700 uppercase">{row.dayOfWeek}</td>
+                              <td className="py-1.5 px-3 font-sans">
                                 <div className="flex items-center space-x-2">
                                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
                                   <span className="font-black text-rose-800">
@@ -1309,18 +1325,79 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                   </span>
                                 </div>
                               </td>
-                              <td className="py-2.5 px-3 font-sans text-rose-500">---</td>
-                              <td className="py-2.5 px-3 font-sans text-rose-700">{row.branchNameEn}</td>
-                              <td className="py-2.5 px-2.5 text-center text-rose-400">--:--</td>
-                              <td className="py-2.5 px-2.5 text-center text-rose-400">--:--</td>
-                              <td className="py-2.5 px-2.5 text-center text-rose-400">0.0h</td>
-                              <td className="py-2.5 px-2.5 text-center text-rose-400">0.0h</td>
-                              <td className="py-2.5 px-3 font-sans">
+                              <td className="py-1.5 px-2.5 font-sans text-rose-500">---</td>
+                              <td className="py-1.5 px-2.5 font-sans text-rose-700">{row.branchNameEn}</td>
+                              <td className="py-1.5 px-2 text-center text-rose-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-rose-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-rose-400">0.0h</td>
+                              <td className="py-1.5 px-2.5 font-sans">
                                 <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-200/80 text-rose-800 border border-rose-300">
                                   SUNDAY REST
                                 </span>
                               </td>
-                              <td className="py-2.5 px-4 font-sans text-[11px] text-rose-700 font-semibold italic">
+                              <td className="py-1.5 px-3 font-sans text-[11px] text-rose-700 font-semibold italic">
+                                {row.remark}
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        if (row.isDayOff) {
+                          return (
+                            <tr
+                              key={`dayoff_${row.no}_${row.employeeId}_${row.date}`}
+                              className="bg-amber-50/70 border-y border-amber-200/80 font-medium text-amber-900 transition hover:bg-amber-100/70"
+                            >
+                              <td className="py-1.5 px-2.5 text-center text-amber-700 font-bold">{row.no}</td>
+                              <td className="py-1.5 px-2.5 font-bold text-amber-950">{row.date}</td>
+                              <td className="py-1.5 px-2.5 font-sans text-amber-800">{row.dayOfWeek}</td>
+                              <td className="py-1.5 px-3 font-sans">
+                                <div className="font-bold text-amber-900 text-xs truncate">
+                                  {lang === 'km' ? row.nameKh : row.nameEn}
+                                </div>
+                              </td>
+                              <td className="py-1.5 px-2.5 font-sans text-xs text-amber-700">{row.department}</td>
+                              <td className="py-1.5 px-2.5 font-sans text-xs text-amber-700">{row.branchNameEn}</td>
+                              <td className="py-1.5 px-2 text-center text-amber-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-amber-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-amber-400">0.0h</td>
+                              <td className="py-1.5 px-2.5 font-sans">
+                                <span className="inline-block px-2 py-0.5 rounded-full text-[9.5px] font-black bg-amber-200 text-amber-900 border border-amber-300">
+                                  DAY OFF (សម្រាក)
+                                </span>
+                              </td>
+                              <td className="py-1.5 px-3 font-sans text-[11px] text-amber-800 font-semibold">
+                                {row.remark}
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        if (row.isLeave) {
+                          return (
+                            <tr
+                              key={`leave_${row.no}_${row.employeeId}_${row.date}`}
+                              className="bg-purple-50/70 border-y border-purple-200/80 font-medium text-purple-900 transition hover:bg-purple-100/70"
+                            >
+                              <td className="py-1.5 px-2.5 text-center text-purple-700 font-bold">{row.no}</td>
+                              <td className="py-1.5 px-2.5 font-bold text-purple-950">{row.date}</td>
+                              <td className="py-1.5 px-2.5 font-sans text-purple-800">{row.dayOfWeek}</td>
+                              <td className="py-1.5 px-3 font-sans">
+                                <div className="font-bold text-purple-900 text-xs truncate">
+                                  {lang === 'km' ? row.nameKh : row.nameEn}
+                                </div>
+                              </td>
+                              <td className="py-1.5 px-2.5 font-sans text-xs text-purple-700">{row.department}</td>
+                              <td className="py-1.5 px-2.5 font-sans text-xs text-purple-700">{row.branchNameEn}</td>
+                              <td className="py-1.5 px-2 text-center text-purple-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-purple-400">--:--</td>
+                              <td className="py-1.5 px-2 text-center text-purple-400">0.0h</td>
+                              <td className="py-1.5 px-2.5 font-sans">
+                                <span className="inline-block px-2 py-0.5 rounded-full text-[9.5px] font-black bg-purple-200 text-purple-900 border border-purple-300">
+                                  ON LEAVE (ច្បាប់)
+                                </span>
+                              </td>
+                              <td className="py-1.5 px-3 font-sans text-[11px] text-purple-800 font-semibold">
                                 {row.remark}
                               </td>
                             </tr>
@@ -1329,21 +1406,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                         return (
                           <tr key={`row_${row.no}_${row.employeeId}_${row.date}`} className="hover:bg-slate-50/90 transition">
-                            <td className="py-2.5 px-3 text-center text-slate-500 font-bold">{row.no}</td>
-                            <td className="py-2.5 px-3 font-bold text-slate-800">{row.date}</td>
-                            <td className="py-2.5 px-3 font-sans font-medium text-slate-600">{row.dayOfWeek}</td>
-                            <td className="py-2.5 px-3">
-                              <span className="text-xs font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                                {row.enrollId}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-4 font-sans">
+                            <td className="py-1.5 px-2.5 text-center text-slate-500 font-bold">{row.no}</td>
+                            <td className="py-1.5 px-2.5 font-bold text-slate-800">{row.date}</td>
+                            <td className="py-1.5 px-2.5 font-sans font-medium text-slate-600">{row.dayOfWeek}</td>
+                            <td className="py-1.5 px-3 font-sans">
                               <div className="flex items-center space-x-2">
                                 {row.avatar && (
                                   <img
                                     src={row.avatar}
                                     alt={row.nameEn}
-                                    className="w-7 h-7 rounded-lg object-cover border border-slate-200 shrink-0"
+                                    className="w-6 h-6 rounded-md object-cover border border-slate-200 shrink-0"
                                     onError={(e) => {
                                       e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
                                     }}
@@ -1359,25 +1431,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                 </div>
                               </div>
                             </td>
-                            <td className="py-2.5 px-3 font-sans text-xs text-slate-700">{row.department}</td>
-                            <td className="py-2.5 px-3 font-sans text-xs text-slate-600">{row.branchNameEn}</td>
-                            <td className="py-2.5 px-2.5 text-center font-bold">
+                            <td className="py-1.5 px-2.5 font-sans text-xs text-slate-700">{row.department}</td>
+                            <td className="py-1.5 px-2.5 font-sans text-xs text-slate-600">{row.branchNameEn}</td>
+                            <td className="py-1.5 px-2 text-center font-bold">
                               <span className={row.timeIn !== '--:--' ? 'text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200' : 'text-slate-400'}>
                                 {row.timeIn}
                               </span>
                             </td>
-                            <td className="py-2.5 px-2.5 text-center font-bold">
+                            <td className="py-1.5 px-2 text-center font-bold">
                               <span className={row.timeOut !== '--:--' ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}>
                                 {row.timeOut}
                               </span>
                             </td>
-                            <td className="py-2.5 px-2.5 text-center font-bold text-slate-700">
+                            <td className="py-1.5 px-2 text-center font-bold text-slate-700">
                               {row.durationHours}
                             </td>
-                            <td className="py-2.5 px-2.5 text-center font-bold text-purple-700">
-                              {otHours !== '0.0' ? `${otHours}h` : '0.0h'}
-                            </td>
-                            <td className="py-2.5 px-3 font-sans">
+                            <td className="py-1.5 px-2.5 font-sans">
                               <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                 row.status.toLowerCase().includes('on-time')
                                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -1385,12 +1454,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                   ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                   : row.status.toLowerCase().includes('overtime')
                                   ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : row.status.toLowerCase().includes('absent')
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
                                   : 'bg-slate-100 text-slate-600 border border-slate-200'
                               }`}>
                                 {row.status}
                               </span>
                             </td>
-                            <td className="py-2.5 px-4 font-sans text-xs text-slate-600">
+                            <td className="py-1.5 px-3 font-sans text-xs text-slate-600">
                               {row.remark}
                             </td>
                           </tr>
@@ -2056,151 +2127,180 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
             {/* Printable Body Content (Targeted by #printable-timesheet-area) */}
             <div className="p-6 sm:p-8 overflow-y-auto space-y-8 text-slate-800 font-sans" id="printable-timesheet-area">
-              {/* If preview type is 'detailed' and printing all staff grouped */}
+              {/* If preview type is 'detailed' and printing staff grouped by department */}
               {printPreviewType === 'detailed' ? (
-                <div className="space-y-10">
-                  {printableStaffGroups.map((group, gIdx) => {
-                    const emp = group.employee;
-                    const deptLabel = emp.department || (printDepartmentFilter !== 'all' ? printDepartmentFilter : 'Operations');
+                <div className="space-y-12">
+                  {departmentStaffGroups.map((deptGroup, dIdx) => {
+                    const deptLabel = deptGroup.department;
                     const monthYearLabel = formatMonthYearHeader(startDate);
                     const monthYearKhLabel = formatMonthYearKhHeader(startDate);
-                    const branchObj = branches.find((b) => b.id === emp.branchId);
 
                     return (
                       <div
-                        key={`print_staff_${emp.id}`}
-                        className={`space-y-4 ${
-                          gIdx < printableStaffGroups.length - 1 ? 'page-break-after-staff pb-8 border-b border-dashed border-slate-300' : ''
+                        key={`dept_group_${deptLabel}_${dIdx}`}
+                        className={`space-y-8 ${
+                          dIdx < departmentStaffGroups.length - 1 ? 'page-break-after-staff pb-10 border-b-2 border-dashed border-slate-300' : ''
                         }`}
                       >
-                        {/* Mandatory Header as explicitly requested:
-                            Employee Attendance for [mm/yyyy] <br> for [department] */}
-                        <div className="text-center pb-4 border-b-2 border-slate-900">
-                          <div className="text-xs uppercase tracking-widest font-black text-slate-500 mb-1">
-                            {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
-                          </div>
+                        {/* Department Staff Tables */}
+                        <div className="space-y-8">
+                          {deptGroup.staffList.map((group, gIdx) => {
+                            const emp = group.employee;
+                            const branchObj = branches.find((b) => b.id === emp.branchId);
 
-                          <h1 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight font-sans">
-                            Employee Attendance for {monthYearLabel}
-                            <br />
-                            for {deptLabel}
-                          </h1>
+                            return (
+                              <div
+                                key={`print_staff_${emp.id}`}
+                                className="space-y-3 pb-6 border-b border-slate-200 last:border-b-0"
+                              >
+                                {/* Mandatory Header as explicitly requested:
+                                    Employee Attendance for [mm/yyyy] <br> for [department] */}
+                                <div className="text-center pb-3 border-b-2 border-slate-900">
+                                  <div className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-0.5">
+                                    {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
+                                  </div>
 
-                          <p className="text-xs font-bold text-slate-600 mt-1 font-battambang">
-                            របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {monthYearKhLabel}
-                            <br />
-                            សម្រាប់ផ្នែក: {deptLabel}
-                          </p>
+                                  <h1 className="text-lg sm:text-xl font-black text-slate-900 uppercase tracking-tight font-sans leading-tight">
+                                    Employee Attendance for {monthYearLabel}
+                                    <br />
+                                    for {deptLabel}
+                                  </h1>
 
-                          {/* Employee Specific Sub-header Strip */}
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-left bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-3 font-medium">
-                            <div>
-                              <span className="text-slate-500">{lang === 'km' ? 'អត្តលេខ:' : 'Staff ID:'}</span>{' '}
-                              <b className="font-mono text-slate-900">{emp.code}</b>
-                            </div>
-                            <div>
-                              <span className="text-slate-500">{lang === 'km' ? 'ឈ្មោះបុគ្គលិក:' : 'Name:'}</span>{' '}
-                              <b className="text-slate-900">{emp.nameEn} ({emp.nameKh})</b>
-                            </div>
-                            <div>
-                              <span className="text-slate-500">{lang === 'km' ? 'សាខា:' : 'Branch:'}</span>{' '}
-                              <b className="text-slate-900">{branchObj?.nameEn || emp.branchId}</b>
-                            </div>
-                            <div>
-                              <span className="text-slate-500">{lang === 'km' ? 'មុខតំណែង:' : 'Role:'}</span>{' '}
-                              <b className="text-slate-900">{emp.position || emp.role}</b>
-                            </div>
-                          </div>
+                                  <p className="text-[11px] font-bold text-slate-600 mt-0.5 font-battambang leading-tight">
+                                    របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {monthYearKhLabel}
+                                    <br />
+                                    សម្រាប់ផ្នែក: {deptLabel}
+                                  </p>
+
+                                  {/* Employee Specific Sub-header Strip */}
+                                  <div className="grid grid-cols-3 gap-2 text-xs text-left bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200 mt-2 font-medium">
+                                    <div>
+                                      <span className="text-slate-500">{lang === 'km' ? 'ឈ្មោះបុគ្គលិក:' : 'Name:'}</span>{' '}
+                                      <b className="text-slate-900">{emp.nameEn} ({emp.nameKh})</b>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">{lang === 'km' ? 'សាខា:' : 'Branch:'}</span>{' '}
+                                      <b className="text-slate-900">{branchObj?.nameEn || emp.branchId}</b>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">{lang === 'km' ? 'មុខតំណែង:' : 'Role:'}</span>{' '}
+                                      <b className="text-slate-900">{emp.position || emp.role}</b>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Detailed Table with columns:
+                                    No, Date, Day of Week, Employee Name, Department, Branch, Time In, Time Out, Work Hours, Status, Remark
+                                    (Staff ID, OT Hours, and Signature columns deleted per user request; line spacing narrowed) */}
+                                <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
+                                  <table className="w-full text-left text-[9.5px] leading-tight border-collapse">
+                                    <thead className="bg-slate-800 text-white font-bold uppercase text-[8.5px] tracking-wider">
+                                      <tr className="border-b border-slate-800">
+                                        <th className="py-1 px-1.5 w-7 text-center border-r border-slate-700">No</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Date</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Day of Week</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Employee Name</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Department</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Branch</th>
+                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Time In</th>
+                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Time Out</th>
+                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Work Hours</th>
+                                        <th className="py-1 px-2 border-r border-slate-700">Status</th>
+                                        <th className="py-1 px-2">Remark / Verification</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-200 font-mono text-[9px] leading-tight">
+                                      {group.rows.map((r, rIdx) => {
+                                        const isSun = r.isSunday;
+                                        const isDayOff = r.isDayOff;
+                                        const isLeave = r.isLeave;
+
+                                        let rowBg = rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50';
+                                        if (isSun) rowBg = 'bg-rose-50/70 text-rose-900 font-bold';
+                                        else if (isDayOff) rowBg = 'bg-amber-50/70 text-amber-950 font-medium';
+                                        else if (isLeave) rowBg = 'bg-purple-50/70 text-purple-950 font-medium';
+
+                                        return (
+                                          <tr
+                                            key={`row_${emp.id}_${r.date}_${rIdx}`}
+                                            className={rowBg}
+                                          >
+                                            <td className="py-0.5 px-1.5 text-center border-r border-slate-200">{rIdx + 1}</td>
+                                            <td className="py-0.5 px-2 font-bold border-r border-slate-200">{r.date}</td>
+                                            <td className="py-0.5 px-2 border-r border-slate-200 font-sans font-medium">{r.dayOfWeek}</td>
+                                            <td className="py-0.5 px-2 font-sans font-semibold border-r border-slate-200">{emp.nameEn}</td>
+                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">{emp.department || 'Operations'}</td>
+                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">{r.branchNameEn}</td>
+                                            <td className="py-0.5 px-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeIn}</td>
+                                            <td className="py-0.5 px-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeOut}</td>
+                                            <td className="py-0.5 px-1.5 text-center font-bold text-indigo-700 border-r border-slate-200">{r.durationHours}</td>
+                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">
+                                              {isSun ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                                  SUNDAY REST
+                                                </span>
+                                              ) : isDayOff ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                                  DAY OFF (សម្រាក)
+                                                </span>
+                                              ) : isLeave ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
+                                                  LEAVE (ច្បាប់)
+                                                </span>
+                                              ) : (
+                                                <span className={r.status.toLowerCase().includes('late') ? 'text-amber-700 font-bold' : r.status.toLowerCase().includes('absent') ? 'text-rose-700 font-bold' : 'text-emerald-700 font-bold'}>
+                                                  {r.status}
+                                                </span>
+                                              )}
+                                            </td>
+                                            <td className="py-0.5 px-2 font-sans text-slate-600 text-[8.5px] leading-tight">{r.remark}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                    <tfoot className="bg-slate-100 text-slate-800 font-bold text-[9px] border-t-2 border-slate-300">
+                                      <tr>
+                                        <td colSpan={8} className="py-1 px-2 text-right font-sans uppercase">
+                                          {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
+                                        </td>
+                                        <td className="py-1 px-1.5 text-center text-indigo-700 font-bold font-mono">
+                                          {group.summary.totalWorkHours}h
+                                        </td>
+                                        <td colSpan={2} className="py-1 px-2 text-left text-slate-600 font-sans font-medium text-[8.5px]">
+                                          Days Present: {group.summary.daysWorked} | Late: {group.summary.lateDays}
+                                        </td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
 
-                        {/* Detailed Table with all requested columns:
-                            Date, Day of week, Staff ID, No, Name, Dept, Branch, Time In, Time Out, Work Hours, OT Hours, Status, Remark, Signature */}
-                        <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
-                          <table className="w-full text-left text-[11px] border-collapse">
-                            <thead className="bg-slate-800 text-white font-bold uppercase text-[9px] tracking-wider">
-                              <tr className="border-b border-slate-800">
-                                <th className="p-2 w-8 text-center border-r border-slate-700">No</th>
-                                <th className="p-2 border-r border-slate-700">Date</th>
-                                <th className="p-2 border-r border-slate-700">Day of Week</th>
-                                <th className="p-2 border-r border-slate-700">Staff ID</th>
-                                <th className="p-2 border-r border-slate-700">Employee Name</th>
-                                <th className="p-2 border-r border-slate-700">Department</th>
-                                <th className="p-2 border-r border-slate-700">Branch</th>
-                                <th className="p-2 text-center border-r border-slate-700">Time In</th>
-                                <th className="p-2 text-center border-r border-slate-700">Time Out</th>
-                                <th className="p-2 text-center border-r border-slate-700">Work Hours</th>
-                                <th className="p-2 text-center border-r border-slate-700">OT Hours</th>
-                                <th className="p-2 border-r border-slate-700">Status</th>
-                                <th className="p-2 border-r border-slate-700">Remark / Verification</th>
-                                <th className="p-2 w-20 text-center">Signature</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 font-mono text-[10px]">
-                              {group.rows.map((r, rIdx) => {
-                                const isSun = r.isSunday;
-                                return (
-                                  <tr
-                                    key={`row_${emp.id}_${r.date}_${rIdx}`}
-                                    className={isSun ? 'bg-rose-50/70 text-rose-900 font-bold' : rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}
-                                  >
-                                    <td className="p-1.5 text-center border-r border-slate-200">{rIdx + 1}</td>
-                                    <td className="p-1.5 font-bold border-r border-slate-200">{r.date}</td>
-                                    <td className="p-1.5 border-r border-slate-200 font-sans font-medium">{r.dayOfWeek}</td>
-                                    <td className="p-1.5 font-bold border-r border-slate-200">{emp.code}</td>
-                                    <td className="p-1.5 font-sans font-semibold border-r border-slate-200">{emp.nameEn}</td>
-                                    <td className="p-1.5 font-sans border-r border-slate-200">{emp.department || 'Operations'}</td>
-                                    <td className="p-1.5 font-sans border-r border-slate-200">{r.branchNameEn}</td>
-                                    <td className="p-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeIn}</td>
-                                    <td className="p-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeOut}</td>
-                                    <td className="p-1.5 text-center font-bold text-indigo-700 border-r border-slate-200">{r.durationHours}</td>
-                                    <td className="p-1.5 text-center text-purple-700 font-bold border-r border-slate-200">
-                                      {parseFloat(r.durationHours) > 9 ? `${(parseFloat(r.durationHours) - 9).toFixed(1)}h` : '0.0h'}
-                                    </td>
-                                    <td className="p-1.5 font-sans border-r border-slate-200">
-                                      <span className={isSun ? 'text-rose-700 font-bold' : r.status.toLowerCase().includes('late') ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
-                                        {r.status}
-                                      </span>
-                                    </td>
-                                    <td className="p-1.5 font-sans text-slate-500 border-r border-slate-200 text-[9px]">{r.remark}</td>
-                                    <td className="p-1.5 text-center border-slate-200">
-                                      <div className="w-16 h-4 border-b border-dotted border-slate-400 mx-auto" />
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                            <tfoot className="bg-slate-100 text-slate-800 font-bold text-[10px] border-t-2 border-slate-300">
-                              <tr>
-                                <td colSpan={9} className="p-2 text-right font-sans uppercase">
-                                  {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
-                                </td>
-                                <td className="p-2 text-center text-indigo-700 font-bold font-mono">
-                                  {group.summary.totalWorkHours}h
-                                </td>
-                                <td className="p-2 text-center text-purple-700 font-bold font-mono">
-                                  {group.summary.otDays > 0 ? `${group.summary.otDays} OT Days` : '0.0h'}
-                                </td>
-                                <td colSpan={3} className="p-2 text-left text-slate-600 font-sans font-medium text-[9px]">
-                                  Days Present: {group.summary.daysWorked} | Late: {group.summary.lateDays}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
-
-                        {/* Sign-off Blocks for Employee Timesheet */}
-                        <div className="pt-6 grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
-                          <div className="space-y-8">
-                            <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
-                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
+                        {/* Official Sign-off Block for the Department (Only ONCE per department) */}
+                        <div className="pt-6 pb-2 border-t-2 border-slate-900 break-inside-avoid">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="text-xs font-black uppercase text-slate-900 tracking-wide font-sans">
+                              {lang === 'km' ? `ហត្ថលេខាបញ្ជាក់ប្រចាំផ្នែក: ${deptLabel}` : `Official Department Sign-off: ${deptLabel}`}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-medium">
+                              Department Staff Count: {deptGroup.staffList.length} • Period: {startDate} ~ {endDate}
+                            </div>
                           </div>
-                          <div className="space-y-8">
-                            <p className="font-bold text-slate-800">Verified By (Employee / Manager)</p>
-                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Staff Signature & Date</div>
-                          </div>
-                          <div className="space-y-8">
-                            <p className="font-bold text-slate-800">Approved By (Director)</p>
-                            <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Authorized Signature & Seal</div>
+                          <div className="grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
+                            <div className="space-y-8">
+                              <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
+                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
+                            </div>
+                            <div className="space-y-8">
+                              <p className="font-bold text-slate-800">Verified By ({deptLabel} Manager)</p>
+                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Department Head Signature</div>
+                            </div>
+                            <div className="space-y-8">
+                              <p className="font-bold text-slate-800">Approved By (Managing Director)</p>
+                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Authorized Signature & Seal</div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2235,54 +2335,50 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Consolidated Table */}
+                  {/* Consolidated Table: Staff ID, OT Hours, Signature deleted; Day Off and Leave added; Narrow spacing */}
                   <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
-                    <table className="w-full text-left text-[11px]">
-                      <thead className="bg-slate-800 text-white font-bold uppercase text-[9px]">
+                    <table className="w-full text-left text-[10px] leading-tight">
+                      <thead className="bg-slate-800 text-white font-bold uppercase text-[8.5px]">
                         <tr>
-                          <th className="p-2 w-8 text-center border-r border-slate-700">No</th>
-                          <th className="p-2 border-r border-slate-700">Staff ID</th>
-                          <th className="p-2 border-r border-slate-700">Employee Name</th>
-                          <th className="p-2 border-r border-slate-700">Department</th>
-                          <th className="p-2 border-r border-slate-700">Branch</th>
-                          <th className="p-2 text-center border-r border-slate-700">Present Days</th>
-                          <th className="p-2 text-center border-r border-slate-700">Late Days</th>
-                          <th className="p-2 text-center border-r border-slate-700">Work Hours</th>
-                          <th className="p-2 text-center border-r border-slate-700">OT Hours</th>
-                          <th className="p-2 text-center border-r border-slate-700">Attendance Rate</th>
-                          <th className="p-2 w-24 text-center">Signature</th>
+                          <th className="py-1.5 px-2 w-8 text-center border-r border-slate-700">No</th>
+                          <th className="py-1.5 px-2 border-r border-slate-700">Employee Name</th>
+                          <th className="py-1.5 px-2 border-r border-slate-700">Department</th>
+                          <th className="py-1.5 px-2 border-r border-slate-700">Branch</th>
+                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Present Days</th>
+                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Days Off</th>
+                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Leave Days</th>
+                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Late Days</th>
+                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Work Hours</th>
+                          <th className="py-1.5 px-2 text-center">Attendance Rate</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 font-mono text-[10px]">
+                      <tbody className="divide-y divide-slate-200 font-mono text-[9.5px] leading-tight">
                         {filteredMergedSummaries.map((s, sIdx) => (
                           <tr key={`print_m_${s.employeeId}`} className={sIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                            <td className="p-2 text-center border-r border-slate-200">{sIdx + 1}</td>
-                            <td className="p-2 font-bold border-r border-slate-200">{s.enrollId}</td>
-                            <td className="p-2 font-sans font-bold border-r border-slate-200">{s.nameEn} ({s.nameKh})</td>
-                            <td className="p-2 font-sans border-r border-slate-200">{s.department}</td>
-                            <td className="p-2 font-sans border-r border-slate-200">{s.branchNameEn}</td>
-                            <td className="p-2 text-center text-emerald-700 font-bold border-r border-slate-200">{s.daysPresent}</td>
-                            <td className="p-2 text-center border-r border-slate-200">{s.daysLate}</td>
-                            <td className="p-2 text-center font-bold text-indigo-700 border-r border-slate-200">{s.totalWorkHours}h</td>
-                            <td className="p-2 text-center text-purple-700 border-r border-slate-200">{s.totalOtHours}h</td>
-                            <td className="p-2 text-center font-bold border-r border-slate-200">{s.attendanceRate}%</td>
-                            <td className="p-2 text-center">
-                              <div className="w-16 h-4 border-b border-dotted border-slate-400 mx-auto" />
-                            </td>
+                            <td className="py-1 px-2 text-center border-r border-slate-200">{sIdx + 1}</td>
+                            <td className="py-1 px-2 font-sans font-bold border-r border-slate-200">{s.nameEn} ({s.nameKh})</td>
+                            <td className="py-1 px-2 font-sans border-r border-slate-200">{s.department}</td>
+                            <td className="py-1 px-2 font-sans border-r border-slate-200">{s.branchNameEn}</td>
+                            <td className="py-1 px-2 text-center text-emerald-700 font-bold border-r border-slate-200">{s.daysPresent}</td>
+                            <td className="py-1 px-2 text-center text-amber-700 font-bold border-r border-slate-200">{s.daysOff}</td>
+                            <td className="py-1 px-2 text-center text-purple-700 font-bold border-r border-slate-200">{s.daysLeave}</td>
+                            <td className="py-1 px-2 text-center border-r border-slate-200">{s.daysLate}</td>
+                            <td className="py-1 px-2 text-center font-bold text-indigo-700 border-r border-slate-200">{s.totalWorkHours}h</td>
+                            <td className="py-1 px-2 text-center font-bold text-slate-800">{s.attendanceRate}%</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
 
-                  {/* Sign-off Blocks */}
+                  {/* Sign-off Block for Consolidated Report (One for Department) */}
                   <div className="pt-6 grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
                     <div className="space-y-8">
                       <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
                       <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
                     </div>
                     <div className="space-y-8">
-                      <p className="font-bold text-slate-800">Checked By (Branch Manager)</p>
+                      <p className="font-bold text-slate-800">Checked By (Department Manager)</p>
                       <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
                     </div>
                     <div className="space-y-8">

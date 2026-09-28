@@ -56,6 +56,7 @@ import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
 import { playAlertChime } from './utils/soundUtils';
+import { validatePunchAllowance } from './utils/dayOffUtils';
 import { ActionAlertItem } from './components/RealtimeActionAlertCenter';
 import { Cloud, Loader2 } from 'lucide-react';
 import { 
@@ -1009,6 +1010,23 @@ export default function App() {
 
   // Handlers with Real-time synchronization
   const handleAddAttendanceRecord = (newRecord: AttendanceRecord) => {
+    // Safety verification: Reject punch on Sunday rest, weekly Day Off, or Leave
+    const emp = employees.find((e) => e.id === newRecord.employeeId || e.code === newRecord.employeeCode);
+    if (emp) {
+      const punchDate = newRecord.timestamp ? new Date(newRecord.timestamp) : new Date();
+      const allowance = validatePunchAllowance(emp, leaveRequests, punchDate);
+      if (!allowance.allowed) {
+        playAlertChime('security_alert');
+        setLiveToast({
+          title: lang === 'km' ? '⛔ មិនអនុញ្ញាតឱ្យកត់ត្រាវត្តមាន' : '⛔ Attendance Punch Not Allowed',
+          message: lang === 'km' ? (allowance.reasonKh || 'ថ្ងៃនេះជាថ្ងៃសម្រាក ឬច្បាប់') : (allowance.reason || 'Rest day or scheduled leave'),
+          type: 'punch',
+        });
+        setTimeout(() => setLiveToast(null), 5000);
+        return;
+      }
+    }
+
     setAttendanceRecords((prev) => [newRecord, ...prev]);
 
     // Broadcast to all WebSocket connected peers and REST API
@@ -1888,6 +1906,7 @@ export default function App() {
               systemSettings={systemSettings}
               onUpdateEmployee={handleUpdateEmployee}
               onAddAuditLog={handleAddAuditLog}
+              leaveRequests={leaveRequests}
             />
           )}
 
@@ -1898,6 +1917,7 @@ export default function App() {
               attendanceRecords={attendanceRecords}
               onAddAttendanceRecord={handleAddAttendanceRecord}
               lang={lang}
+              leaveRequests={leaveRequests}
             />
           )}
 

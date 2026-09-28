@@ -16,8 +16,9 @@ import {
   Warehouse,
   Flame
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, Language } from '../types';
+import { Branch, Employee, AttendanceRecord, Language, LeaveRequest } from '../types';
 import { generateBranchDynamicQrToken, toKhmerNumeral } from '../utils/geoUtils';
+import { validatePunchAllowance } from '../utils/dayOffUtils';
 
 interface BranchKioskViewProps {
   branches: Branch[];
@@ -25,6 +26,7 @@ interface BranchKioskViewProps {
   attendanceRecords: AttendanceRecord[];
   onAddAttendanceRecord: (record: AttendanceRecord) => void;
   lang: Language;
+  leaveRequests?: LeaveRequest[];
 }
 
 export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
@@ -33,6 +35,7 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
   attendanceRecords,
   onAddAttendanceRecord,
   lang,
+  leaveRequests = [],
 }) => {
   const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
   const [qrToken, setQrToken] = useState<{ payload: string; expiresInSeconds: number; timeWindow: number } | null>(null);
@@ -106,6 +109,13 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
           ? '❌ លេខកូដសម្ងាត់ PIN មិនត្រឹមត្រូវ! (សូមពិនិត្យលេខ ៤ ខ្ទង់)'
           : '❌ Invalid PIN or Employee Code. Please try again.'
       );
+      return;
+    }
+
+    // Punch Allowance Enforcement: Sunday rest, Day Off, and Leave are not allowed
+    const allowance = validatePunchAllowance(emp, leaveRequests, new Date());
+    if (!allowance.allowed) {
+      setPinError(lang === 'km' ? `⛔ ${allowance.reasonKh}` : `⛔ ${allowance.reason}`);
       return;
     }
 

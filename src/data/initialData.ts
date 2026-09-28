@@ -548,6 +548,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'sreineang.bkk@enterprise.com.kh',
     status: 'active',
     pinCode: '5001',
+    weeklyDayOff: 1, // Monday (Cafe 1 day off/week, works Sunday)
+    hasSundayRest: false,
   },
   {
     id: 'emp_cf1_2',
@@ -565,6 +567,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'sopheak.barista@enterprise.com.kh',
     status: 'active',
     pinCode: '5002',
+    weeklyDayOff: 2, // Tuesday (Cafe 1 day off/week, works Sunday)
+    hasSundayRest: false,
   },
   {
     id: 'emp_cf1_3',
@@ -582,6 +586,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'kimheng.ly@enterprise.com.kh',
     status: 'active',
     pinCode: '5003',
+    weeklyDayOff: 3, // Wednesday (Cafe 1 day off/week, works Sunday)
+    hasSundayRest: false,
   },
 
   // --- Cafe 2: Aroma Cafe Toul Kork ---
@@ -601,6 +607,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'socheat.tk@enterprise.com.kh',
     status: 'active',
     pinCode: '6001',
+    weeklyDayOff: 1, // Monday
+    hasSundayRest: false,
   },
   {
     id: 'emp_cf2_2',
@@ -618,6 +626,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'sreypov.pen@enterprise.com.kh',
     status: 'active',
     pinCode: '6002',
+    weeklyDayOff: 2, // Tuesday
+    hasSundayRest: false,
   },
 
   // --- Cafe 3: Aroma Cafe Riverside ---
@@ -637,6 +647,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'sopheap.river@enterprise.com.kh',
     status: 'active',
     pinCode: '7001',
+    weeklyDayOff: 1, // Monday
+    hasSundayRest: false,
   },
   {
     id: 'emp_cf3_2',
@@ -654,6 +666,8 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     email: 'pisey.van@enterprise.com.kh',
     status: 'active',
     pinCode: '7002',
+    weeklyDayOff: 4, // Thursday
+    hasSundayRest: false,
   },
 ];
 

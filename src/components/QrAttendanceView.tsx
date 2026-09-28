@@ -35,7 +35,7 @@ import {
   Shield,
   Laptop
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry } from '../types';
+import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
 import { calculateDistanceMeters, formatDistance, toKhmerNumeral, verifyBranchDynamicQrToken } from '../utils/geoUtils';
 import { 
   getDeviceFingerprint, 
@@ -45,6 +45,7 @@ import {
   DeviceValidationResult 
 } from '../utils/deviceSecurityUtils';
 import { playAlertChime } from '../utils/soundUtils';
+import { validatePunchAllowance, PunchAllowanceResult } from '../utils/dayOffUtils';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -65,6 +66,7 @@ interface QrAttendanceViewProps {
   systemSettings?: SystemSettings;
   onUpdateEmployee?: (emp: Employee) => void;
   onAddAuditLog?: (log: AuditLogEntry) => void;
+  leaveRequests?: LeaveRequest[];
 }
 
 export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
@@ -81,6 +83,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   systemSettings,
   onUpdateEmployee,
   onAddAuditLog,
+  leaveRequests = [],
 }) => {
   // Find employee profile if logged in
   const loggedInEmp = employees.find(
@@ -129,6 +132,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   // Device Fingerprint & Hardware Binding State
   const [currentDevice] = useState<DeviceFingerprint>(() => getDeviceFingerprint());
   const [deviceSecurityAlert, setDeviceSecurityAlert] = useState<DeviceValidationResult | null>(null);
+  const [punchBlockAlert, setPunchBlockAlert] = useState<PunchAllowanceResult | null>(null);
   const [showDeviceDetailsModal, setShowDeviceDetailsModal] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -411,7 +415,32 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   ) => {
     setIsProcessing(true);
 
-    // 0. Hardware-bound Anti-Proxy & Anti-Fake Device Validation
+    // 0. Sunday Rest, Weekly Day Off, and Leave Validation (Punches strictly prohibited)
+    const allowance = validatePunchAllowance(emp, leaveRequests, new Date());
+    if (!allowance.allowed) {
+      setIsProcessing(false);
+      setIsCameraActive(false);
+      playAlertChime('security_alert');
+      setPunchBlockAlert(allowance);
+
+      if (onAddAuditLog) {
+        onAddAuditLog({
+          id: `sec_dayoff_${Date.now()}`,
+          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          actorName: `${emp.nameKh} (${emp.code})`,
+          actorRole: emp.role || 'employee',
+          action: 'Blocked Punch on Rest/Leave Day',
+          actionKh: 'បដិសេធការកត់ត្រាវត្តមាននៅថ្ងៃសម្រាកឬច្បាប់',
+          module: 'attendance',
+          details: allowance.reason || 'Punch not allowed on Sunday/Day Off/Leave.',
+          detailsKh: allowance.reasonKh || 'មិនអនុញ្ញាតឱ្យកត់ត្រាវត្តមាននៅថ្ងៃសម្រាក ឬច្បាប់ឡើយ',
+          status: 'warning',
+        });
+      }
+      return;
+    }
+
+    // 1. Hardware-bound Anti-Proxy & Anti-Fake Device Validation
     // Only enforce 1-device lock on mobile/remote punch (kiosk scans are from the company kiosk terminal)
     if (method !== 'qr_kiosk') {
       const deviceValidation = validateEmployeeDevice(emp, currentDevice, systemSettings, employees);
@@ -575,6 +604,84 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 font-hanuman relative">
+      {/* ========================================================================= */}
+      {/* REST DAY / DAY OFF / LEAVE: PUNCH NOT ALLOWED MODAL */}
+      {/* ========================================================================= */}
+      {punchBlockAlert && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-amber-200 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative my-6 text-center space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Top Close */}
+            <button
+              onClick={() => {
+                setPunchBlockAlert(null);
+                setIsCameraActive(true);
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Warning Icon */}
+            <div className="relative mx-auto w-20 h-20 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-amber-500 animate-ping opacity-25" />
+              <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-amber-600 to-orange-500 flex items-center justify-center text-white shadow-xl shadow-amber-200 ring-4 ring-amber-100">
+                <Clock className="w-10 h-10" />
+              </div>
+            </div>
+
+            {/* Heading */}
+            <div>
+              <span className="inline-block text-[11px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wider mb-1.5 bg-amber-100 text-amber-800 border border-amber-200">
+                {punchBlockAlert.type === 'sunday_rest'
+                  ? (lang === 'km' ? '🛑 ថ្ងៃអាទិត្យសម្រាកផ្លូវការ' : '🛑 Sunday Weekly Rest Day')
+                  : punchBlockAlert.type === 'day_off'
+                  ? (lang === 'km' ? '🛑 ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍' : '🛑 Scheduled Day Off')
+                  : (lang === 'km' ? '🛑 ច្បាប់ឈប់សម្រាកអនុញ្ញាត' : '🛑 Scheduled Leave Active')}
+              </span>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-battambang">
+                {lang === 'km' ? 'មិនអនុញ្ញាតឱ្យកត់ត្រាវត្តមាន!' : 'Attendance Punch Not Allowed!'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {lang === 'km'
+                  ? 'ប្រព័ន្ធបិទការកត់ត្រាវត្តមាននៅថ្ងៃសម្រាក ឬពេលមានច្បាប់ ដើម្បីការពារការភាន់ច្រឡំ ឬកត់ត្រាខុស'
+                  : 'Punching is strictly disabled on Sunday rest, weekly Day Off, and active leave.'}
+              </p>
+            </div>
+
+            {/* Notice Box */}
+            <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 text-left space-y-2">
+              <div className="flex items-start gap-2.5">
+                <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900 font-medium">
+                  <p className="font-bold mb-1">
+                    {lang === 'km' ? punchBlockAlert.reasonKh : punchBlockAlert.reason}
+                  </p>
+                  <p className="text-amber-800 text-[11px]">
+                    {lang === 'km'
+                      ? 'ទិន្នន័យនៅថ្ងៃនេះនឹងត្រូវសម្គាល់ដោយស្វ័យប្រវត្តិតាមប្រតិទិនការងារ (Day Off / Leave) លើរបាយការណ៍ ដោយមិនចាត់ទុកជាអវត្តមានឡើយ។'
+                      : 'This day is automatically designated in timesheet reports as your rest day/leave, avoiding any absent confusion.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Dismiss Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPunchBlockAlert(null);
+                  setIsCameraActive(true);
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs tracking-wide transition shadow-lg shadow-slate-300 cursor-pointer"
+              >
+                {lang === 'km' ? 'យល់ព្រម (OK, I Understand)' : 'OK, I Understand'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* SECURITY ALERT: UNAUTHORIZED DEVICE / PROXY SCANNING BLOCKED MODAL */}
       {/* ========================================================================= */}

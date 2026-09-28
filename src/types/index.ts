@@ -84,6 +84,8 @@ export interface Employee {
   trustedDeviceName?: string;     // Friendly device name (e.g. "iPhone 15 Pro (Safari Mobile)")
   trustedDeviceBoundAt?: string;  // ISO timestamp when device was bound
   deviceBindingLocked?: boolean;  // If true, scanning is strictly locked to trustedDeviceId
+  weeklyDayOff?: number;          // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat (Cafe staff have 1 weekday off)
+  hasSundayRest?: boolean;        // Default true for standard staff; false for cafe shop / retail staff who work on Sunday
 }
 
 export interface Shift {

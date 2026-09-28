@@ -30,6 +30,7 @@ import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole
 import { INITIAL_BRANDING } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
+import { getEmployeeDayOffName } from '../utils/dayOffUtils';
 
 export const DEPARTMENT_OPTIONS = [
   { id: 'dept_branch_mgmt', nameKh: 'គ្រប់គ្រងសាខា (Branch Management)', nameEn: 'Branch Management' },
@@ -135,6 +136,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [newEmpPhone, setNewEmpPhone] = useState('012 345 678');
   const [newEmpPin, setNewEmpPin] = useState(String(Math.floor(1000 + Math.random() * 9000)));
   const [newEmpAvatar, setNewEmpAvatar] = useState(DEFAULT_AVATAR);
+  const [newEmpWeeklyDayOff, setNewEmpWeeklyDayOff] = useState<number>(0);
 
   // Edit Employee Form State
   const [editRoleType, setEditRoleType] = useState<UserRole>('employee');
@@ -147,6 +149,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [editPhone, setEditPhone] = useState('');
   const [editPin, setEditPin] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+  const [editWeeklyDayOff, setEditWeeklyDayOff] = useState<number>(0);
 
   // Handle Role preset quick selection in Add form
   const handleSelectAddRolePreset = (preset: typeof ROLE_PRESETS[0]) => {
@@ -203,6 +206,11 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditPhone(emp.phone);
     setEditPin(emp.pinCode || '1234');
     setEditAvatar(emp.avatar || DEFAULT_AVATAR);
+    setEditWeeklyDayOff(
+      emp.weeklyDayOff !== undefined
+        ? emp.weeklyDayOff
+        : (emp.hasSundayRest === false || emp.branchId?.includes('cafe') ? 1 : 0)
+    );
   };
 
   const handleOpenPhotoEdit = (emp: Employee) => {
@@ -256,6 +264,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       email: `${newEmpNameEn.toLowerCase().replace(/\s+/g, '.')}@enterprise.com.kh`,
       status: 'active',
       pinCode: newEmpPin,
+      weeklyDayOff: newEmpWeeklyDayOff,
+      hasSundayRest: newEmpWeeklyDayOff === 0,
       annualLeaveQuota: 18,
       annualLeaveUsed: 0,
       sickLeaveQuota: 7,
@@ -272,6 +282,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setNewEmpDeptKh(DEPARTMENT_OPTIONS[1].nameKh);
     setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
     setNewEmpAvatar(DEFAULT_AVATAR);
+    setNewEmpWeeklyDayOff(0);
   };
 
   const handleUpdateEmployeeSubmit = (e: React.FormEvent) => {
@@ -294,6 +305,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       phone: editPhone,
       pinCode: editPin,
       avatar: editAvatar || DEFAULT_AVATAR,
+      weeklyDayOff: editWeeklyDayOff,
+      hasSundayRest: editWeeklyDayOff === 0,
     };
 
     onUpdateEmployee(updated);
@@ -501,6 +514,12 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 <div className="text-slate-500 flex items-center justify-between">
                   <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
                   <span className="font-mono text-slate-700 font-medium">{emp.phone}</span>
+                </div>
+                <div className="text-slate-500 flex items-center justify-between">
+                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាក (Day Off):' : 'Weekly Day Off:'}</span>
+                  <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                    {getEmployeeDayOffName(emp, lang)}
+                  </span>
                 </div>
 
                 {/* Hardware Device Lock Status */}
@@ -792,6 +811,28 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 />
               </div>
 
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off):'}</span>
+                  <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                    {lang === 'km' ? 'សម្រាប់ហាងកាហ្វេ / វេន' : 'Cafe & Shift Staff'}
+                  </span>
+                </label>
+                <select
+                  value={editWeeklyDayOff}
+                  onChange={(e) => setEditWeeklyDayOff(Number(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                >
+                  <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
+                  <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Monday [Cafe Shop Staff]'}</option>
+                  <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Tuesday [Cafe Shop Staff]'}</option>
+                  <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Wednesday [Cafe Shop Staff]'}</option>
+                  <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Thursday [Cafe Shop Staff]'}</option>
+                  <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Friday [Cafe Shop Staff]'}</option>
+                  <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Saturday [Cafe Shop Staff]'}</option>
+                </select>
+              </div>
+
               <div className="flex space-x-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
@@ -980,6 +1021,28 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   onChange={(e) => setNewEmpPhone(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off):'}</span>
+                  <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                    {lang === 'km' ? 'សម្រាប់ហាងកាហ្វេ / វេន' : 'Cafe & Shift Staff'}
+                  </span>
+                </label>
+                <select
+                  value={newEmpWeeklyDayOff}
+                  onChange={(e) => setNewEmpWeeklyDayOff(Number(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                >
+                  <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
+                  <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Monday [Cafe Shop Staff]'}</option>
+                  <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Tuesday [Cafe Shop Staff]'}</option>
+                  <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Wednesday [Cafe Shop Staff]'}</option>
+                  <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Thursday [Cafe Shop Staff]'}</option>
+                  <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Friday [Cafe Shop Staff]'}</option>
+                  <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Saturday [Cafe Shop Staff]'}</option>
+                </select>
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">

@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { AttendanceRecord, Branch, Employee, Language } from '../types';
+import { AttendanceRecord, Branch, Employee, Language, LeaveRequest } from '../types';
+import { isEmployeeDayOff, isEmployeeSundayRest, getEmployeeLeaveOnDate, getEmployeeDayOffName } from './dayOffUtils';
 
 export interface TimesheetRow {
   no: number;
@@ -17,6 +18,8 @@ export interface TimesheetRow {
   date: string;
   dayOfWeek: string;
   isSunday: boolean;
+  isDayOff?: boolean;
+  isLeave?: boolean;
   timeIn: string;
   timeOut: string;
   durationHours: string;
@@ -38,6 +41,8 @@ export interface EmployeeMergedSummary {
   totalDaysInRange: number;
   daysPresent: number;
   daysAbsent: number;
+  daysOff: number;
+  daysLeave: number;
   daysLate: number;
   daysOnTime: number;
   daysOvertime: number;
@@ -79,7 +84,8 @@ export function generateDailyTimesheetRows(
   startDateStr: string,
   endDateStr: string,
   branchFilter: string = 'all',
-  employeeFilter: string = 'all'
+  employeeFilter: string = 'all',
+  leaveRequests: LeaveRequest[] = []
 ): TimesheetRow[] {
   // Filter employees by branch and by employee
   let targetEmployees = branchFilter === 'all'
@@ -109,8 +115,8 @@ export function generateDailyTimesheetRows(
     const dayNamesKh = ['អាទិត្យ', 'ច័ន្ទ', 'អង្គារ', 'ពុធ', 'ព្រហស្បតិ៍', 'សុក្រ', 'សៅរ៍'];
     const dayOfWeekStr = `${dayNames[dayIndex]} (${dayNamesKh[dayIndex]})`;
 
-    if (isSunday) {
-      // Add special Sunday banner / summary marker row for each branch or global
+    // Only add global sunday marker row if viewing multi-employee consolidated roster
+    if (isSunday && employeeFilter === 'all') {
       rows.push({
         no: rowNumber++,
         enrollId: '---',
@@ -125,6 +131,7 @@ export function generateDailyTimesheetRows(
         date: dateStr,
         dayOfWeek: dayOfWeekStr,
         isSunday: true,
+        isDayOff: true,
         timeIn: '--:--',
         timeOut: '--:--',
         durationHours: '0.0h',
@@ -135,6 +142,9 @@ export function generateDailyTimesheetRows(
 
     targetEmployees.forEach((emp) => {
       const empBranch = branches.find((b) => b.id === emp.branchId) || branches[0];
+      const isDayOff = isEmployeeDayOff(emp, dateStr);
+      const isSunRest = isSunday && isEmployeeSundayRest(emp);
+      const empLeave = getEmployeeLeaveOnDate(emp, dateStr, leaveRequests);
       
       // Find punches for this employee on this date
       const dayPunches = records.filter(
@@ -152,9 +162,11 @@ export function generateDailyTimesheetRows(
 
       let timeInStr = '--:--';
       let timeOutStr = '--:--';
-      let statusStr = isSunday ? 'Sunday Rest' : 'Absent / No Punch';
-      let remarkStr = isSunday ? 'Weekly Rest Day' : 'No attendance logged for this date';
+      let statusStr = 'Absent / No Punch';
+      let remarkStr = 'No attendance logged for this date';
       let workHours = '0.0h';
+      let isDayOffFlag = false;
+      let isLeaveFlag = false;
 
       if (checkIns.length > 0) {
         const firstIn = checkIns[0];
@@ -187,10 +199,29 @@ export function generateDailyTimesheetRows(
         timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
         statusStr = 'Check-Out Only';
         remarkStr = 'Missing morning Check-In record';
+      } else {
+        // No punch: Determine if Leave, Day Off, Sunday Rest, or genuine Absent
+        if (empLeave) {
+          isLeaveFlag = true;
+          statusStr = 'On Leave / សុំច្បាប់';
+          const typeKh = empLeave.typeKh || empLeave.type || 'ច្បាប់ឈប់សម្រាក';
+          remarkStr = `[ច្បាប់អនុញ្ញាត] ${typeKh}${empLeave.reason ? `: ${empLeave.reason}` : ''}`;
+        } else if (isDayOff) {
+          isDayOffFlag = true;
+          statusStr = 'Day Off / ថ្ងៃសម្រាក';
+          remarkStr = `Weekly Day Off (${getEmployeeDayOffName(emp, 'km')}) - ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍`;
+        } else if (isSunRest) {
+          statusStr = 'Sunday Rest';
+          remarkStr = 'Company Sunday Rest Day / សម្រាកប្រចាំសប្តាហ៍';
+        } else {
+          statusStr = 'Absent / អវត្តមាន';
+          remarkStr = 'No attendance logged for this date';
+        }
       }
 
-      // If not Sunday or employee actually worked on Sunday
-      if (!isSunday || checkIns.length > 0 || checkOuts.length > 0) {
+      // If printing individual employee roster, include every day so Day Off / Leave is clearly marked.
+      // If multi-staff roster, include all working days, day off, leave or punch days.
+      if (employeeFilter !== 'all' || !isSunRest || checkIns.length > 0 || checkOuts.length > 0) {
         rows.push({
           no: rowNumber++,
           enrollId: emp.code,
@@ -206,6 +237,8 @@ export function generateDailyTimesheetRows(
           date: dateStr,
           dayOfWeek: dayOfWeekStr,
           isSunday: isSunday,
+          isDayOff: isDayOffFlag,
+          isLeave: isLeaveFlag,
           timeIn: timeInStr,
           timeOut: timeOutStr,
           durationHours: workHours,
@@ -226,7 +259,8 @@ export function generateEmployeeMergedSummaries(
   startDateStr: string,
   endDateStr: string,
   branchFilter: string = 'all',
-  employeeFilter: string = 'all'
+  employeeFilter: string = 'all',
+  leaveRequests: LeaveRequest[] = []
 ): EmployeeMergedSummary[] {
   // Filter target employees
   let targetEmployees = branchFilter === 'all'
@@ -244,14 +278,6 @@ export function generateEmployeeMergedSummaries(
   if (dates.length === 0) {
     return [];
   }
-  let totalSundays = 0;
-  dates.forEach((dStr) => {
-    const [y, m, d] = dStr.split('-').map(Number);
-    const day = new Date(y, m - 1, d, 12, 0, 0).getDay();
-    if (day === 0) totalSundays++;
-  });
-
-  const workingDaysCount = dates.length - totalSundays;
 
   return targetEmployees.map((emp) => {
     const empBranch = branches.find((b) => b.id === emp.branchId) || branches[0];
@@ -259,17 +285,29 @@ export function generateEmployeeMergedSummaries(
     // Get all daily records for this employee
     const empDailyRows: TimesheetRow[] = [];
     let daysPresent = 0;
+    let daysAbsent = 0;
+    let daysOff = 0;
+    let daysLeave = 0;
     let daysLate = 0;
     let daysOnTime = 0;
     let daysOvertime = 0;
     let totalWorkHoursNum = 0;
     let totalOtHoursNum = 0;
+    let sundaysCount = 0;
 
     dates.forEach((dateStr, idx) => {
       const [y, m, dNum] = dateStr.split('-').map(Number);
       const d = new Date(y, m - 1, dNum, 12, 0, 0);
       const dayIndex = d.getDay();
       const isSunday = dayIndex === 0;
+      const isDayOff = isEmployeeDayOff(emp, dateStr);
+      const isSunRest = isSunday && isEmployeeSundayRest(emp);
+      const empLeave = getEmployeeLeaveOnDate(emp, dateStr, leaveRequests);
+
+      if (isSunRest) {
+        sundaysCount++;
+      }
+
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const dayNamesKh = ['អាទិត្យ', 'ច័ន្ទ', 'អង្គារ', 'ពុធ', 'ព្រហស្បតិ៍', 'សុក្រ', 'សៅរ៍'];
       const dayOfWeekStr = `${dayNames[dayIndex]} (${dayNamesKh[dayIndex]})`;
@@ -289,10 +327,12 @@ export function generateEmployeeMergedSummaries(
 
       let timeInStr = '--:--';
       let timeOutStr = '--:--';
-      let statusStr = isSunday ? 'Sunday Rest' : 'Absent';
-      let remarkStr = isSunday ? 'Weekly Rest Day' : 'Absent';
+      let statusStr = 'Absent';
+      let remarkStr = 'Absent';
       let workHours = '0.0h';
       let parsedHours = 0;
+      let isDayOffFlag = false;
+      let isLeaveFlag = false;
 
       if (checkIns.length > 0) {
         daysPresent++;
@@ -337,6 +377,34 @@ export function generateEmployeeMergedSummaries(
           totalWorkHoursNum += parsedHours;
           workHours = '8.0h (Est)';
         }
+      } else if (checkOuts.length > 0) {
+        daysPresent++;
+        const lastOut = checkOuts[0];
+        const outDate = new Date(lastOut.timestamp);
+        timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+        statusStr = 'Check-Out Only';
+        remarkStr = 'Missing morning Check-In';
+      } else {
+        // No punch: Check if Leave, Day Off, or Sunday Rest
+        if (empLeave) {
+          daysLeave++;
+          isLeaveFlag = true;
+          statusStr = 'On Leave / សុំច្បាប់';
+          const typeKh = empLeave.typeKh || empLeave.type || 'ច្បាប់';
+          remarkStr = `[ច្បាប់អនុញ្ញាត] ${typeKh}${empLeave.reason ? `: ${empLeave.reason}` : ''}`;
+        } else if (isDayOff) {
+          daysOff++;
+          isDayOffFlag = true;
+          statusStr = 'Day Off / ថ្ងៃសម្រាក';
+          remarkStr = `Weekly Day Off (${getEmployeeDayOffName(emp, 'km')})`;
+        } else if (isSunRest) {
+          statusStr = 'Sunday Rest';
+          remarkStr = 'Company Sunday Rest Day';
+        } else {
+          daysAbsent++;
+          statusStr = 'Absent / អវត្តមាន';
+          remarkStr = 'No punch logged';
+        }
       }
 
       empDailyRows.push({
@@ -354,6 +422,8 @@ export function generateEmployeeMergedSummaries(
         date: dateStr,
         dayOfWeek: dayOfWeekStr,
         isSunday: isSunday,
+        isDayOff: isDayOffFlag,
+        isLeave: isLeaveFlag,
         timeIn: timeInStr,
         timeOut: timeOutStr,
         durationHours: workHours,
@@ -362,9 +432,9 @@ export function generateEmployeeMergedSummaries(
       });
     });
 
-    const daysAbsent = Math.max(0, workingDaysCount - daysPresent);
-    const attendanceRate = workingDaysCount > 0
-      ? Math.min(100, Math.round((daysPresent / workingDaysCount) * 100))
+    const scheduledWorkDays = daysPresent + daysAbsent;
+    const attendanceRate = scheduledWorkDays > 0
+      ? Math.min(100, Math.round((daysPresent / scheduledWorkDays) * 100))
       : 100;
 
     return {
@@ -381,12 +451,14 @@ export function generateEmployeeMergedSummaries(
       totalDaysInRange: dates.length,
       daysPresent,
       daysAbsent,
+      daysOff,
+      daysLeave,
       daysLate,
       daysOnTime,
       daysOvertime,
       totalWorkHours: parseFloat(totalWorkHoursNum.toFixed(1)),
       totalOtHours: parseFloat(totalOtHoursNum.toFixed(1)),
-      sundaysCount: totalSundays,
+      sundaysCount,
       attendanceRate,
       dailyRecords: empDailyRows,
     };
@@ -568,10 +640,9 @@ export function exportTimesheetToPdf(
 
   // Table Data Mapping
   const tableData = rows.map((r) => {
-    if (r.isSunday) {
+    if (r.isSunday && r.employeeId === 'sunday_marker') {
       return [
         r.no,
-        '---',
         '🔴 SUNDAY REST DAY',
         r.branchNameEn,
         r.date,
@@ -585,7 +656,6 @@ export function exportTimesheetToPdf(
     }
     return [
       r.no,
-      r.enrollId,
       r.nameEn,
       r.branchNameEn,
       r.date,
@@ -602,8 +672,7 @@ export function exportTimesheetToPdf(
     startY: 42,
     head: [[
       'No',
-      'Enroll ID',
-      'User Name',
+      'Employee Name',
       'Branch',
       'Date',
       'Day',
@@ -624,7 +693,7 @@ export function exportTimesheetToPdf(
     },
     styles: {
       fontSize: 7.5,
-      cellPadding: 2,
+      cellPadding: 1.5,
       textColor: [30, 41, 59],
       lineColor: [226, 232, 240],
       lineWidth: 0.2,
@@ -632,16 +701,15 @@ export function exportTimesheetToPdf(
     },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' }, // No
-      1: { cellWidth: 18, fontStyle: 'bold' }, // Enroll ID
-      2: { cellWidth: 32, fontStyle: 'bold' }, // User Name
-      3: { cellWidth: 30 }, // Branch
-      4: { cellWidth: 20 }, // Date
-      5: { cellWidth: 18 }, // Day
-      6: { cellWidth: 18, halign: 'center' }, // Time In
-      7: { cellWidth: 18, halign: 'center' }, // Time Out
-      8: { cellWidth: 16, halign: 'center' }, // Duration
-      9: { cellWidth: 26 }, // Status
-      10: { cellWidth: 'auto' }, // Remark
+      1: { cellWidth: 38, fontStyle: 'bold' }, // Employee Name
+      2: { cellWidth: 32 }, // Branch
+      3: { cellWidth: 22 }, // Date
+      4: { cellWidth: 20 }, // Day
+      5: { cellWidth: 20, halign: 'center' }, // Time In
+      6: { cellWidth: 20, halign: 'center' }, // Time Out
+      7: { cellWidth: 18, halign: 'center' }, // Work Hrs
+      8: { cellWidth: 28 }, // Status
+      9: { cellWidth: 'auto' }, // Remark
     },
     didParseCell: function (data) {
       // Check if Sunday row
@@ -754,7 +822,6 @@ export function exportMergedSummaryToPdf(
 
   const tableData = summaries.map((s, idx) => [
     idx + 1,
-    s.enrollId,
     s.nameEn,
     s.department,
     s.branchNameEn,
@@ -762,7 +829,6 @@ export function exportMergedSummaryToPdf(
     s.daysPresent,
     s.daysLate,
     `${s.totalWorkHours}h`,
-    `${s.totalOtHours}h`,
     s.sundaysCount,
     `${s.attendanceRate}%`,
   ]);
@@ -771,7 +837,6 @@ export function exportMergedSummaryToPdf(
     startY: 42,
     head: [[
       'No',
-      'Enroll ID',
       'Employee Name',
       'Department',
       'Branch',
@@ -779,7 +844,6 @@ export function exportMergedSummaryToPdf(
       'Present',
       'Late',
       'Work Hrs',
-      'OT Hrs',
       'Sundays',
       'Attendance Rate',
     ]],
@@ -794,27 +858,25 @@ export function exportMergedSummaryToPdf(
     },
     styles: {
       fontSize: 8,
-      cellPadding: 2.5,
+      cellPadding: 1.5,
       textColor: [30, 41, 59],
       lineColor: [226, 232, 240],
       lineWidth: 0.2,
     },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 20, fontStyle: 'bold' },
-      2: { cellWidth: 40, fontStyle: 'bold' },
-      3: { cellWidth: 32 },
-      4: { cellWidth: 35 },
-      5: { cellWidth: 15, halign: 'center' },
+      1: { cellWidth: 45, fontStyle: 'bold' },
+      2: { cellWidth: 35 },
+      3: { cellWidth: 38 },
+      4: { cellWidth: 16, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center' },
       6: { cellWidth: 16, halign: 'center' },
-      7: { cellWidth: 14, halign: 'center' },
-      8: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
-      9: { cellWidth: 18, halign: 'center' },
-      10: { cellWidth: 16, halign: 'center' },
-      11: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
+      7: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
+      8: { cellWidth: 20, halign: 'center' },
+      9: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
     },
     didParseCell: function (data) {
-      if (data.section === 'body' && data.column.index === 11) {
+      if (data.section === 'body' && data.column.index === 9) {
         const rate = parseInt(String(data.cell.raw));
         if (rate >= 90) {
           data.cell.styles.textColor = [16, 185, 129];
