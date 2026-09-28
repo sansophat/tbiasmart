@@ -23,7 +23,7 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
-export type AlertSoundType = 'leave' | 'punch' | 'approval' | 'rejection' | 'alert';
+export type AlertSoundType = 'leave' | 'punch' | 'approval' | 'rejection' | 'alert' | 'security_alert';
 
 export function playAlertChime(type: AlertSoundType = 'alert'): void {
   try {
@@ -37,7 +37,18 @@ export function playAlertChime(type: AlertSoundType = 'alert'): void {
     osc.connect(gain);
     gain.connect(ctx.destination);
 
-    if (type === 'leave') {
+    if (type === 'security_alert') {
+      // Authoritative security alarm tone (triple pulse warning)
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(440, now); // A4
+      osc.frequency.setValueAtTime(880, now + 0.1);
+      osc.frequency.setValueAtTime(440, now + 0.2);
+      osc.frequency.setValueAtTime(880, now + 0.3);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      osc.start(now);
+      osc.stop(now + 0.55);
+    } else if (type === 'leave') {
       // Pleasant double-tone notification ding (520Hz -> 780Hz)
       osc.type = 'sine';
       osc.frequency.setValueAtTime(523.25, now); // C5

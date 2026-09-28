@@ -30,10 +30,21 @@ import {
   LogOut,
   X,
   Lock,
-  Check
+  Check,
+  ShieldAlert,
+  Shield,
+  Laptop
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser } from '../types';
+import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry } from '../types';
 import { calculateDistanceMeters, formatDistance, toKhmerNumeral, verifyBranchDynamicQrToken } from '../utils/geoUtils';
+import { 
+  getDeviceFingerprint, 
+  validateEmployeeDevice, 
+  bindEmployeeToCurrentDevice, 
+  DeviceFingerprint, 
+  DeviceValidationResult 
+} from '../utils/deviceSecurityUtils';
+import { playAlertChime } from '../utils/soundUtils';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -51,6 +62,9 @@ interface QrAttendanceViewProps {
     employeeId?: string
   ) => { success: boolean; message: string } | void;
   onNavigateToDashboard?: () => void;
+  systemSettings?: SystemSettings;
+  onUpdateEmployee?: (emp: Employee) => void;
+  onAddAuditLog?: (log: AuditLogEntry) => void;
 }
 
 export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
@@ -64,6 +78,9 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   lang,
   onUpdateBranchLocation,
   onNavigateToDashboard,
+  systemSettings,
+  onUpdateEmployee,
+  onAddAuditLog,
 }) => {
   // Find employee profile if logged in
   const loggedInEmp = employees.find(
@@ -108,6 +125,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   // Success Modal Popup State
   const [scanSuccessModalRecord, setScanSuccessModalRecord] = useState<AttendanceRecord | null>(null);
   const [redirectCountdown, setRedirectCountdown] = useState<number>(5);
+
+  // Device Fingerprint & Hardware Binding State
+  const [currentDevice] = useState<DeviceFingerprint>(() => getDeviceFingerprint());
+  const [deviceSecurityAlert, setDeviceSecurityAlert] = useState<DeviceValidationResult | null>(null);
+  const [showDeviceDetailsModal, setShowDeviceDetailsModal] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -389,6 +411,55 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   ) => {
     setIsProcessing(true);
 
+    // 0. Hardware-bound Anti-Proxy & Anti-Fake Device Validation
+    // Only enforce 1-device lock on mobile/remote punch (kiosk scans are from the company kiosk terminal)
+    if (method !== 'qr_kiosk') {
+      const deviceValidation = validateEmployeeDevice(emp, currentDevice, systemSettings, employees);
+
+      if (!deviceValidation.allowed) {
+        setIsProcessing(false);
+        setIsCameraActive(false);
+        playAlertChime('security_alert');
+        setDeviceSecurityAlert(deviceValidation);
+
+        if (onAddAuditLog) {
+          onAddAuditLog({
+            id: `sec_dev_${Date.now()}`,
+            timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+            actorName: `${emp.nameKh} (${emp.code})`,
+            actorRole: emp.role || 'employee',
+            action: 'Blocked Proxy Attendance Scan',
+            actionKh: 'បដិសេធការប៉ុនប៉ងស្កេនពីឧបករណ៍មិនអនុញ្ញាត',
+            module: 'security',
+            details: deviceValidation.reason || 'Device mismatch or conflict detected.',
+            detailsKh: deviceValidation.reasonKh || 'រកឃើញឧបករណ៍មិនត្រូវគ្នា (Unauthorized Device)',
+            status: 'alert',
+          });
+        }
+        return;
+      }
+
+      // Auto-enroll device on first successful scan
+      if (deviceValidation.isFirstTimeEnrollment && onUpdateEmployee) {
+        const boundEmp = bindEmployeeToCurrentDevice(emp, currentDevice.deviceId, currentDevice.deviceName);
+        onUpdateEmployee(boundEmp);
+        if (onAddAuditLog) {
+          onAddAuditLog({
+            id: `sec_enroll_${Date.now()}`,
+            timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+            actorName: `${emp.nameKh} (${emp.code})`,
+            actorRole: emp.role || 'employee',
+            action: 'Registered Trusted Device',
+            actionKh: 'ចុះឈ្មោះចាក់សោឧបករណ៍ផ្លូវការ',
+            module: 'security',
+            details: `Bound employee ${emp.nameEn} to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...)`,
+            detailsKh: `បានភ្ជាប់គណនី ${emp.nameKh} ជាមួយឧបករណ៍ "${currentDevice.deviceName}"`,
+            status: 'success',
+          });
+        }
+      }
+    }
+
     setTimeout(() => {
       const now = new Date();
       const currentDistance = calculateDistanceMeters(
@@ -439,6 +510,9 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         method: method,
         selfieUrl: photoUrl || emp.avatar,
         status: status,
+        deviceId: currentDevice.deviceId,
+        deviceName: currentDevice.deviceName,
+        deviceVerified: true,
         notes: withinRadius
           ? `${attendanceType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${currentGeo.accuracy || 5}m)`
           : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${branch.radiusMeters}m`,
@@ -501,6 +575,203 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 font-hanuman relative">
+      {/* ========================================================================= */}
+      {/* SECURITY ALERT: UNAUTHORIZED DEVICE / PROXY SCANNING BLOCKED MODAL */}
+      {/* ========================================================================= */}
+      {deviceSecurityAlert && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-rose-200 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative my-6 text-center space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Top Close */}
+            <button
+              onClick={() => {
+                setDeviceSecurityAlert(null);
+                setIsCameraActive(true);
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Shield Alert Icon with warning pulse */}
+            <div className="relative mx-auto w-20 h-20 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-rose-500 animate-ping opacity-25" />
+              <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-rose-600 to-red-500 flex items-center justify-center text-white shadow-xl shadow-rose-200 ring-4 ring-rose-100">
+                <ShieldAlert className="w-10 h-10" />
+              </div>
+            </div>
+
+            {/* Heading */}
+            <div>
+              <span className="inline-block text-[11px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wider mb-1.5 bg-rose-100 text-rose-800 border border-rose-200">
+                {lang === 'km' ? '⛔ ប្រព័ន្ធសុវត្ថិភាពទប់ស្កាត់ការស្កេនជំនួស' : '⛔ Anti-Proxy Security Alert'}
+              </span>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 font-battambang">
+                {lang === 'km' ? 'រកឃើញឧបករណ៍មិនត្រូវគ្នា (Unauthorized Device)!' : 'Unauthorized Device Detected!'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {lang === 'km'
+                  ? 'ការចុះវត្តមានត្រូវបានបដិសេធ ដើម្បីការពារការ Login លើទូរស័ព្ទអ្នកដទៃដើម្បីស្កេនជំនួស'
+                  : 'Attendance punch blocked to prevent buddy punching and multi-device account sharing.'}
+              </p>
+            </div>
+
+            {/* Comparison Cards: Current Device vs Authorized Device */}
+            <div className="space-y-3 text-left">
+              <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-4 space-y-1">
+                <div className="flex items-center justify-between text-xs font-bold text-rose-900">
+                  <span className="flex items-center gap-1.5">
+                    <Smartphone className="w-4 h-4 text-rose-600" />
+                    <span>{lang === 'km' ? 'ឧបករណ៍បច្ចុប្បន្ន (Attempted Device):' : 'Current Device:'}</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-rose-200 text-rose-800 text-[10px] font-bold">
+                    {lang === 'km' ? 'មិនអនុញ្ញាត' : 'Blocked'}
+                  </span>
+                </div>
+                <p className="text-sm font-bold text-rose-800 font-mono">
+                  {deviceSecurityAlert.currentDeviceName}
+                </p>
+                <p className="text-[10px] text-rose-600 font-mono truncate">
+                  ID: {deviceSecurityAlert.currentDeviceId}
+                </p>
+              </div>
+
+              {deviceSecurityAlert.trustedDeviceName && (
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 space-y-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-emerald-900">
+                    <span className="flex items-center gap-1.5">
+                      <Lock className="w-4 h-4 text-emerald-600" />
+                      <span>{lang === 'km' ? 'ឧបករណ៍ផ្លូវការដែលបានចុះឈ្មោះ (Authorized Device):' : 'Bound Authorized Phone:'}</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-200 text-emerald-800 text-[10px] font-bold">
+                      {lang === 'km' ? 'ចាក់សោសុវត្ថិភាព' : '1-Device Locked'}
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-emerald-800 font-mono">
+                    {deviceSecurityAlert.trustedDeviceName}
+                  </p>
+                  <p className="text-[11px] text-emerald-700">
+                    {lang === 'km' ? 'គណនីរបស់អ្នកត្រូវបានភ្ជាប់ជាមួយទូរស័ព្ទនេះតែមួយគត់។' : 'Account is strictly bound to this personal device.'}
+                  </p>
+                </div>
+              )}
+
+              {deviceSecurityAlert.isDeviceConflict && deviceSecurityAlert.conflictEmployeeName && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 space-y-1">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>{lang === 'km' ? 'ទំនាស់ឧបករណ៍រួមគ្នា:' : 'Device Sharing Conflict:'}</span>
+                  </p>
+                  <p className="text-[11px] text-amber-800">
+                    {lang === 'km'
+                      ? `ឧបករណ៍នេះត្រូវបានចុះឈ្មោះជាមួយបុគ្គលិក "${deviceSecurityAlert.conflictEmployeeName}" រួចហើយ។ មិនអនុញ្ញាតឱ្យបុគ្គលិកពីរនាក់ប្រើទូរស័ព្ទតែមួយដើម្បីស្កេនជំនួសគ្នាឡើយ។`
+                      : `This device is already bound to "${deviceSecurityAlert.conflictEmployeeName}". Employees cannot share devices for proxy attendance.`}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Policy & Help note */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-[11px] text-slate-600 text-left space-y-1">
+              <span className="font-bold text-slate-800">
+                {lang === 'km' ? '💡 តើត្រូវធ្វើដូចម្តេច ប្រសិនបើអ្នកទើបតែប្តូរទូរស័ព្ទ?' : '💡 What if you legitimately replaced your phone?'}
+              </span>
+              <p>
+                {lang === 'km'
+                  ? 'ប្រសិនបើអ្នកទើបតែទិញទូរស័ព្ទថ្មី ឬបាត់ទូរស័ព្ទចាស់ សូមទាក់ទងមក HR ឬ Admin ដើម្បីស្នើសុំដោះសោឧបករណ៍ (Reset Device Binding)។'
+                  : 'If you have purchased a new phone or lost your previous device, please contact HR or Admin to reset your device binding.'}
+              </p>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeviceSecurityAlert(null);
+                  setIsCameraActive(true);
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition cursor-pointer"
+              >
+                {lang === 'km' ? 'យល់ព្រម និងបិទ (Acknowledge & Close)' : 'I Understand & Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CURRENT DEVICE HARDWARE DETAILS MODAL */}
+      {/* ========================================================================= */}
+      {showDeviceDetailsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200 text-left">
+            <button
+              onClick={() => setShowDeviceDetailsModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+              <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                <Smartphone className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800 font-battambang">
+                  {lang === 'km' ? 'ព័ត៌មានលម្អិតឧបករណ៍បច្ចុប្បន្ន' : 'Current Hardware Device Fingerprint'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {lang === 'km' ? 'បច្ចេកវិទ្យាចាក់សោឧបករណ៍ ១ នាក់ = ១ ឧបករណ៍' : '1-Employee = 1-Device Binding Protection'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                <span className="text-slate-500 font-medium">{lang === 'km' ? 'ឈ្មោះឧបករណ៍ (Device Name):' : 'Device Model:'}</span>
+                <p className="font-bold text-slate-800">{currentDevice.deviceName}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'ប្រព័ន្ធប្រតិបត្តិការ' : 'Platform'}</span>
+                  <span className="font-bold text-slate-800 text-xs">{currentDevice.os}</span>
+                </div>
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'កម្មវិធី Browser' : 'Browser'}</span>
+                  <span className="font-bold text-slate-800 text-xs">{currentDevice.browser}</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                <span className="text-slate-500 font-medium">{lang === 'km' ? 'កូដសម្គាល់ឧបករណ៍ (Device UUID):' : 'Hardware Fingerprint UUID:'}</span>
+                <p className="font-mono text-indigo-700 font-bold text-[11px] break-all">{currentDevice.deviceId}</p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11px] space-y-1">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <span>{lang === 'km' ? 'ស្ថានភាពការពារ Fake Scanning:' : 'Anti-Proxy Security Status:'}</span>
+                </div>
+                <p className="text-[10px] text-emerald-800 leading-relaxed">
+                  {lang === 'km'
+                    ? 'ប្រព័ន្ធកំពុងដំណើរការចាក់សោឧបករណ៍ ១ នាក់ = ១ ឧបករណ៍។ បុគ្គលិកមិនអាចផ្ញើកូដឱ្យមិត្តភក្តិចុះឈ្មោះជំនួស ឬ Login លើទូរស័ព្ទអ្នកដទៃដើម្បីស្កេនជំនួសបានឡើយ។'
+                    : 'System enforces 1-to-1 hardware binding. Staff cannot proxy scan or log in on a colleague\'s device to punch for them.'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowDeviceDetailsModal(false)}
+              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow transition cursor-pointer"
+            >
+              {lang === 'km' ? 'យល់ព្រម' : 'Done'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* SCAN COMPLETED & SUCCESSFUL POPUP MODAL */}
       {/* ========================================================================= */}
@@ -630,6 +901,22 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Verified Device & Anti-Proxy Hardware Status */}
+              <div className="p-3 rounded-xl border bg-indigo-50/70 border-indigo-200 text-indigo-950 text-[11px] flex items-center space-x-2.5">
+                <Smartphone className="w-4 h-4 shrink-0 text-indigo-600" />
+                <div className="leading-relaxed">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold">{lang === 'km' ? 'ឧបករណ៍ផ្ទៀងផ្ទាត់ (Verified Device):' : 'Verified Device:'}</span>
+                    <span className="font-mono text-indigo-700 bg-white px-1.5 py-0.5 rounded border border-indigo-200 text-[10px] font-bold">
+                      {scanSuccessModalRecord.deviceName || currentDevice.deviceName}
+                    </span>
+                  </div>
+                  <span className="text-indigo-600 block text-[10px] mt-0.5">
+                    {lang === 'km' ? '🛡️ ចាក់សោសុវត្ថិភាពឧបករណ៍ ១ នាក់ = ១ ឧបករណ៍ (1-Device Lock)' : '🛡️ 1-Employee = 1-Device hardware lock verified'}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Countdown & Navigation Info */}
@@ -677,6 +964,43 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Device Anti-Fraud Protection Status Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-slate-200/90 p-3 sm:px-4 rounded-2xl shadow-sm">
+        <div className="flex items-center space-x-3">
+          <span className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 shrink-0">
+            <ShieldCheck className="w-5 h-5" />
+          </span>
+          <div>
+            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+              <span className="font-bold text-slate-800 text-xs sm:text-sm font-battambang">
+                {lang === 'km' ? 'ប្រព័ន្ធការពារ Fake Scanning & ចាក់សោឧបករណ៍:' : 'Anti-Proxy Device Lock:'}
+              </span>
+              <span className="font-mono text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-xs flex items-center gap-1">
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>{currentDevice.deviceName}</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                1-Device Lock Active
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5 font-hanuman">
+              {lang === 'km' 
+                ? 'ទប់ស្កាត់ការ Login លើទូរស័ព្ទអ្នកដទៃដើម្បីស្កេនជំនួស (១ នាក់ = ១ ឧបករណ៍ផ្ទាល់ខ្លួន)'
+                : 'Account locked to physical hardware to prevent proxy scanning and device sharing.'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowDeviceDetailsModal(true)}
+          className="self-end sm:self-center px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center space-x-1.5 cursor-pointer font-battambang shrink-0"
+        >
+          <Shield className="w-3.5 h-3.5 text-indigo-600" />
+          <span>{lang === 'km' ? 'ព័ត៌មានឧបករណ៍' : 'Device Info'}</span>
+        </button>
+      </div>
 
       {/* Top Banner */}
       <div className="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200">

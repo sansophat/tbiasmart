@@ -243,13 +243,13 @@ export const Navbar: React.FC<NavbarProps> = ({
       )}
 
       {/* Main Header Content */}
-      <div className="px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4">
+      <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4 max-w-full overflow-hidden">
         {/* Left Side: Mobile Menu Button & Breadcrumbs */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 sm:flex-initial">
           <button
             type="button"
             onClick={onToggleMobileMenu}
-            className="lg:hidden p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+            className="lg:hidden p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer shrink-0"
             aria-label="Toggle Navigation Menu"
           >
             <Menu className="w-5 h-5" />
@@ -260,7 +260,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={onToggleSidebarCollapse}
-              className="hidden lg:flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer text-xs font-bold shadow-xs group"
+              className="hidden lg:flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer text-xs font-bold shadow-xs group shrink-0"
               title={lang === 'km' ? 'ពង្រីក Sidebar [>]' : 'Expand Sidebar [>]'}
             >
               <ChevronRight className="w-4 h-4 text-indigo-600 group-hover:translate-x-0.5 transition-transform" />
@@ -268,19 +268,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          <div className="flex items-center space-x-2">
-            <div className="hidden sm:flex items-center space-x-1.5 text-xs text-slate-400 font-medium">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 min-w-0">
+            <div className="hidden sm:flex items-center space-x-1.5 text-xs text-slate-400 font-medium shrink-0">
               <span>AMS</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </div>
-            <h1 className="text-sm sm:text-base font-black text-slate-800 tracking-tight">
+            <h1 className="text-xs sm:text-base font-black text-slate-800 tracking-tight truncate">
               {getTabTitle(activeTab)}
             </h1>
           </div>
         </div>
 
         {/* Right Side: Geofence Status, Clock, Language, Quick Scan, and User Profile */}
-        <div className="flex items-center space-x-2.5 sm:space-x-3">
+        <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
           {/* Real-time Server & Cloud Database Sync Status Indicator */}
           <div
             className={`hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-2xl border text-xs font-bold transition shadow-xs ${
@@ -328,7 +328,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={onOpenInstallModal}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition cursor-pointer shadow-xs"
+              className="flex items-center space-x-1.5 px-2 sm:px-3 py-1.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition cursor-pointer shadow-xs shrink-0"
               title={lang === 'km' ? 'ដំឡើងលើទូរស័ព្ទ / កុំព្យូទ័រ (Install App)' : 'Install App to Device'}
             >
               <Download className="w-3.5 h-3.5 text-indigo-600" />
@@ -347,7 +347,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   if (el) el.scrollIntoView({ behavior: 'smooth' });
                 }, 100);
               }}
-              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 shadow-xs cursor-pointer animate-pulse transition"
+              className="flex items-center space-x-1.5 px-2 sm:px-3 py-1.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 shadow-xs cursor-pointer animate-pulse transition shrink-0"
               title={lang === 'km' ? `មាន ${pendingLeavesCount} ពាក្យស្នើសុំច្បាប់រង់ចាំអនុម័ត` : `${pendingLeavesCount} pending leave requests waiting for approval`}
             >
               <Calendar className="w-3.5 h-3.5 text-rose-600" />
@@ -364,11 +364,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => setLang(lang === 'km' ? 'en' : 'km')}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition cursor-pointer"
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-3 py-1.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition cursor-pointer shrink-0"
             title={lang === 'km' ? 'ប្តូរជាភាសាអង់គ្លេស (Switch to English)' : 'Switch to Khmer (ប្តូរជាភាសាខ្មែរ)'}
           >
-            <Globe className="w-3.5 h-3.5 text-indigo-600" />
-            <span>{lang === 'km' ? '🇰🇭 ខ្មែរ' : '🇬🇧 EN'}</span>
+            <Globe className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+            <span className="text-[11px] sm:text-xs">{lang === 'km' ? 'ខ្មែរ' : 'EN'}</span>
           </button>
 
           {/* Quick Khmer Typography & Zoom Widget */}
@@ -386,14 +386,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={onOpenQuickScan}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition cursor-pointer"
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition cursor-pointer shrink-0"
+            title={lang === 'km' ? 'ស្កេនវត្តមាន' : 'Quick Punch'}
           >
-            <QrCode className="w-4 h-4" />
+            <QrCode className="w-4 h-4 shrink-0" />
             <span className="hidden sm:inline">{lang === 'km' ? 'ស្កេនវត្តមាន' : 'Quick Punch'}</span>
           </button>
 
           {/* User Account Capsule with Dropdown Menu */}
-          <div className="relative" ref={userMenuRef}>
+          <div className="relative shrink-0" ref={userMenuRef}>
             <button
               type="button"
               onClick={() => {
@@ -441,51 +442,71 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* User Dropdown Menu Popover */}
+            {/* User Dropdown Menu Popover - Floating smoothly at the top on mobile, without exceeding the frame */}
             {isUserMenuOpen && currentUser && (
-              <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-3xl shadow-2xl border border-slate-200/90 py-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                {/* Header with big photo & details */}
-                <div className="px-4 pb-3 border-b border-slate-100 flex items-center space-x-3">
-                  <div className="relative w-12 h-12 rounded-full overflow-hidden ring-2 ring-indigo-500/20 shadow-md shrink-0 bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center">
-                    {avatarUrl && !imgError ? (
-                      <img
-                        src={avatarUrl}
-                        alt={userName}
-                        referrerPolicy="no-referrer"
-                        onError={() => setImgError(true)}
-                        className="w-full h-full object-cover object-center"
-                      />
-                    ) : (
-                      <span className="text-white font-black text-base">
-                        {getUserInitials(userName)}
-                      </span>
-                    )}
-                    <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 ring-2 ring-white rounded-full" />
-                  </div>
+              <>
+                {/* Mobile Backdrop Overlay to dismiss on outside tap */}
+                <div
+                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 sm:hidden animate-in fade-in duration-150"
+                  onClick={() => setIsUserMenuOpen(false)}
+                />
 
-                  <div className="min-w-0 flex-1">
-                    <h4 className="font-black text-slate-800 text-sm truncate font-battambang">
-                      {userName}
-                    </h4>
-                    <div className="flex items-center space-x-1.5 mt-0.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        currentUser.role === 'admin' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                        currentUser.role === 'manager' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                        'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                      }`}>
-                        {currentUser.role}
-                      </span>
-                      {currentUser.employeeCode && (
-                        <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                          {currentUser.employeeCode}
-                        </span>
-                      )}
+                <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:right-0 sm:absolute sm:top-full sm:mt-2 w-auto sm:w-80 max-w-sm sm:max-w-none mx-auto sm:mx-0 bg-white rounded-3xl shadow-2xl border border-slate-200/90 py-3 z-50 animate-in fade-in zoom-in-95 sm:zoom-in-100 sm:slide-in-from-top-2 duration-150">
+                  {/* Header with big photo & details */}
+                  <div className="px-4 pb-3 border-b border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                      <div className="relative w-12 h-12 rounded-full overflow-hidden ring-2 ring-indigo-500/20 shadow-md shrink-0 bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center">
+                        {avatarUrl && !imgError ? (
+                          <img
+                            src={avatarUrl}
+                            alt={userName}
+                            referrerPolicy="no-referrer"
+                            onError={() => setImgError(true)}
+                            className="w-full h-full object-cover object-center"
+                          />
+                        ) : (
+                          <span className="text-white font-black text-base">
+                            {getUserInitials(userName)}
+                          </span>
+                        )}
+                        <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 ring-2 ring-white rounded-full" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-black text-slate-800 text-sm truncate font-battambang">
+                          {userName}
+                        </h4>
+                        <div className="flex items-center space-x-1.5 mt-0.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            currentUser.role === 'admin' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                            currentUser.role === 'manager' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                            'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          }`}>
+                            {currentUser.role}
+                          </span>
+                          {currentUser.employeeCode && (
+                            <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              {currentUser.employeeCode}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5 font-medium">
+                          {currentUser.email || (currentUser.branchId ? branches.find((b) => b.id === currentUser.branchId)?.nameEn : 'Enterprise User')}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-slate-500 truncate mt-0.5 font-medium">
-                      {currentUser.email || (currentUser.branchId ? branches.find((b) => b.id === currentUser.branchId)?.nameEn : 'Enterprise User')}
-                    </p>
+
+                    {/* Mobile Close Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsUserMenuOpen(false)}
+                      className="sm:hidden p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0 ml-2"
+                      title={lang === 'km' ? 'បិទម៉ឺនុយ' : 'Close Menu'}
+                      aria-label="Close menu"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                </div>
 
                 {/* Menu Items */}
                 <div className="p-2 space-y-1 text-xs font-semibold text-slate-700">
@@ -535,7 +556,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                   )}
                 </div>
               </div>
-            )}
+            </>
+          )}
           </div>
         </div>
       </div>

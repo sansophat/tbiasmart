@@ -80,6 +80,10 @@ export interface Employee {
   sickLeaveUsed?: number;
   gpsCalibratedBranchId?: string; // Tracks the branch where staff calibrated GPS for the 1st time
   gpsCalibratedAt?: string;       // Timestamp when staff calibrated GPS
+  trustedDeviceId?: string;       // Unique hardware/device fingerprint bound to this employee
+  trustedDeviceName?: string;     // Friendly device name (e.g. "iPhone 15 Pro (Safari Mobile)")
+  trustedDeviceBoundAt?: string;  // ISO timestamp when device was bound
+  deviceBindingLocked?: boolean;  // If true, scanning is strictly locked to trustedDeviceId
 }
 
 export interface Shift {
@@ -118,7 +122,9 @@ export interface AttendanceRecord {
   selfieUrl?: string;
   status: AttendanceStatus;
   notes?: string;
+  deviceId?: string;
   deviceName?: string;
+  deviceVerified?: boolean;
   ipAddress?: string;
 }
 
@@ -244,6 +250,8 @@ export interface SystemSettings {
   autoCheckoutHours: number;
   strictGeofenceEnforcement: boolean;
   enableSelfieVerification: boolean;
+  strictDeviceBinding?: boolean; // Anti-proxy: 1 Employee = 1 Trusted Device
+  preventDeviceSharing?: boolean; // Prevent multiple employees using the same device
   enableAuditLogs: boolean;
   defaultLanguage: Language;
   broadcastNoticeKh?: string;

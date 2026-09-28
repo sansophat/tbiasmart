@@ -91,8 +91,14 @@ export const AdminQuickVisualWidget: React.FC<AdminQuickVisualWidgetProps> = ({
 
       {/* Flyout Popover */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 animate-in fade-in zoom-in-95 duration-150">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+        <>
+          {/* Mobile Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 sm:hidden animate-in fade-in duration-150"
+            onClick={() => setIsOpen(false)}
+          />
+          <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:right-0 sm:absolute sm:top-full sm:mt-2 w-auto sm:w-80 max-w-sm sm:max-w-none mx-auto sm:mx-0 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 animate-in fade-in zoom-in-95 sm:zoom-in-100 sm:slide-in-from-top-2 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
             <div className="flex items-center space-x-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               <h4 className="text-xs font-bold text-slate-800">
@@ -192,7 +198,8 @@ export const AdminQuickVisualWidget: React.FC<AdminQuickVisualWidgetProps> = ({
             </button>
           )}
         </div>
-      )}
+      </>
+    )}
     </div>
   );
 };

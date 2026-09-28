@@ -72,6 +72,7 @@ import { BackupRestorePanel } from './BackupRestorePanel';
 import { updateDynamicAppBranding } from '../utils/pwaBrandUtils';
 import { KhmerTypographySettings } from './KhmerTypographySettings';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
+import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
 
 interface AdminSettingsViewProps {
   branches: Branch[];
@@ -99,6 +100,7 @@ interface AdminSettingsViewProps {
   onResetSystem?: (type: 'demo_seed' | 'clean_fresh') => void;
   onUpdateLeaveRequests?: (leaves: LeaveRequest[]) => void;
   onUpdateEmployeesList?: (employees: Employee[]) => void;
+  onUpdateEmployee?: (emp: Employee) => void;
   isLiveSyncConnected?: boolean;
   onlinePeersCount?: number;
   connectedPeers?: ConnectedPeer[];
@@ -158,6 +160,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   onResetSystem = () => {},
   onUpdateLeaveRequests,
   onUpdateEmployeesList,
+  onUpdateEmployee,
   isLiveSyncConnected = true,
   onlinePeersCount = 1,
   connectedPeers = [],
@@ -166,6 +169,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup'>(
     initialActiveTab || 'branches'
   );
+
+  // Device Management & Anti-Fraud State
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
+  const [deviceBranchFilter, setDeviceBranchFilter] = useState('all');
+  const [empToResetDevice, setEmpToResetDevice] = useState<Employee | null>(null);
+  const [showResetAllDevicesModal, setShowResetAllDevicesModal] = useState<boolean>(false);
 
   // Branch Management State
   const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
@@ -564,6 +573,53 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     });
 
     showToast(lang === 'km' ? 'ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ និងសារប្រកាសត្រូវបានរក្សាទុក!' : 'System parameters & broadcast alert updated!');
+  };
+
+  // Reset trusted hardware device binding for single employee
+  const handleResetSingleEmployeeDevice = (targetEmp: Employee) => {
+    const updated = unbindEmployeeDevice(targetEmp);
+    if (onUpdateEmployee) {
+      onUpdateEmployee(updated);
+    }
+    if (onUpdateEmployeesList) {
+      onUpdateEmployeesList(employees.map(e => e.id === targetEmp.id ? updated : e));
+    }
+    onAddAuditLog({
+      id: `sec_rst_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: currentUser?.name || adminProfile?.name || 'Super Admin',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Reset Employee Device Binding',
+      actionKh: 'ដោះសោឧបករណ៍បុគ្គលិក',
+      module: 'security',
+      details: `Reset trusted device binding for ${targetEmp.nameEn} (${targetEmp.code}). Staff can now register a new device on next scan.`,
+      detailsKh: `បានដោះសោឧបករណ៍សម្រាប់ ${targetEmp.nameKh} (${targetEmp.code})។ បុគ្គលិកអាចចុះឈ្មោះឧបករណ៍ថ្មីពេលស្កេនលើកក្រោយ។`,
+      status: 'warning',
+    });
+    setEmpToResetDevice(null);
+    showToast(lang === 'km' ? `បានដោះសោឧបករណ៍សម្រាប់ ${targetEmp.nameKh} រួចរាល់!` : `Reset device binding for ${targetEmp.nameEn}!`);
+  };
+
+  // Reset trusted hardware device bindings for all employees
+  const handleResetAllDevices = () => {
+    const updatedList = employees.map(e => unbindEmployeeDevice(e));
+    if (onUpdateEmployeesList) {
+      onUpdateEmployeesList(updatedList);
+    }
+    onAddAuditLog({
+      id: `sec_rst_all_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: currentUser?.name || adminProfile?.name || 'Super Admin',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Reset All Employee Devices',
+      actionKh: 'ដោះសោឧបករណ៍បុគ្គលិកទាំងអស់ក្នុងស្ថាប័ន',
+      module: 'security',
+      details: `Reset trusted device bindings for all ${employees.length} employees.`,
+      detailsKh: `បានដោះសោឧបករណ៍សម្រាប់បុគ្គលិកទាំងអស់ចំនួន ${employees.length} នាក់។`,
+      status: 'warning',
+    });
+    setShowResetAllDevicesModal(false);
+    showToast(lang === 'km' ? 'បានដោះសោឧបករណ៍បុគ្គលិកទាំងអស់រួចរាល់!' : 'Reset all employee device bindings!');
   };
 
   return (
@@ -2017,6 +2073,310 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Anti-Fraud Security Policies & 1-Device Binding Controls */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2.5">
+                <span className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                  <ShieldCheck className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm font-battambang">
+                    {lang === 'km' ? 'គោលការណ៍សុវត្ថិភាពការពារ Fake Scanning & ចាក់សោឧបករណ៍ (Anti-Fraud Policy)' : 'Anti-Proxy & Device Hardware Security Policies'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {lang === 'km' ? 'ទប់ស្កាត់ការ Login លើឧបករណ៍អ្នកដទៃដើម្បីស្កេនជំនួស (1-Employee = 1-Device Lock)' : 'Strict 1-Device hardware binding preventing proxy attendance & account sharing'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Policy 1: Strict 1-Device Binding */}
+              <div className={`p-4 rounded-2xl border transition ${settingsForm.strictDeviceBinding !== false ? 'bg-indigo-50/60 border-indigo-200 ring-1 ring-indigo-300' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Smartphone className="w-4 h-4 text-indigo-600" />
+                    <span className="font-bold text-slate-800 text-xs font-battambang">
+                      {lang === 'km' ? 'ចាក់សោ ១ នាក់ = ១ ឧបករណ៍' : 'Strict 1-Device Binding'}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.strictDeviceBinding !== false}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, strictDeviceBinding: e.target.checked })}
+                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {lang === 'km'
+                    ? 'បុគ្គលិកអាចស្កេនបានតែលើទូរស័ព្ទផ្ទាល់ខ្លួនដែលបានចុះឈ្មោះប៉ុណ្ណោះ។ ការ Login លើទូរស័ព្ទមិត្តភក្តិដើម្បីស្កេនជំនួស ត្រូវបានបដិសេធដាច់ខាត។'
+                    : 'Employees can only punch from their personal registered phone. Logging into someone else\'s phone to scan for them is strictly blocked.'}
+                </p>
+              </div>
+
+              {/* Policy 2: Prevent Device Sharing */}
+              <div className={`p-4 rounded-2xl border transition ${settingsForm.preventDeviceSharing !== false ? 'bg-indigo-50/60 border-indigo-200 ring-1 ring-indigo-300' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Shield className="w-4 h-4 text-indigo-600" />
+                    <span className="font-bold text-slate-800 text-xs font-battambang">
+                      {lang === 'km' ? 'ទប់ស្កាត់ការប្រើទូរស័ព្ទរួមគ្នា' : 'Block Device Sharing'}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.preventDeviceSharing !== false}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, preventDeviceSharing: e.target.checked })}
+                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {lang === 'km'
+                    ? 'ការពារកុំឱ្យបុគ្គលិក ២ នាក់ ប្រើទូរស័ព្ទតែមួយដើម្បីស្កេនជំនួសគ្នាទៅវិញទៅមក (Anti-Buddy Punching)។'
+                    : 'Detects if two separate employees try using the exact same mobile device, blocking simultaneous proxy attendance.'}
+                </p>
+              </div>
+
+              {/* Policy 3: Selfie Verification */}
+              <div className={`p-4 rounded-2xl border transition ${settingsForm.enableSelfieVerification !== false ? 'bg-indigo-50/60 border-indigo-200 ring-1 ring-indigo-300' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Eye className="w-4 h-4 text-indigo-600" />
+                    <span className="font-bold text-slate-800 text-xs font-battambang">
+                      {lang === 'km' ? 'ថតរូបជាក់ស្តែងពេលស្កេន' : 'Live Camera Audit Snapshot'}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.enableSelfieVerification !== false}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, enableSelfieVerification: e.target.checked })}
+                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {lang === 'km'
+                    ? 'ថតរូបភាពផ្ទាល់ពីកាមេរ៉ាក្នុងពេលស្កេន ភ្ជាប់ជាមួយកំណត់ត្រាវត្តមាន ដើម្បីផ្ទៀងផ្ទាត់មុខអ្នកស្កេនជាក់ស្តែង។'
+                    : 'Snaps an authentic live camera photo on every QR punch, maintaining visual proof of the physical attendee.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Employee Device Management & Anti-Fraud Center */}
+          <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-800 font-battambang">
+                    {lang === 'km' ? 'ការគ្រប់គ្រងឧបករណ៍បុគ្គលិក & ដោះសោឧបករណ៍ (Device Management Hub)' : 'Staff Device Binding Management & Hardware Security'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {lang === 'km'
+                      ? 'មើលបញ្ជីទូរស័ព្ទដែលបានចាក់សោភ្ជាប់ជាមួយបុគ្គលិកម្នាក់ៗ និងដោះសោឧបករណ៍ឡើងវិញប្រសិនបើបុគ្គលិកប្តូរទូរស័ព្ទ'
+                      : 'View bound hardware devices per employee, monitor security locks, and reset binding for legitimate phone upgrades.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowResetAllDevicesModal(true)}
+                className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 transition cursor-pointer self-start sm:self-center font-battambang"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{lang === 'km' ? 'ដោះសោឧបករណ៍ទាំងអស់ (Reset All)' : 'Reset All Devices'}</span>
+              </button>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'ឧបករណ៍បានចាក់សោ' : 'Bound Devices'}</span>
+                <span className="text-xl font-black text-emerald-600 font-mono mt-0.5 block">
+                  {employees.filter(e => e.trustedDeviceId).length} / {employees.length}
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1 block font-hanuman">
+                  {Math.round((employees.filter(e => e.trustedDeviceId).length / (employees.length || 1)) * 100)}% {lang === 'km' ? 'បានភ្ជាប់សុវត្ថិភាព' : 'enrolled'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'រង់ចាំស្កេនលើកដំបូង' : 'Pending 1st Scan'}</span>
+                <span className="text-xl font-black text-amber-600 font-mono mt-0.5 block">
+                  {employees.filter(e => !e.trustedDeviceId).length}
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1 block font-hanuman">
+                  {lang === 'km' ? 'នឹងចាក់សោពេលស្កេន' : 'auto-binds on punch'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'ស្ថានភាពចាក់សោ ១-១' : 'Binding Policy'}</span>
+                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200 inline-block mt-1 font-mono">
+                  {settingsForm.strictDeviceBinding !== false ? 'STRICT LOCKED' : 'PERMISSIVE'}
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1 block font-hanuman">
+                  {lang === 'km' ? '១ នាក់ = ១ ឧបករណ៍' : '1 staff = 1 phone'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">{lang === 'km' ? 'ស្កេនខុសច្បាប់ត្រូវបានទប់ស្កាត់' : 'Proxy Scans Blocked'}</span>
+                <span className="text-xl font-black text-rose-600 font-mono mt-0.5 block">
+                  {auditLogs.filter(l => l.module === 'security' && l.status === 'alert').length}
+                </span>
+                <span className="text-[10px] text-slate-500 mt-1 block font-hanuman">
+                  {lang === 'km' ? 'ការពារសុវត្ថិភាព' : 'security alerts'}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="w-full sm:flex-1">
+                <input
+                  type="text"
+                  placeholder={lang === 'km' ? 'ស្វែងរកតាមឈ្មោះបុគ្គលិក, លេខកូដ, ឬឈ្មោះឧបករណ៍...' : 'Search by staff name, code, or device name...'}
+                  value={deviceSearchQuery}
+                  onChange={(e) => setDeviceSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="w-full sm:w-auto">
+                <select
+                  value={deviceBranchFilter}
+                  onChange={(e) => setDeviceBranchFilter(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700"
+                >
+                  <option value="all">{lang === 'km' ? 'គ្រប់សាខាទាំងអស់ (All Branches)' : 'All Branches'}</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{lang === 'km' ? b.nameKh : b.nameEn}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Employee Device Directory Table */}
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+              <table className="w-full text-left text-xs font-hanuman divide-y divide-slate-200">
+                <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold">
+                  <tr>
+                    <th className="px-4 py-3">{lang === 'km' ? 'បុគ្គលិក' : 'Employee'}</th>
+                    <th className="px-4 py-3">{lang === 'km' ? 'សាខា & ផ្នែក' : 'Branch & Dept'}</th>
+                    <th className="px-4 py-3">{lang === 'km' ? 'ឧបករណ៍ដែលបានចាក់សោ (Registered Hardware)' : 'Registered Device'}</th>
+                    <th className="px-4 py-3">{lang === 'km' ? 'ស្ថានភាពចាក់សោ' : 'Lock Status'}</th>
+                    <th className="px-4 py-3 text-right">{lang === 'km' ? 'សកម្មភាព' : 'Action'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {employees
+                    .filter(emp => {
+                      const matchQuery = 
+                        emp.nameKh.toLowerCase().includes(deviceSearchQuery.toLowerCase()) ||
+                        emp.nameEn.toLowerCase().includes(deviceSearchQuery.toLowerCase()) ||
+                        emp.code.toLowerCase().includes(deviceSearchQuery.toLowerCase()) ||
+                        (emp.trustedDeviceName && emp.trustedDeviceName.toLowerCase().includes(deviceSearchQuery.toLowerCase()));
+                      const matchBranch = deviceBranchFilter === 'all' || emp.branchId === deviceBranchFilter;
+                      return matchQuery && matchBranch;
+                    })
+                    .map(emp => {
+                      const empBranch = branches.find(b => b.id === emp.branchId);
+                      const isBound = !!emp.trustedDeviceId;
+                      return (
+                        <tr key={emp.id} className="hover:bg-slate-50/70 transition">
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center space-x-3">
+                              <img
+                                src={emp.avatar}
+                                alt={emp.nameEn}
+                                className="w-9 h-9 rounded-xl object-cover border border-slate-200 shrink-0"
+                              />
+                              <div>
+                                <h4 className="font-bold text-slate-800 text-xs font-battambang">
+                                  {lang === 'km' ? emp.nameKh : emp.nameEn}
+                                </h4>
+                                <span className="font-mono text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                                  {emp.code}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3.5">
+                            <span className="font-bold text-slate-700 block text-xs">
+                              {lang === 'km' ? empBranch?.nameKh : empBranch?.nameEn}
+                            </span>
+                            <span className="text-[10px] text-slate-400">{emp.department}</span>
+                          </td>
+
+                          <td className="px-4 py-3.5">
+                            {isBound ? (
+                              <div className="space-y-0.5">
+                                <div className="flex items-center space-x-1.5 font-bold text-slate-800 text-xs">
+                                  <Smartphone className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span className="font-mono text-emerald-950 font-bold">{emp.trustedDeviceName}</span>
+                                </div>
+                                <span className="text-[9px] text-slate-400 font-mono block truncate max-w-[200px]">
+                                  ID: {emp.trustedDeviceId}
+                                </span>
+                                {emp.trustedDeviceBoundAt && (
+                                  <span className="text-[9px] text-slate-500 block">
+                                    {lang === 'km' ? 'ភ្ជាប់នៅ:' : 'Bound:'} {new Date(emp.trustedDeviceBoundAt).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center space-x-1.5 text-amber-700 text-xs font-medium bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200 inline-flex">
+                                <Clock className="w-3.5 h-3.5 shrink-0" />
+                                <span>{lang === 'km' ? 'មិនទាន់ភ្ជាប់ (ចាក់សោស្វ័យប្រវត្តពេលស្កេន)' : 'Pending (Auto-binds on 1st punch)'}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3.5">
+                            {isBound ? (
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <Lock className="w-3 h-3" />
+                                <span>{lang === 'km' ? 'ចាក់សោសុវត្ថិភាព' : '1-Device Locked'}</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                <Unlock className="w-3 h-3" />
+                                <span>{lang === 'km' ? 'មិនទាន់ចាក់សោ' : 'Unbound'}</span>
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3.5 text-right">
+                            {isBound ? (
+                              <button
+                                type="button"
+                                onClick={() => setEmpToResetDevice(emp)}
+                                className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 transition inline-flex items-center space-x-1 cursor-pointer font-battambang"
+                                title="Reset device binding for employee"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>{lang === 'km' ? 'ដោះសោឧបករណ៍' : 'Reset Device'}</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">
+                                {lang === 'km' ? 'រួចរាល់សម្រាប់ស្កេន' : 'Ready'}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </form>
       )}
 
@@ -2257,6 +2617,113 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal: Confirm Reset Single Employee Device */}
+      {empToResetDevice && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200 text-left font-hanuman">
+            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+              <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800 font-battambang">
+                  {lang === 'km' ? 'ដោះសោឧបករណ៍បុគ្គលិក (Reset Device)' : 'Reset Employee Device Binding'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {lang === 'km' ? 'អនុញ្ញាតឱ្យបុគ្គលិកភ្ជាប់ទូរស័ព្ទថ្មីពេលស្កេនលើកក្រោយ' : 'Allow employee to rebind a new phone on their next scan'}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 text-xs">
+              <div className="flex items-center space-x-3">
+                <img
+                  src={empToResetDevice.avatar}
+                  alt={empToResetDevice.nameEn}
+                  className="w-10 h-10 rounded-xl object-cover border border-slate-200"
+                />
+                <div>
+                  <h4 className="font-bold text-slate-800 font-battambang">{empToResetDevice.nameKh} ({empToResetDevice.nameEn})</h4>
+                  <span className="font-mono text-indigo-600 font-bold">{empToResetDevice.code} • {empToResetDevice.department}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 space-y-1">
+                <span className="text-slate-500 block text-[11px]">{lang === 'km' ? 'ឧបករណ៍ដែលកំពុងចាក់សោបច្ចុប្បន្ន:' : 'Currently Bound Hardware:'}</span>
+                <span className="font-mono font-bold text-rose-700 block">{empToResetDevice.trustedDeviceName || 'Unknown Device'}</span>
+                <span className="font-mono text-[9px] text-slate-400 block truncate">ID: {empToResetDevice.trustedDeviceId}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {lang === 'km'
+                ? 'តើអ្នកប្រាកដជាចង់ដោះសោឧបករណ៍នេះដែរឬទេ? ប្រសិនបើដោះសោ បុគ្គលិកនឹងអាចយកទូរស័ព្ទថ្មីមកស្កេនដើម្បីចាក់សោស្វ័យប្រវត្តបាន។'
+                : 'Are you sure you want to reset this device binding? The employee will be able to enroll their new personal phone on their next QR attendance scan.'}
+            </p>
+
+            <div className="flex justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEmpToResetDevice(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer font-battambang"
+              >
+                {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResetSingleEmployeeDevice(empToResetDevice)}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-200 transition cursor-pointer font-battambang"
+              >
+                {lang === 'km' ? 'យល់ព្រមដោះសោ' : 'Confirm Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Reset All Devices */}
+      {showResetAllDevicesModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200 text-left font-hanuman">
+            <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+              <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800 font-battambang">
+                  {lang === 'km' ? 'ដោះសោឧបករណ៍បុគ្គលិកទាំងអស់' : 'Reset All Staff Devices'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {lang === 'km' ? 'ដោះសោឧបករណ៍សម្រាប់បុគ្គលិកគ្រប់រូបក្នុងស្ថាប័ន' : 'Clear all hardware device locks across the company'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {lang === 'km'
+                ? `តើអ្នកប្រាកដជាចង់ដោះសោឧបករណ៍សម្រាប់បុគ្គលិកទាំងអស់ចំនួន ${employees.length} នាក់ដែរឬទេ? បុគ្គលិកទាំងអស់នឹងត្រូវស្កេនដើម្បីចុះឈ្មោះឧបករណ៍ថ្មីឡើងវិញ។`
+                : `Are you sure you want to reset device locks for all ${employees.length} employees? Every staff member will be re-enrolled on their next scan.`}
+            </p>
+
+            <div className="flex justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowResetAllDevicesModal(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer font-battambang"
+              >
+                {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetAllDevices}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-200 transition cursor-pointer font-battambang"
+              >
+                {lang === 'km' ? 'យល់ព្រមដោះសោទាំងអស់' : 'Reset All Devices'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1097,6 +1097,8 @@ export const INITIAL_SYSTEM_SETTINGS: import('../types').SystemSettings = {
   autoCheckoutHours: 12,
   strictGeofenceEnforcement: true,
   enableSelfieVerification: true,
+  strictDeviceBinding: true,
+  preventDeviceSharing: true,
   enableAuditLogs: true,
   defaultLanguage: 'km',
   broadcastNoticeKh: '📢 សូមរំលឹកបុគ្គលិកគ្រប់សាខា៖ សូមចុះវត្តមានទាន់ម៉ោង និងរក្សាវិន័យការងារឱ្យបានខ្ជាប់ខ្ជួន។',

@@ -1763,7 +1763,7 @@ export default function App() {
   const pendingLeavesCount = leaveRequests.filter((r) => r.status === 'pending').length;
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] text-slate-800 flex flex-col font-['Kantumruy_Pro','Plus_Jakarta_Sans',sans-serif]">
+    <div className="min-h-screen bg-[#F1F5F9] text-slate-800 flex flex-col font-['Kantumruy_Pro','Plus_Jakarta_Sans',sans-serif] w-full max-w-full overflow-x-hidden">
       {/* Cloud Sync Overlay for Fresh Devices / Browsers */}
       {isCloudSyncLoading && (
         <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-900/95 backdrop-blur-md text-white px-4 text-center">
@@ -1804,7 +1804,7 @@ export default function App() {
       />
 
       {/* Main Content Layout with dynamic left margin for Sidebar */}
-      <div className={`flex-1 flex flex-col transition-all duration-300 ${
+      <div className={`flex-1 flex flex-col transition-all duration-300 min-w-0 w-full max-w-full overflow-x-hidden ${
         isSidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72'
       }`}>
         {/* 2. Top Navigation Header Bar */}
@@ -1885,6 +1885,9 @@ export default function App() {
               lang={lang}
               onUpdateBranchLocation={handleUpdateBranchLocation}
               onNavigateToDashboard={() => setActiveTab('dashboard')}
+              systemSettings={systemSettings}
+              onUpdateEmployee={handleUpdateEmployee}
+              onAddAuditLog={handleAddAuditLog}
             />
           )}
 
@@ -1988,6 +1991,7 @@ export default function App() {
               onResetSystem={handleResetSystem}
               onUpdateLeaveRequests={setLeaveRequests}
               onUpdateEmployeesList={setEmployees}
+              onUpdateEmployee={handleUpdateEmployee}
               isLiveSyncConnected={isLiveSyncConnected}
               onlinePeersCount={onlinePeersCount}
               connectedPeers={connectedPeers}

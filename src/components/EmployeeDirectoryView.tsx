@@ -22,7 +22,9 @@ import {
   Edit,
   Trash2,
   Image as ImageIcon,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Smartphone,
+  RotateCcw
 } from 'lucide-react';
 import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole } from '../types';
 import { INITIAL_BRANDING } from '../data/initialData';
@@ -499,6 +501,26 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 <div className="text-slate-500 flex items-center justify-between">
                   <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
                   <span className="font-mono text-slate-700 font-medium">{emp.phone}</span>
+                </div>
+
+                {/* Hardware Device Lock Status */}
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                  <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                    <Smartphone className="w-3 h-3 text-slate-400" />
+                    <span>{lang === 'km' ? 'ឧបករណ៍:' : 'Device:'}</span>
+                  </span>
+                  {emp.trustedDeviceId ? (
+                    <span 
+                      className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 truncate max-w-[140px]" 
+                      title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                    >
+                      🔒 {emp.trustedDeviceName || 'Bound Phone'}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
+                      {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
+                    </span>
+                  )}
                 </div>
               </div>
 
