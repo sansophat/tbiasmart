@@ -1,4 +1,4 @@
-export type BranchType = 'club' | 'warehouse' | 'cafe' | 'office' | string;
+export type BranchType = 'club' | 'warehouse' | 'cafe' | 'office' | 'gas_station' | 'boutique' | 'factory' | string;
 
 export interface BranchTypeConfig {
   id: string;
@@ -84,8 +84,12 @@ export interface Employee {
   trustedDeviceName?: string;     // Friendly device name (e.g. "iPhone 15 Pro (Safari Mobile)")
   trustedDeviceBoundAt?: string;  // ISO timestamp when device was bound
   deviceBindingLocked?: boolean;  // If true, scanning is strictly locked to trustedDeviceId
-  weeklyDayOff?: number;          // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat (Cafe staff have 1 weekday off)
+  weeklyDayOff?: number;          // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat, -1 = None / Rotating
   hasSundayRest?: boolean;        // Default true for standard staff; false for cafe shop / retail staff who work on Sunday
+  shiftStartTime?: string;        // Optional custom start time (e.g. "06:30")
+  shiftEndTime?: string;          // Optional custom end time (e.g. "14:30")
+  workingHoursText?: string;      // Formatted working hours (e.g. "06:30 - 14:30 (8h)")
+  scheduledDailyHours?: number;   // Daily planned work hours (e.g. 8.0, 8.5)
 }
 
 export interface Shift {
@@ -97,6 +101,11 @@ export interface Shift {
   gracePeriodMins: number; // e.g. 15 mins
   branchTypes: BranchType[];
   isOvernight?: boolean;
+  workHours?: number; // e.g. 8 or 8.5
+  shiftCategory?: 'morning' | 'afternoon' | 'full_time' | 'night' | 'office' | string;
+  description?: string;
+  descriptionKh?: string;
+  descriptionEn?: string;
 }
 
 export type AttendanceType = 'check_in' | 'check_out';
@@ -297,6 +306,7 @@ export interface SystemBackupData {
   systemSettings?: SystemSettings;
   adminProfile?: AuthUser;
   auditLogs?: AuditLogEntry[];
+  shifts?: Shift[];
 }
 
 export type SyncEventType =
@@ -305,6 +315,7 @@ export type SyncEventType =
   | 'SYSTEM_STATE_SYNC'
   | 'REQUEST_CANONICAL_STATE'
   | 'CANONICAL_STATE_RESPONSE'
+  | 'UPDATE_SHIFTS'
   | 'PUNCH_ATTENDANCE'
   | 'SUBMIT_LEAVE'
   | 'SUBMIT_LEAVE_REQUEST'

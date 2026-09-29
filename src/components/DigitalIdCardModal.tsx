@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { 
   X, 

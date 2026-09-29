@@ -33,6 +33,7 @@ import {
   Flame,
   Users,
   User,
+  MapPin,
   CheckCheck,
   Maximize2,
   Minimize2
@@ -47,6 +48,8 @@ import {
   exportTimesheetToPdf, 
   exportMergedSummaryToCsv,
   exportMergedSummaryToPdf,
+  exportRosterPrintSheetsToPdf,
+  renderSingleContainerToA4Pdf,
   TimesheetRow,
   EmployeeMergedSummary
 } from '../utils/reportExportUtils';
@@ -90,19 +93,30 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     return `${year}-${month}-${day}`;
   };
 
-  // Guarantees starting on the 1st of the month (e.g. 2026-09-01), never 30/31 of previous month!
+  // Guarantees starting on the 1st of the month (e.g. 2026-09-01)
   const getFirstDayOfMonth = (d: Date = new Date()): string => {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     return `${year}-${month}-01`;
   };
 
-  // Date Range Filtering
+  // Guarantees ending on the last day of the full month (30 or 31, and only 28/29 for February)
+  const getLastDayOfMonth = (d: Date = new Date()): string => {
+    const year = d.getFullYear();
+    const month = d.getMonth(); // 0-indexed: 0=Jan, 1=Feb, etc.
+    const lastDay = new Date(year, month + 1, 0).getDate(); // 28/29 for Feb, 30 or 31 for others
+    const mm = String(month + 1).padStart(2, '0');
+    const dd = String(lastDay).padStart(2, '0');
+    return `${year}-${mm}-${dd}`;
+  };
+
+  // Date Range Filtering (Default: Full month from 01 to 30/31, Feb 28/29)
   const todayStr = formatLocalDate(new Date());
   const firstDayOfMonth = getFirstDayOfMonth(new Date());
+  const lastDayOfMonth = getLastDayOfMonth(new Date());
 
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth);
-  const [endDate, setEndDate] = useState<string>(todayStr);
+  const [endDate, setEndDate] = useState<string>(lastDayOfMonth);
   const [selectedPreset, setSelectedPreset] = useState<string>('month');
 
   // Search & Status filters
@@ -118,6 +132,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [justActionedLeaveIds, setJustActionedLeaveIds] = useState<Set<string>>(new Set());
 
   // Interactive Filters inside the Timesheet & Roster Print Modal
+  const [printBranchFilter, setPrintBranchFilter] = useState<string>('all');
   const [printStaffFilter, setPrintStaffFilter] = useState<string>('all');
   const [printDepartmentFilter, setPrintDepartmentFilter] = useState<string>('all');
   const [printMonthYearCustom, setPrintMonthYearCustom] = useState<string>('');
@@ -190,7 +205,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   // Quick Date Preset Handler
-  const handleApplyPreset = (preset: 'today' | 'yesterday' | 'this_week' | 'month' | 'last_30') => {
+  const handleApplyPreset = (preset: 'today' | 'yesterday' | 'this_week' | 'month' | 'prev_month' | 'last_30') => {
     setSelectedPreset(preset);
     const now = new Date();
     if (preset === 'today') {
@@ -211,7 +226,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       setEndDate(todayStr);
     } else if (preset === 'month') {
       setStartDate(getFirstDayOfMonth(now));
-      setEndDate(todayStr);
+      setEndDate(getLastDayOfMonth(now));
+    } else if (preset === 'prev_month') {
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setStartDate(getFirstDayOfMonth(prev));
+      setEndDate(getLastDayOfMonth(prev));
     } else if (preset === 'last_30') {
       const past30 = new Date();
       past30.setDate(past30.getDate() - 30);
@@ -359,11 +378,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     return statusMatches;
   }, [leaveRequests, streamBranchFilter, streamStaffFilter, leaveCategoryFilter, leaveStatusFilter, justActionedLeaveIds, searchQuery]);
 
+  // Employees matching print modal filters (Branch & Department)
+  const availablePrintEmployees = useMemo(() => {
+    let list = employees;
+    if (printBranchFilter !== 'all') {
+      list = list.filter((e) => e.branchId === printBranchFilter);
+    }
+    if (printDepartmentFilter !== 'all') {
+      list = list.filter((e) => e.department && e.department.toLowerCase() === printDepartmentFilter.toLowerCase());
+    }
+    return list;
+  }, [employees, printBranchFilter, printDepartmentFilter]);
+
   // Group daily timesheet rows by employee for individual roster printing
   const printableStaffGroups = useMemo(() => {
     let targetEmps = employees;
-    if (selectedBranchFilter !== 'all') {
-      targetEmps = targetEmps.filter((e) => e.branchId === selectedBranchFilter);
+    // Uses printBranchFilter so print preview allows viewing all branches or selected branch
+    if (printBranchFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.branchId === printBranchFilter);
     }
     if (printStaffFilter !== 'all') {
       targetEmps = targetEmps.filter((e) => e.id === printStaffFilter || e.code === printStaffFilter);
@@ -386,6 +418,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
       const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
       const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
+      const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
+      const daysLeave = empRows.filter((r) => r.isLeave).length;
       const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
       const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
 
@@ -395,14 +429,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         summary: {
           totalWorkHours: totalWork,
           daysWorked,
+          daysOff,
+          daysLeave,
           lateDays,
           otDays,
         },
       };
     });
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
 
-  // Group printable staff by department so footer signature appears only ONCE per department
+  // Group printable staff by department so timesheets can be organized systematically
   const departmentStaffGroups = useMemo(() => {
     const map = new Map<string, typeof printableStaffGroups>();
     printableStaffGroups.forEach((group) => {
@@ -415,6 +451,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       staffList,
     }));
   }, [printableStaffGroups, printDepartmentFilter]);
+
+  // Merged summaries specifically for the Print Modal (honors printBranchFilter, printStaffFilter, printDepartmentFilter)
+  const printMergedSummaries = useMemo(() => {
+    let list = generateEmployeeMergedSummaries(
+      attendanceRecords,
+      employees,
+      branches,
+      startDate,
+      endDate,
+      printBranchFilter,
+      printStaffFilter,
+      leaveRequests
+    );
+    if (printDepartmentFilter !== 'all') {
+      list = list.filter((s) => s.department && s.department.toLowerCase() === printDepartmentFilter.toLowerCase());
+    }
+    return list;
+  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
 
   // Selected Branch Name
   const currentBranchObj = branches.find((b) => b.id === selectedBranchFilter);
@@ -436,13 +490,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     }
   };
 
-  // Export PDF Handler
-  const handleDownloadPdf = () => {
+  // Export PDF Handler with 100% Khmer font support
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const handleDownloadPdf = async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
     const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
-    if (timesheetViewMode === 'merged') {
-      exportMergedSummaryToPdf(filteredMergedSummaries, currentBranchTitle, dateRangeLabel, compName);
-    } else {
-      exportTimesheetToPdf(filteredTimesheetRows, currentBranchTitle, dateRangeLabel, compName);
+    try {
+      if (timesheetViewMode === 'merged') {
+        await exportMergedSummaryToPdf(filteredMergedSummaries, currentBranchTitle, dateRangeLabel, compName);
+      } else {
+        await exportTimesheetToPdf(filteredTimesheetRows, currentBranchTitle, dateRangeLabel, compName);
+      }
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
@@ -453,7 +516,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
     setTimeout(() => {
       branches.forEach((b, index) => {
-        setTimeout(() => {
+        setTimeout(async () => {
           if (mode === 'merged') {
             const branchSummaries = generateEmployeeMergedSummaries(
               attendanceRecords,
@@ -468,7 +531,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             if (format === 'csv') {
               exportMergedSummaryToCsv(branchSummaries, b.nameEn, dateRangeLabel);
             } else {
-              exportMergedSummaryToPdf(branchSummaries, b.nameEn, dateRangeLabel, compName);
+              await exportMergedSummaryToPdf(branchSummaries, b.nameKh || b.nameEn, dateRangeLabel, compName);
             }
           } else {
             const branchRows = generateDailyTimesheetRows(
@@ -484,15 +547,75 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             if (format === 'csv') {
               exportTimesheetToCsv(branchRows, b.nameEn, dateRangeLabel);
             } else {
-              exportTimesheetToPdf(branchRows, b.nameEn, dateRangeLabel, compName);
+              await exportTimesheetToPdf(branchRows, b.nameKh || b.nameEn, dateRangeLabel, compName);
             }
           }
-        }, index * 400);
+        }, index * 800);
       });
       setTimeout(() => {
         setIsExportingBatch(false);
-      }, branches.length * 400 + 500);
+      }, branches.length * 800 + 800);
     }, 200);
+  };
+
+  // Dedicated Print Modal Handlers: Supports both system print and direct PDF download
+  const [isExportingModalPdf, setIsExportingModalPdf] = useState(false);
+  const [printFeedback, setPrintFeedback] = useState<string | null>(null);
+
+  const handleDownloadPdfFromModal = async () => {
+    if (isExportingModalPdf) return;
+    setIsExportingModalPdf(true);
+    const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
+    const monthYearLabel = formatMonthYearHeader(startDate);
+    const branchObj = branches.find((b) => b.id === printBranchFilter);
+    const branchLabel = printBranchFilter === 'all' 
+      ? (branches.length > 0 ? (lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All Branches') : 'Main Branch')
+      : (branchObj ? (lang === 'km' ? `${branchObj.nameEn} (${branchObj.nameKh})` : branchObj.nameEn) : printBranchFilter);
+
+    try {
+      if (printPreviewType === 'detailed') {
+        await exportRosterPrintSheetsToPdf(
+          departmentStaffGroups,
+          branchLabel,
+          monthYearLabel,
+          `${startDate} ~ ${endDate}`,
+          compName
+        );
+      } else {
+        const container = document.getElementById('printable-timesheet-area');
+        if (container) {
+          await renderSingleContainerToA4Pdf(
+            container,
+            `Merged_Employee_Summary_${branchLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+          );
+        } else {
+          await exportMergedSummaryToPdf(
+            printMergedSummaries,
+            branchLabel,
+            `${startDate} ~ ${endDate}`,
+            compName
+          );
+        }
+      }
+      setPrintFeedback(
+        lang === 'km'
+          ? 'បានបង្កើត និងទាញយកឯកសារ PDF គាំទ្រពុម្ពអក្សរខ្មែរជោគជ័យ!'
+          : 'Official PDF with Khmer typography generated & downloaded successfully!'
+      );
+    } catch (err) {
+      console.error('Failed to export PDF from modal:', err);
+      setPrintFeedback(
+        lang === 'km'
+          ? 'មានបញ្ហាក្នុងការបង្កើត PDF។ សូមព្យាយាមម្តងទៀត។'
+          : 'Failed to generate PDF. Please try again.'
+      );
+    } finally {
+      setIsExportingModalPdf(false);
+    }
+  };
+
+  const handlePrintDocument = () => {
+    handleDownloadPdfFromModal();
   };
 
   const handleConfirmAction = () => {
@@ -572,16 +695,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </span>
           </button>
 
-          {/* PDF Download Button */}
+          {/* PDF Download Button with Khmer font support */}
           <button
             type="button"
+            disabled={isExportingPdf}
             onClick={handleDownloadPdf}
-            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer"
+            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer disabled:opacity-60"
             title={`Download PDF (${timesheetViewMode === 'merged' ? 'Merged Summary' : 'Detailed Timesheet'})`}
           >
-            <FileDown className="w-4 h-4" />
+            <FileDown className={`w-4 h-4 ${isExportingPdf ? 'animate-bounce' : ''}`} />
             <span>
-              {timesheetViewMode === 'merged'
+              {isExportingPdf
+                ? (lang === 'km' ? 'កំពុងបង្កើត PDF...' : 'Generating PDF...')
+                : timesheetViewMode === 'merged'
                 ? (lang === 'km' ? 'ទាញយក PDF (សង្ខេបផ្ដុំ)' : 'Export Merged PDF')
                 : (lang === 'km' ? 'ទាញយក PDF (លម្អិត)' : 'Export Detailed PDF')}
             </span>
@@ -644,6 +770,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setPrintStaffFilter('all');
+              setPrintDepartmentFilter('all');
+              setPrintBranchFilter(selectedBranchFilter);
               setPrintPreviewType('detailed');
               setShowPrintModal(true);
             }}
@@ -813,7 +942,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               type="button"
               onClick={() => handleApplyPreset('today')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                selectedPreset === 'today' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                selectedPreset === 'today' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {lang === 'km' ? 'ថ្ងៃនេះ' : 'Today'}
@@ -822,7 +951,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               type="button"
               onClick={() => handleApplyPreset('yesterday')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                selectedPreset === 'yesterday' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                selectedPreset === 'yesterday' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {lang === 'km' ? 'ម្សិលមិញ' : 'Yesterday'}
@@ -831,7 +960,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               type="button"
               onClick={() => handleApplyPreset('this_week')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                selectedPreset === 'this_week' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                selectedPreset === 'this_week' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {lang === 'km' ? 'សប្តាហ៍នេះ' : 'This Week'}
@@ -840,16 +969,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               type="button"
               onClick={() => handleApplyPreset('month')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                selectedPreset === 'month' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                selectedPreset === 'month' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {lang === 'km' ? 'ខែនេះ (Full Month)' : 'This Month'}
+              {lang === 'km' ? 'ខែនេះពេញ (1 ដល់ 30/31)' : 'Full Month (1-30/31)'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('prev_month')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                selectedPreset === 'prev_month' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {lang === 'km' ? 'ខែមុន' : 'Last Month'}
             </button>
             <button
               type="button"
               onClick={() => handleApplyPreset('last_30')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                selectedPreset === 'last_30' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                selectedPreset === 'last_30' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {lang === 'km' ? '៣០ ថ្ងៃ' : 'Last 30 Days'}
@@ -857,9 +995,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
 
-        {/* Bottom Filter Controls: Custom Start/End Date Pickers + Search Box */}
+        {/* Bottom Filter Controls: Month Picker + Custom Start/End Date Pickers + Search Box */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-          <div className="sm:col-span-3">
+          <div className="sm:col-span-2">
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+              {lang === 'km' ? 'ជ្រើសរើសខែពេញ:' : 'Select Month:'}
+            </label>
+            <input
+              type="month"
+              value={startDate && startDate.length >= 7 ? startDate.substring(0, 7) : ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val && val.includes('-')) {
+                  const [yyyy, mm] = val.split('-').map(Number);
+                  const firstDay = `${yyyy}-${String(mm).padStart(2, '0')}-01`;
+                  const lastDayNum = new Date(yyyy, mm, 0).getDate();
+                  const lastDay = `${yyyy}-${String(mm).padStart(2, '0')}-${String(lastDayNum).padStart(2, '0')}`;
+                  setStartDate(firstDay);
+                  setEndDate(lastDay);
+                  setSelectedPreset('month');
+                }
+              }}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
             <label className="block text-[11px] font-bold text-slate-600 mb-1">
               {lang === 'km' ? 'ចាប់ពីថ្ងៃ (Start Date):' : 'Start Date:'}
             </label>
@@ -870,11 +1031,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 setStartDate(e.target.value);
                 setSelectedPreset('custom');
               }}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
           </div>
 
-          <div className="sm:col-span-3">
+          <div className="sm:col-span-2">
             <label className="block text-[11px] font-bold text-slate-600 mb-1">
               {lang === 'km' ? 'រហូតដល់ថ្ងៃ (End Date):' : 'End Date:'}
             </label>
@@ -885,7 +1046,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 setEndDate(e.target.value);
                 setSelectedPreset('custom');
               }}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
           </div>
 
@@ -1139,6 +1300,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setPrintStaffFilter(summary.employeeId);
+                                setPrintBranchFilter('all');
+                                setPrintDepartmentFilter('all');
                                 setPrintPreviewType('detailed');
                                 setShowPrintModal(true);
                               }}
@@ -1270,6 +1433,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    setPrintStaffFilter('all');
+                    setPrintDepartmentFilter('all');
+                    setPrintBranchFilter(selectedBranchFilter);
                     setPrintPreviewType('detailed');
                     setShowPrintModal(true);
                   }}
@@ -1965,41 +2131,99 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {/* 5. In-Browser Official Timesheet & Roster Print Modal */}
       {/* ========================================================================= */}
       {showPrintModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          {/* Print CSS Stylesheet */}
+        <div className="print-modal-overlay fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          {/* Print CSS Stylesheet: Guarantees proper pagination, no clipped 92vh height, no duplicate pages */}
           <style>{`
             @media print {
               @page {
                 size: A4 landscape;
-                margin: 8mm;
+                margin: 6mm 6mm;
               }
-              body * {
-                visibility: hidden !important;
-              }
-              #printable-timesheet-area, #printable-timesheet-area * {
-                visibility: visible !important;
-              }
-              #printable-timesheet-area {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
+              html, body {
                 margin: 0 !important;
                 padding: 0 !important;
                 background: white !important;
                 color: black !important;
+                overflow: visible !important;
+                height: auto !important;
+                min-height: 100% !important;
+              }
+              body * {
+                visibility: hidden;
+              }
+              .print-modal-overlay,
+              .print-modal-overlay * {
+                visibility: visible !important;
+              }
+              .print-modal-overlay {
+                position: static !important;
+                inset: auto !important;
+                width: 100% !important;
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                display: block !important;
+                backdrop-filter: none !important;
+              }
+              .print-modal-card {
+                position: static !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+                box-shadow: none !important;
+                border: none !important;
+                border-radius: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                display: block !important;
+              }
+              #printable-timesheet-area {
+                position: static !important;
+                width: 100% !important;
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                display: block !important;
               }
               .no-print {
                 display: none !important;
               }
-              .page-break-after-staff {
+              .print-staff-sheet {
                 page-break-after: always !important;
                 break-after: page !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                display: block !important;
+                width: 100% !important;
+                margin-bottom: 0 !important;
+                padding-bottom: 0 !important;
+              }
+              .print-staff-sheet:last-child {
+                page-break-after: auto !important;
+                break-after: auto !important;
+              }
+              table {
+                border-collapse: collapse !important;
+                width: 100% !important;
+              }
+              thead {
+                display: table-header-group !important;
+              }
+              tr {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
               }
             }
           `}</style>
 
-          <div className="bg-white rounded-3xl max-w-6xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="print-modal-card bg-white rounded-3xl max-w-7xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
             {/* Modal Header & Interactive Filter Bar (Hidden when printed) */}
             <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
               <div className="flex items-center space-x-3">
@@ -2012,25 +2236,50 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </h3>
                   <p className="text-xs text-slate-500 font-medium">
                     {lang === 'km'
-                      ? 'កំណត់តម្រងតាមបុគ្គលិក ផ្នែក និងព្រីនទម្រង់ស្តង់ដារជាមួយ Header & ហត្ថលេខា'
-                      : 'Print for all staff or filter by staff with Date, Day of week, Staff ID and department header.'}
+                      ? 'ជ្រើសរើសសាខា បុគ្គលិក ផ្នែក និងព្រីនទម្រង់ពេញទំព័រ A4 Landscape ស្តង់ដារ'
+                      : 'Full-page A4 landscape print for all staff or filtered by branch, department, and staff member.'}
                   </p>
                 </div>
               </div>
 
               {/* Print Modal Filter Bar */}
-              <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Branch Filter Dropdown in Print Modal */}
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1.5 shadow-xs">
+                  <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'សាខា:' : 'Branch:'}</span>
+                  <select
+                    value={printBranchFilter}
+                    onChange={(e) => {
+                      setPrintBranchFilter(e.target.value);
+                      setPrintStaffFilter('all');
+                    }}
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[130px] cursor-pointer"
+                  >
+                    <option value="all">{lang === 'km' ? '🏢 គ្រប់សាខាទាំងអស់' : '🏢 All Branches'}</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* Staff Filter Dropdown */}
-                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1.5 shadow-xs">
                   <User className="w-3.5 h-3.5 text-indigo-600" />
                   <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'បុគ្គលិក:' : 'Staff:'}</span>
                   <select
                     value={printStaffFilter}
                     onChange={(e) => setPrintStaffFilter(e.target.value)}
-                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[170px]"
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[160px] cursor-pointer"
                   >
-                    <option value="all">{lang === 'km' ? `👥 បុគ្គលិកទាំងអស់ (${employees.length} នាក់)` : `👥 All Staff (${employees.length} Staff)`}</option>
-                    {employees.map((emp) => (
+                    <option value="all">
+                      {lang === 'km' 
+                        ? `👥 បុគ្គលិកទាំងអស់ (${availablePrintEmployees.length} នាក់)` 
+                        : `👥 All Staff (${availablePrintEmployees.length} Staff)`}
+                    </option>
+                    {availablePrintEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
                         {emp.code} - {emp.nameEn}
                       </option>
@@ -2039,13 +2288,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
 
                 {/* Department Filter Dropdown */}
-                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1.5 shadow-xs">
                   <Building2 className="w-3.5 h-3.5 text-indigo-600" />
                   <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'ផ្នែក:' : 'Dept:'}</span>
                   <select
                     value={printDepartmentFilter}
                     onChange={(e) => setPrintDepartmentFilter(e.target.value)}
-                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[150px]"
+                    className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none max-w-[130px] cursor-pointer"
                   >
                     <option value="all">{lang === 'km' ? '🏢 គ្រប់ផ្នែកទាំងអស់' : '🏢 All Departments'}</option>
                     {departmentsList.map((dept) => (
@@ -2057,9 +2306,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
 
                 {/* Month / Year Selector for Header */}
-                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs">
+                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1.5 shadow-xs">
                   <Calendar className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'ខែ/ឆ្នាំ:' : 'Month:'}</span>
+                  <span className="text-[11px] font-bold text-slate-600">{lang === 'km' ? 'ខែ:' : 'Month:'}</span>
                   <input
                     type="month"
                     value={
@@ -2106,110 +2355,164 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
 
                 {/* Action Buttons */}
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-200 transition cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>{lang === 'km' ? 'ព្រីនឯកសារ (Print)' : 'Print Document'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPrintModal(false)}
-                  className="p-2 rounded-xl text-slate-400 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
-                  title="Close Preview"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isExportingModalPdf}
+                    onClick={handlePrintDocument}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-200 transition cursor-pointer disabled:opacity-60"
+                    title="Save A4 Landscape PDF"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>
+                      {isExportingModalPdf
+                        ? (lang === 'km' ? 'កំពុងបង្កើត...' : 'Generating...')
+                        : (lang === 'km' ? 'រក្សាទុក PDF' : 'Save PDF')}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isExportingModalPdf}
+                    onClick={handleDownloadPdfFromModal}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-slate-300 transition cursor-pointer disabled:opacity-60"
+                    title="Download official A4 landscape PDF"
+                  >
+                    <FileDown className="w-4 h-4 text-emerald-400" />
+                    <span>
+                      {isExportingModalPdf
+                        ? (lang === 'km' ? 'កំពុងបង្កើត...' : 'Generating...')
+                        : (lang === 'km' ? 'ទាញយក PDF' : 'Download PDF')}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrintFeedback(null);
+                      setShowPrintModal(false);
+                    }}
+                    className="p-2 rounded-xl text-slate-400 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                    title="Close Preview"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Printable Body Content (Targeted by #printable-timesheet-area) */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-8 text-slate-800 font-sans" id="printable-timesheet-area">
-              {/* If preview type is 'detailed' and printing staff grouped by department */}
-              {printPreviewType === 'detailed' ? (
-                <div className="space-y-12">
-                  {departmentStaffGroups.map((deptGroup, dIdx) => {
-                    const deptLabel = deptGroup.department;
-                    const monthYearLabel = formatMonthYearHeader(startDate);
-                    const monthYearKhLabel = formatMonthYearKhHeader(startDate);
+            {/* Notification / Feedback Banner (Hidden when printed) */}
+            {printFeedback && (
+              <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2.5 text-xs text-indigo-900 font-medium flex items-center justify-between no-print animate-in fade-in duration-200">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>{printFeedback}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPrintFeedback(null)}
+                  className="text-indigo-400 hover:text-indigo-700 cursor-pointer ml-3"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
-                    return (
-                      <div
-                        key={`dept_group_${deptLabel}_${dIdx}`}
-                        className={`space-y-8 ${
-                          dIdx < departmentStaffGroups.length - 1 ? 'page-break-after-staff pb-10 border-b-2 border-dashed border-slate-300' : ''
-                        }`}
-                      >
-                        {/* Department Staff Tables */}
-                        <div className="space-y-8">
+            {/* Printable Body Content (Targeted by #printable-timesheet-area) */}
+            <div
+              className="p-4 sm:p-6 overflow-x-auto overflow-y-auto space-y-8 text-slate-800 font-sans"
+              id="printable-timesheet-area"
+              style={{ fontFamily: "'Kantumruy Pro', 'Battambang', 'Noto Sans Khmer', sans-serif" }}
+            >
+              {/* If preview type is 'detailed' (Individual Full Month Roster per Staff) */}
+              {printPreviewType === 'detailed' ? (
+                printableStaffGroups.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">
+                    <Users className="w-12 h-12 mx-auto text-slate-300 mb-2" />
+                    <p className="font-bold text-sm">
+                      {lang === 'km' ? 'មិនមានទិន្នន័យបុគ្គលិកត្រូវតាមលក្ខខណ្ឌនេះទេ' : 'No staff attendance records match the selected filters.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-10">
+                    {departmentStaffGroups.map((deptGroup, dIdx) => {
+                      const deptLabel = deptGroup.department;
+                      const monthYearLabel = formatMonthYearHeader(startDate);
+                      const monthYearKhLabel = formatMonthYearKhHeader(startDate);
+
+                      return (
+                        <div key={`dept_group_${deptLabel}_${dIdx}`} className="space-y-8">
                           {deptGroup.staffList.map((group, gIdx) => {
                             const emp = group.employee;
                             const branchObj = branches.find((b) => b.id === emp.branchId);
+                            const isLastSheet = dIdx === departmentStaffGroups.length - 1 && gIdx === deptGroup.staffList.length - 1;
 
                             return (
                               <div
                                 key={`print_staff_${emp.id}`}
-                                className="space-y-3 pb-6 border-b border-slate-200 last:border-b-0"
+                                className={`print-staff-sheet min-w-[1300px] w-full space-y-2.5 pb-6 mb-8 border-b-2 border-dashed border-slate-300 last:border-b-0 last:mb-0 ${
+                                  !isLastSheet ? 'page-break-after-staff' : ''
+                                }`}
+                                style={{ fontFamily: "'Kantumruy Pro', 'Battambang', 'Noto Sans Khmer', sans-serif" }}
                               >
-                                {/* Mandatory Header as explicitly requested:
-                                    Employee Attendance for [mm/yyyy] <br> for [department] */}
-                                <div className="text-center pb-3 border-b-2 border-slate-900">
+                                {/* Header: Company Name, Month, Department */}
+                                <div className="text-center pb-2.5 border-b-2 border-slate-900">
                                   <div className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-0.5">
                                     {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
                                   </div>
 
-                                  <h1 className="text-lg sm:text-xl font-black text-slate-900 uppercase tracking-tight font-sans leading-tight">
+                                  <h1 className="text-base sm:text-lg font-black text-slate-900 uppercase tracking-tight font-sans leading-tight">
                                     Employee Attendance for {monthYearLabel}
                                     <br />
                                     for {deptLabel}
                                   </h1>
 
-                                  <p className="text-[11px] font-bold text-slate-600 mt-0.5 font-battambang leading-tight">
+                                  <p className="text-[10.5px] font-bold text-slate-600 mt-0.5 font-battambang leading-tight">
                                     របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {monthYearKhLabel}
                                     <br />
                                     សម្រាប់ផ្នែក: {deptLabel}
                                   </p>
 
                                   {/* Employee Specific Sub-header Strip */}
-                                  <div className="grid grid-cols-3 gap-2 text-xs text-left bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200 mt-2 font-medium">
+                                  <div className="grid grid-cols-4 gap-2 text-xs text-left bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200 mt-2 font-medium">
                                     <div>
-                                      <span className="text-slate-500">{lang === 'km' ? 'ឈ្មោះបុគ្គលិក:' : 'Name:'}</span>{' '}
+                                      <span className="text-slate-500">{lang === 'km' ? 'ឈ្មោះ:' : 'Name:'}</span>{' '}
                                       <b className="text-slate-900">{emp.nameEn} ({emp.nameKh})</b>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">{lang === 'km' ? 'អត្តលេខ:' : 'Code:'}</span>{' '}
+                                      <b className="text-indigo-700 font-mono">{emp.code}</b>
                                     </div>
                                     <div>
                                       <span className="text-slate-500">{lang === 'km' ? 'សាខា:' : 'Branch:'}</span>{' '}
                                       <b className="text-slate-900">{branchObj?.nameEn || emp.branchId}</b>
                                     </div>
                                     <div>
-                                      <span className="text-slate-500">{lang === 'km' ? 'មុខតំណែង:' : 'Role:'}</span>{' '}
+                                      <span className="text-slate-500">{lang === 'km' ? 'តួនាទី:' : 'Role:'}</span>{' '}
                                       <b className="text-slate-900">{emp.position || emp.role}</b>
                                     </div>
                                   </div>
                                 </div>
 
-                                {/* Detailed Table with columns:
-                                    No, Date, Day of Week, Employee Name, Department, Branch, Time In, Time Out, Work Hours, Status, Remark
-                                    (Staff ID, OT Hours, and Signature columns deleted per user request; line spacing narrowed) */}
+                                {/* Detailed Table of Month Days scaled to full A4 landscape page */}
                                 <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
-                                  <table className="w-full text-left text-[9.5px] leading-tight border-collapse">
-                                    <thead className="bg-slate-800 text-white font-bold uppercase text-[8.5px] tracking-wider">
+                                  <table className="w-full text-left text-[10.5px] leading-snug border-collapse">
+                                    <thead className="bg-slate-800 text-white font-bold uppercase text-[9.5px] tracking-wider">
                                       <tr className="border-b border-slate-800">
-                                        <th className="py-1 px-1.5 w-7 text-center border-r border-slate-700">No</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Date</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Day of Week</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Employee Name</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Department</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Branch</th>
-                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Time In</th>
-                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Time Out</th>
-                                        <th className="py-1 px-1.5 text-center border-r border-slate-700">Work Hours</th>
-                                        <th className="py-1 px-2 border-r border-slate-700">Status</th>
-                                        <th className="py-1 px-2">Remark / Verification</th>
+                                        <th className="py-1.5 px-2 w-8 text-center border-r border-slate-700 whitespace-nowrap">No</th>
+                                        <th className="py-1.5 px-2.5 border-r border-slate-700 w-24 whitespace-nowrap">Date</th>
+                                        <th className="py-1.5 px-2.5 border-r border-slate-700 w-28 whitespace-nowrap">Day of Week</th>
+                                        <th className="py-1.5 px-3 border-r border-slate-700 whitespace-nowrap">Employee Name</th>
+                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Department</th>
+                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Branch</th>
+                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Time In</th>
+                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Time Out</th>
+                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Work Hours</th>
+                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Status</th>
+                                        <th className="py-1.5 px-3 whitespace-nowrap">Remark / Verification</th>
                                       </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-200 font-mono text-[9px] leading-tight">
+                                    <tbody className="divide-y divide-slate-200 font-sans text-[10px] leading-snug">
                                       {group.rows.map((r, rIdx) => {
                                         const isSun = r.isSunday;
                                         const isDayOff = r.isDayOff;
@@ -2225,26 +2528,26 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                             key={`row_${emp.id}_${r.date}_${rIdx}`}
                                             className={rowBg}
                                           >
-                                            <td className="py-0.5 px-1.5 text-center border-r border-slate-200">{rIdx + 1}</td>
-                                            <td className="py-0.5 px-2 font-bold border-r border-slate-200">{r.date}</td>
-                                            <td className="py-0.5 px-2 border-r border-slate-200 font-sans font-medium">{r.dayOfWeek}</td>
-                                            <td className="py-0.5 px-2 font-sans font-semibold border-r border-slate-200">{emp.nameEn}</td>
-                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">{emp.department || 'Operations'}</td>
-                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">{r.branchNameEn}</td>
-                                            <td className="py-0.5 px-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeIn}</td>
-                                            <td className="py-0.5 px-1.5 text-center font-bold text-slate-800 border-r border-slate-200">{r.timeOut}</td>
-                                            <td className="py-0.5 px-1.5 text-center font-bold text-indigo-700 border-r border-slate-200">{r.durationHours}</td>
-                                            <td className="py-0.5 px-2 font-sans border-r border-slate-200">
+                                            <td className="py-1 px-2 text-center border-r border-slate-200 whitespace-nowrap">{rIdx + 1}</td>
+                                            <td className="py-1 px-2.5 font-bold border-r border-slate-200 whitespace-nowrap">{r.date}</td>
+                                            <td className="py-1 px-2.5 border-r border-slate-200 font-sans font-medium whitespace-nowrap">{r.dayOfWeek}</td>
+                                            <td className="py-1 px-3 font-sans font-semibold border-r border-slate-200 whitespace-nowrap">{emp.nameEn} {emp.nameKh ? `(${emp.nameKh})` : ''}</td>
+                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{emp.department || 'Operations'}</td>
+                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{r.branchNameEn}</td>
+                                            <td className="py-1 px-2 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">{r.timeIn}</td>
+                                            <td className="py-1 px-2 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">{r.timeOut}</td>
+                                            <td className="py-1 px-2 text-center font-bold text-indigo-700 border-r border-slate-200 whitespace-nowrap">{r.durationHours}</td>
+                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">
                                               {isSun ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
                                                   SUNDAY REST
                                                 </span>
                                               ) : isDayOff ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                                                   DAY OFF (សម្រាក)
                                                 </span>
                                               ) : isLeave ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
                                                   LEAVE (ច្បាប់)
                                                 </span>
                                               ) : (
@@ -2253,21 +2556,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                                 </span>
                                               )}
                                             </td>
-                                            <td className="py-0.5 px-2 font-sans text-slate-600 text-[8.5px] leading-tight">{r.remark}</td>
+                                            <td className="py-1 px-3 font-sans text-slate-600 text-[9.5px] leading-tight whitespace-nowrap">{r.remark}</td>
                                           </tr>
                                         );
                                       })}
                                     </tbody>
-                                    <tfoot className="bg-slate-100 text-slate-800 font-bold text-[9px] border-t-2 border-slate-300">
-                                      <tr>
-                                        <td colSpan={8} className="py-1 px-2 text-right font-sans uppercase">
+                                    <tfoot className="bg-slate-100 text-slate-800 font-bold text-[10px] border-t-2 border-slate-300">
+                                      <tr className="whitespace-nowrap">
+                                        <td colSpan={8} className="py-1.5 px-3 text-right font-sans uppercase">
                                           {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
                                         </td>
-                                        <td className="py-1 px-1.5 text-center text-indigo-700 font-bold font-mono">
+                                        <td className="py-1.5 px-2 text-center text-indigo-700 font-bold font-mono text-[11px]">
                                           {group.summary.totalWorkHours}h
                                         </td>
-                                        <td colSpan={2} className="py-1 px-2 text-left text-slate-600 font-sans font-medium text-[8.5px]">
-                                          Days Present: {group.summary.daysWorked} | Late: {group.summary.lateDays}
+                                        <td colSpan={2} className="py-1.5 px-3 text-left text-slate-600 font-sans font-medium text-[9.5px]">
+                                          Days Present: {group.summary.daysWorked} | Days Off: {group.summary.daysOff} | Leave: {group.summary.daysLeave} | Late: {group.summary.lateDays}
                                         </td>
                                       </tr>
                                     </tfoot>
@@ -2277,116 +2580,83 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             );
                           })}
                         </div>
-
-                        {/* Official Sign-off Block for the Department (Only ONCE per department) */}
-                        <div className="pt-6 pb-2 border-t-2 border-slate-900 break-inside-avoid">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="text-xs font-black uppercase text-slate-900 tracking-wide font-sans">
-                              {lang === 'km' ? `ហត្ថលេខាបញ្ជាក់ប្រចាំផ្នែក: ${deptLabel}` : `Official Department Sign-off: ${deptLabel}`}
-                            </div>
-                            <div className="text-[10px] text-slate-500 font-medium">
-                              Department Staff Count: {deptGroup.staffList.length} • Period: {startDate} ~ {endDate}
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
-                            <div className="space-y-8">
-                              <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
-                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
-                            </div>
-                            <div className="space-y-8">
-                              <p className="font-bold text-slate-800">Verified By ({deptLabel} Manager)</p>
-                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Department Head Signature</div>
-                            </div>
-                            <div className="space-y-8">
-                              <p className="font-bold text-slate-800">Approved By (Managing Director)</p>
-                              <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Authorized Signature & Seal</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )
               ) : (
                 /* Merged Consolidated View with Required Header */
-                <div className="space-y-6">
-                  {/* Mandatory Header as explicitly requested */}
-                  <div className="text-center pb-4 border-b-2 border-slate-900">
-                    <div className="text-xs uppercase tracking-widest font-black text-slate-500 mb-1">
-                      {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
-                    </div>
-
-                    <h1 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight font-sans">
-                      Employee Attendance for {formatMonthYearHeader(startDate)}
-                      <br />
-                      for {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'All Departments'}
-                    </h1>
-
-                    <p className="text-xs font-bold text-slate-600 mt-1 font-battambang">
-                      របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {formatMonthYearKhHeader(startDate)}
-                      <br />
-                      សម្រាប់ផ្នែក: {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'គ្រប់ផ្នែកទាំងអស់'}
+                printMergedSummaries.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">
+                    <Users className="w-12 h-12 mx-auto text-slate-300 mb-2" />
+                    <p className="font-bold text-sm">
+                      {lang === 'km' ? 'មិនមានទិន្នន័យបុគ្គលិកត្រូវតាមលក្ខខណ្ឌនេះទេ' : 'No staff attendance records match the selected filters.'}
                     </p>
-
-                    <div className="flex items-center justify-between text-xs text-slate-600 font-medium mt-3 pt-2 border-t border-slate-200">
-                      <div><b>Branch:</b> {currentBranchTitle}</div>
-                      <div><b>Period:</b> {startDate} ~ {endDate}</div>
-                      <div><b>Staff Count:</b> {filteredMergedSummaries.length} Staff</div>
-                    </div>
                   </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Mandatory Header as explicitly requested */}
+                    <div className="text-center pb-4 border-b-2 border-slate-900">
+                      <div className="text-xs uppercase tracking-widest font-black text-slate-500 mb-1">
+                        {branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'ENTERPRISE ATTENDANCE & HR SUITE'}
+                      </div>
 
-                  {/* Consolidated Table: Staff ID, OT Hours, Signature deleted; Day Off and Leave added; Narrow spacing */}
-                  <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
-                    <table className="w-full text-left text-[10px] leading-tight">
-                      <thead className="bg-slate-800 text-white font-bold uppercase text-[8.5px]">
-                        <tr>
-                          <th className="py-1.5 px-2 w-8 text-center border-r border-slate-700">No</th>
-                          <th className="py-1.5 px-2 border-r border-slate-700">Employee Name</th>
-                          <th className="py-1.5 px-2 border-r border-slate-700">Department</th>
-                          <th className="py-1.5 px-2 border-r border-slate-700">Branch</th>
-                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Present Days</th>
-                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Days Off</th>
-                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Leave Days</th>
-                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Late Days</th>
-                          <th className="py-1.5 px-2 text-center border-r border-slate-700">Work Hours</th>
-                          <th className="py-1.5 px-2 text-center">Attendance Rate</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 font-mono text-[9.5px] leading-tight">
-                        {filteredMergedSummaries.map((s, sIdx) => (
-                          <tr key={`print_m_${s.employeeId}`} className={sIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                            <td className="py-1 px-2 text-center border-r border-slate-200">{sIdx + 1}</td>
-                            <td className="py-1 px-2 font-sans font-bold border-r border-slate-200">{s.nameEn} ({s.nameKh})</td>
-                            <td className="py-1 px-2 font-sans border-r border-slate-200">{s.department}</td>
-                            <td className="py-1 px-2 font-sans border-r border-slate-200">{s.branchNameEn}</td>
-                            <td className="py-1 px-2 text-center text-emerald-700 font-bold border-r border-slate-200">{s.daysPresent}</td>
-                            <td className="py-1 px-2 text-center text-amber-700 font-bold border-r border-slate-200">{s.daysOff}</td>
-                            <td className="py-1 px-2 text-center text-purple-700 font-bold border-r border-slate-200">{s.daysLeave}</td>
-                            <td className="py-1 px-2 text-center border-r border-slate-200">{s.daysLate}</td>
-                            <td className="py-1 px-2 text-center font-bold text-indigo-700 border-r border-slate-200">{s.totalWorkHours}h</td>
-                            <td className="py-1 px-2 text-center font-bold text-slate-800">{s.attendanceRate}%</td>
+                      <h1 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight font-sans">
+                        Employee Attendance for {formatMonthYearHeader(startDate)}
+                        <br />
+                        for {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'All Departments'}
+                      </h1>
+
+                      <p className="text-xs font-bold text-slate-600 mt-1 font-battambang">
+                        របាយការណ៍វត្តមានបុគ្គលិក ប្រចាំខែ {formatMonthYearKhHeader(startDate)}
+                        <br />
+                        សម្រាប់ផ្នែក: {printDepartmentFilter !== 'all' ? printDepartmentFilter : 'គ្រប់ផ្នែកទាំងអស់'}
+                      </p>
+
+                      <div className="flex items-center justify-between text-xs text-slate-600 font-medium mt-3 pt-2 border-t border-slate-200">
+                        <div><b>Branch:</b> {printBranchFilter === 'all' ? 'All Branches' : (branches.find(b => b.id === printBranchFilter)?.nameEn || printBranchFilter)}</div>
+                        <div><b>Period:</b> {startDate} ~ {endDate}</div>
+                        <div><b>Staff Count:</b> {printMergedSummaries.length} Staff</div>
+                      </div>
+                    </div>
+
+                    {/* Consolidated Table scaled to full A4 page width with large readable fonts */}
+                    <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
+                      <table className="w-full text-left text-[11px] leading-snug min-w-[1200px]">
+                        <thead className="bg-slate-800 text-white font-bold uppercase text-[10px]">
+                          <tr>
+                            <th className="py-2 px-3 w-10 text-center border-r border-slate-700 whitespace-nowrap">No</th>
+                            <th className="py-2 px-3 border-r border-slate-700 whitespace-nowrap">Employee Name</th>
+                            <th className="py-2 px-3 border-r border-slate-700 whitespace-nowrap">Department</th>
+                            <th className="py-2 px-3 border-r border-slate-700 whitespace-nowrap">Branch</th>
+                            <th className="py-2 px-3 text-center border-r border-slate-700 whitespace-nowrap">Present Days</th>
+                            <th className="py-2 px-3 text-center border-r border-slate-700 whitespace-nowrap">Days Off</th>
+                            <th className="py-2 px-3 text-center border-r border-slate-700 whitespace-nowrap">Leave Days</th>
+                            <th className="py-2 px-3 text-center border-r border-slate-700 whitespace-nowrap">Late Days</th>
+                            <th className="py-2 px-3 text-center border-r border-slate-700 whitespace-nowrap">Work Hours</th>
+                            <th className="py-2 px-3 text-center whitespace-nowrap">Attendance Rate</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 font-sans text-[10.5px] leading-snug">
+                          {printMergedSummaries.map((s, sIdx) => (
+                            <tr key={`print_m_${s.employeeId}`} className={sIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                              <td className="py-1.5 px-3 text-center border-r border-slate-200 font-bold whitespace-nowrap">{sIdx + 1}</td>
+                              <td className="py-1.5 px-3 font-sans font-bold border-r border-slate-200 whitespace-nowrap">{s.nameEn} ({s.nameKh})</td>
+                              <td className="py-1.5 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{s.department}</td>
+                              <td className="py-1.5 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{s.branchNameEn}</td>
+                              <td className="py-1.5 px-3 text-center text-emerald-700 font-bold border-r border-slate-200 whitespace-nowrap">{s.daysPresent}</td>
+                              <td className="py-1.5 px-3 text-center text-amber-700 font-bold border-r border-slate-200 whitespace-nowrap">{s.daysOff}</td>
+                              <td className="py-1.5 px-3 text-center text-purple-700 font-bold border-r border-slate-200 whitespace-nowrap">{s.daysLeave}</td>
+                              <td className="py-1.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">{s.daysLate}</td>
+                              <td className="py-1.5 px-3 text-center font-bold text-indigo-700 border-r border-slate-200 whitespace-nowrap">{s.totalWorkHours}h</td>
+                              <td className="py-1.5 px-3 text-center font-bold text-slate-800 whitespace-nowrap">{s.attendanceRate}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-
-                  {/* Sign-off Block for Consolidated Report (One for Department) */}
-                  <div className="pt-6 grid grid-cols-3 gap-6 text-center text-xs text-slate-600 font-medium">
-                    <div className="space-y-8">
-                      <p className="font-bold text-slate-800">Prepared By (HR Officer)</p>
-                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
-                    </div>
-                    <div className="space-y-8">
-                      <p className="font-bold text-slate-800">Checked By (Department Manager)</p>
-                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Date</div>
-                    </div>
-                    <div className="space-y-8">
-                      <p className="font-bold text-slate-800">Approved By (Managing Director)</p>
-                      <div className="border-t border-slate-400 pt-1 text-[11px] text-slate-500">Signature & Seal</div>
-                    </div>
-                  </div>
-                </div>
+                )
               )}
             </div>
           </div>

@@ -24,15 +24,23 @@ import {
   Image as ImageIcon,
   ArrowRightLeft,
   Smartphone,
-  RotateCcw
+  RotateCcw,
+  Fuel,
+  Sun,
+  Moon,
+  Flame,
+  Check,
+  AlertCircle
 } from 'lucide-react';
-import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole } from '../types';
-import { INITIAL_BRANDING } from '../data/initialData';
+import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole, Shift } from '../types';
+import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
-import { getEmployeeDayOffName } from '../utils/dayOffUtils';
+import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
 
 export const DEPARTMENT_OPTIONS = [
+  { id: 'dept_barista_cafe', nameKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)', nameEn: 'Barista & Coffee Service' },
+  { id: 'dept_gas_station', nameKh: 'ស្ថានីយប្រេងឥន្ធនៈ & សេវាកម្មចាក់ប្រេង (Gas Station)', nameEn: 'Gas Station & Fuel Services' },
   { id: 'dept_branch_mgmt', nameKh: 'គ្រប់គ្រងសាខា (Branch Management)', nameEn: 'Branch Management' },
   { id: 'dept_ops', nameKh: 'ប្រតិបត្តិការទូទៅ (Operations)', nameEn: 'Operations' },
   { id: 'dept_hr', nameKh: 'ធនធានមនុស្ស (Human Resources)', nameEn: 'Human Resources' },
@@ -50,7 +58,31 @@ export const ROLE_PRESETS: {
   defaultDeptEn: string;
   prefix: string;
   badgeClass: string;
+  defaultShiftId?: string;
+  defaultWeeklyDayOff?: number;
 }[] = [
+  {
+    roleType: 'employee',
+    titleKh: '☕ បារីស្តា / អ្នកឆុងកាហ្វេ (Barista)',
+    titleEn: 'Barista & Cafe Staff',
+    defaultDeptKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)',
+    defaultDeptEn: 'Barista & Coffee Service',
+    prefix: 'BAR',
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    defaultShiftId: 'shift_cafe_morning',
+    defaultWeeklyDayOff: 1, // Monday
+  },
+  {
+    roleType: 'employee',
+    titleKh: '⛽ បុគ្គលិកចាក់ប្រេង (Fuel Attendant)',
+    titleEn: 'Fuel Service Attendant',
+    defaultDeptKh: 'ស្ថានីយប្រេងឥន្ធនៈ & សេវាកម្មចាក់ប្រេង (Gas Station)',
+    defaultDeptEn: 'Gas Station & Fuel Services',
+    prefix: 'GAS',
+    badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+    defaultShiftId: 'shift_gas_morning',
+    defaultWeeklyDayOff: 2, // Tuesday
+  },
   {
     roleType: 'manager',
     titleKh: 'ប្រធានគ្រប់គ្រងសាខា (Branch Manager)',
@@ -59,6 +91,8 @@ export const ROLE_PRESETS: {
     defaultDeptEn: 'Branch Management',
     prefix: 'MGR',
     badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+    defaultShiftId: 'shift_office',
+    defaultWeeklyDayOff: 0,
   },
   {
     roleType: 'supervisor',
@@ -68,6 +102,8 @@ export const ROLE_PRESETS: {
     defaultDeptEn: 'Operations',
     prefix: 'SUP',
     badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
+    defaultShiftId: 'shift_gas_fulltime',
+    defaultWeeklyDayOff: 0,
   },
   {
     roleType: 'hr',
@@ -77,6 +113,8 @@ export const ROLE_PRESETS: {
     defaultDeptEn: 'Human Resources',
     prefix: 'HR',
     badgeClass: 'bg-teal-100 text-teal-800 border-teal-200',
+    defaultShiftId: 'shift_office',
+    defaultWeeklyDayOff: 0,
   },
   {
     roleType: 'employee',
@@ -86,6 +124,8 @@ export const ROLE_PRESETS: {
     defaultDeptEn: 'General Services',
     prefix: 'EMP',
     badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
+    defaultShiftId: 'shift_office',
+    defaultWeeklyDayOff: 0,
   },
 ];
 
@@ -93,10 +133,12 @@ interface EmployeeDirectoryViewProps {
   employees: Employee[];
   branches: Branch[];
   attendanceRecords: AttendanceRecord[];
+  shifts?: Shift[];
   onAddEmployee: (emp: Employee) => void;
   onUpdateEmployee?: (emp: Employee) => void;
   onDeleteEmployee?: (empId: string) => void;
   onOpenTransferModal?: (emp: Employee) => void;
+  onUpdateShifts?: (shifts: Shift[]) => void;
   lang: Language;
   branding?: CompanyBranding;
 }
@@ -107,16 +149,20 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   employees,
   branches,
   attendanceRecords,
+  shifts = INITIAL_SHIFTS,
   onAddEmployee,
   onUpdateEmployee,
   onDeleteEmployee,
   onOpenTransferModal,
+  onUpdateShifts,
   lang,
   branding = INITIAL_BRANDING,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('all');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
+  const [selectedShiftFilter, setSelectedShiftFilter] = useState('all');
+  const [selectedDayOffFilter, setSelectedDayOffFilter] = useState('all');
   const [selectedBadgeEmp, setSelectedBadgeEmp] = useState<Employee | null>(null);
   const [badgeQrUrl, setBadgeQrUrl] = useState<string>('');
   
@@ -124,19 +170,31 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingEmp, setEditingEmp] = useState<Employee | null>(null);
   const [photoEditEmp, setPhotoEditEmp] = useState<Employee | null>(null);
+  const [quickScheduleEmp, setQuickScheduleEmp] = useState<Employee | null>(null);
+
+  // Quick Schedule Form State
+  const [quickShiftId, setQuickShiftId] = useState<string>('shift_cafe_morning');
+  const [quickStartTime, setQuickStartTime] = useState<string>('06:30');
+  const [quickEndTime, setQuickEndTime] = useState<string>('14:30');
+  const [quickScheduledHours, setQuickScheduledHours] = useState<number>(8);
+  const [quickWeeklyDayOff, setQuickWeeklyDayOff] = useState<number>(1);
 
   // New Employee Form State
   const [newEmpRoleType, setNewEmpRoleType] = useState<UserRole>('employee');
   const [newEmpNameKh, setNewEmpNameKh] = useState('');
   const [newEmpNameEn, setNewEmpNameEn] = useState('');
   const [newEmpCode, setNewEmpCode] = useState(`EMP-${Math.floor(100 + Math.random() * 900)}`);
-  const [newEmpBranchId, setNewEmpBranchId] = useState(branches[0]?.id || 'br_office');
-  const [newEmpDeptKh, setNewEmpDeptKh] = useState(DEPARTMENT_OPTIONS[1].nameKh);
-  const [newEmpRoleKh, setNewEmpRoleKh] = useState('បុគ្គលិកទូទៅ');
+  const [newEmpBranchId, setNewEmpBranchId] = useState(branches[0]?.id || 'br_cafe_1');
+  const [newEmpDeptKh, setNewEmpDeptKh] = useState(DEPARTMENT_OPTIONS[0].nameKh);
+  const [newEmpRoleKh, setNewEmpRoleKh] = useState('បារីស្តា / អ្នកឆុងកាហ្វេ');
   const [newEmpPhone, setNewEmpPhone] = useState('012 345 678');
   const [newEmpPin, setNewEmpPin] = useState(String(Math.floor(1000 + Math.random() * 9000)));
   const [newEmpAvatar, setNewEmpAvatar] = useState(DEFAULT_AVATAR);
-  const [newEmpWeeklyDayOff, setNewEmpWeeklyDayOff] = useState<number>(0);
+  const [newEmpShiftId, setNewEmpShiftId] = useState<string>('shift_cafe_morning');
+  const [newEmpShiftStartTime, setNewEmpShiftStartTime] = useState<string>('06:30');
+  const [newEmpShiftEndTime, setNewEmpShiftEndTime] = useState<string>('14:30');
+  const [newEmpScheduledHours, setNewEmpScheduledHours] = useState<number>(8);
+  const [newEmpWeeklyDayOff, setNewEmpWeeklyDayOff] = useState<number>(1);
 
   // Edit Employee Form State
   const [editRoleType, setEditRoleType] = useState<UserRole>('employee');
@@ -149,7 +207,42 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [editPhone, setEditPhone] = useState('');
   const [editPin, setEditPin] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+  const [editShiftId, setEditShiftId] = useState<string>('shift_office');
+  const [editShiftStartTime, setEditShiftStartTime] = useState<string>('08:00');
+  const [editShiftEndTime, setEditShiftEndTime] = useState<string>('17:30');
+  const [editScheduledHours, setEditScheduledHours] = useState<number>(8.5);
   const [editWeeklyDayOff, setEditWeeklyDayOff] = useState<number>(0);
+
+  // Helper to apply shift preset to Add / Edit / Quick forms
+  const applyShiftToForm = (
+    shiftId: string,
+    target: 'add' | 'edit' | 'quick'
+  ) => {
+    const s = shifts.find((item) => item.id === shiftId);
+    if (!s) return;
+    const start = s.startTime;
+    const end = s.endTime;
+    const hours = s.workHours || 8;
+    const defDayOff = s.branchTypes?.includes('cafe') || s.branchTypes?.includes('gas_station') ? 1 : 0;
+
+    if (target === 'add') {
+      setNewEmpShiftId(s.id);
+      setNewEmpShiftStartTime(start);
+      setNewEmpShiftEndTime(end);
+      setNewEmpScheduledHours(hours);
+      setNewEmpWeeklyDayOff(defDayOff);
+    } else if (target === 'edit') {
+      setEditShiftId(s.id);
+      setEditShiftStartTime(start);
+      setEditShiftEndTime(end);
+      setEditScheduledHours(hours);
+    } else if (target === 'quick') {
+      setQuickShiftId(s.id);
+      setQuickStartTime(start);
+      setQuickEndTime(end);
+      setQuickScheduledHours(hours);
+    }
+  };
 
   // Handle Role preset quick selection in Add form
   const handleSelectAddRolePreset = (preset: typeof ROLE_PRESETS[0]) => {
@@ -157,6 +250,12 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setNewEmpRoleKh(lang === 'km' ? preset.titleKh : preset.titleEn);
     setNewEmpDeptKh(preset.defaultDeptKh);
     setNewEmpCode(`${preset.prefix}-${Math.floor(100 + Math.random() * 900)}`);
+    if (preset.defaultShiftId) {
+      applyShiftToForm(preset.defaultShiftId, 'add');
+    }
+    if (preset.defaultWeeklyDayOff !== undefined) {
+      setNewEmpWeeklyDayOff(preset.defaultWeeklyDayOff);
+    }
   };
 
   // Handle Role preset quick selection in Edit form
@@ -164,6 +263,12 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditRoleType(preset.roleType);
     setEditRoleKh(lang === 'km' ? preset.titleKh : preset.titleEn);
     setEditDeptKh(preset.defaultDeptKh);
+    if (preset.defaultShiftId) {
+      applyShiftToForm(preset.defaultShiftId, 'edit');
+    }
+    if (preset.defaultWeeklyDayOff !== undefined) {
+      setEditWeeklyDayOff(preset.defaultWeeklyDayOff);
+    }
   };
 
   // Generate Digital Badge QR
@@ -194,7 +299,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditNameEn(emp.nameEn);
     setEditCode(emp.code);
     setEditBranchId(emp.branchId);
-    setEditDeptKh(emp.departmentKh || DEPARTMENT_OPTIONS[1].nameKh);
+    setEditDeptKh(emp.departmentKh || DEPARTMENT_OPTIONS[0].nameKh);
     setEditRoleKh(emp.role);
     setEditRoleType(
       emp.roleType ||
@@ -206,11 +311,50 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditPhone(emp.phone);
     setEditPin(emp.pinCode || '1234');
     setEditAvatar(emp.avatar || DEFAULT_AVATAR);
+    setEditShiftId(emp.shiftId || 'shift_office');
+    const matchedShift = shifts.find((s) => s.id === emp.shiftId);
+    setEditShiftStartTime(emp.shiftStartTime || matchedShift?.startTime || '08:00');
+    setEditShiftEndTime(emp.shiftEndTime || matchedShift?.endTime || '17:30');
+    setEditScheduledHours(emp.scheduledDailyHours || matchedShift?.workHours || 8.5);
     setEditWeeklyDayOff(
       emp.weeklyDayOff !== undefined
         ? emp.weeklyDayOff
-        : (emp.hasSundayRest === false || emp.branchId?.includes('cafe') ? 1 : 0)
+        : (emp.hasSundayRest === false || isShiftBasedWorker(emp) ? 1 : 0)
     );
+  };
+
+  const handleOpenQuickSchedule = (emp: Employee) => {
+    setQuickScheduleEmp(emp);
+    const matchedShift = shifts.find((s) => s.id === emp.shiftId) || shifts[0];
+    setQuickShiftId(emp.shiftId || matchedShift?.id || 'shift_cafe_morning');
+    setQuickStartTime(emp.shiftStartTime || matchedShift?.startTime || '06:30');
+    setQuickEndTime(emp.shiftEndTime || matchedShift?.endTime || '14:30');
+    setQuickScheduledHours(emp.scheduledDailyHours || matchedShift?.workHours || 8);
+    setQuickWeeklyDayOff(
+      emp.weeklyDayOff !== undefined ? emp.weeklyDayOff : (isShiftBasedWorker(emp) ? 1 : 0)
+    );
+  };
+
+  const handleSaveQuickSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickScheduleEmp || !onUpdateEmployee) return;
+
+    const updated: Employee = {
+      ...quickScheduleEmp,
+      shiftId: quickShiftId,
+      shiftStartTime: quickStartTime,
+      shiftEndTime: quickEndTime,
+      scheduledDailyHours: Number(quickScheduledHours),
+      workingHoursText: `${quickStartTime} - ${quickEndTime} (${quickScheduledHours}h)`,
+      weeklyDayOff: quickWeeklyDayOff,
+      hasSundayRest: quickWeeklyDayOff === 0,
+    };
+
+    onUpdateEmployee(updated);
+    if (selectedBadgeEmp?.id === updated.id) {
+      setSelectedBadgeEmp(updated);
+    }
+    setQuickScheduleEmp(null);
   };
 
   const handleOpenPhotoEdit = (emp: Employee) => {
@@ -258,7 +402,11 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       role: newEmpRoleKh,
       roleKh: newEmpRoleKh,
       roleType: newEmpRoleType,
-      shiftId: 'shift_office',
+      shiftId: newEmpShiftId,
+      shiftStartTime: newEmpShiftStartTime,
+      shiftEndTime: newEmpShiftEndTime,
+      scheduledDailyHours: Number(newEmpScheduledHours),
+      workingHoursText: `${newEmpShiftStartTime} - ${newEmpShiftEndTime} (${newEmpScheduledHours}h)`,
       avatar: newEmpAvatar || DEFAULT_AVATAR,
       phone: newEmpPhone,
       email: `${newEmpNameEn.toLowerCase().replace(/\s+/g, '.')}@enterprise.com.kh`,
@@ -278,11 +426,11 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setNewEmpNameKh('');
     setNewEmpNameEn('');
     setNewEmpRoleType('employee');
-    setNewEmpRoleKh('បុគ្គលិកទូទៅ');
-    setNewEmpDeptKh(DEPARTMENT_OPTIONS[1].nameKh);
+    setNewEmpRoleKh('បារីស្តា / អ្នកឆុងកាហ្វេ');
+    setNewEmpDeptKh(DEPARTMENT_OPTIONS[0].nameKh);
     setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
     setNewEmpAvatar(DEFAULT_AVATAR);
-    setNewEmpWeeklyDayOff(0);
+    setNewEmpWeeklyDayOff(1);
   };
 
   const handleUpdateEmployeeSubmit = (e: React.FormEvent) => {
@@ -302,6 +450,11 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       role: editRoleKh,
       roleKh: editRoleKh,
       roleType: editRoleType,
+      shiftId: editShiftId,
+      shiftStartTime: editShiftStartTime,
+      shiftEndTime: editShiftEndTime,
+      scheduledDailyHours: Number(editScheduledHours),
+      workingHoursText: `${editShiftStartTime} - ${editShiftEndTime} (${editScheduledHours}h)`,
       phone: editPhone,
       pinCode: editPin,
       avatar: editAvatar || DEFAULT_AVATAR,
@@ -341,6 +494,14 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       (selectedRoleFilter === 'hr' && (emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស'))) ||
       (selectedRoleFilter === 'employee' && (emp.roleType === 'employee' || (!emp.role?.toLowerCase().includes('manager') && !emp.role?.toLowerCase().includes('supervisor') && !emp.role?.toLowerCase().includes('hr'))));
 
+    const matchesShift = selectedShiftFilter === 'all' || emp.shiftId === selectedShiftFilter;
+
+    const matchesDayOff =
+      selectedDayOffFilter === 'all' ||
+      (selectedDayOffFilter === 'rotating'
+        ? emp.weeklyDayOff === -1
+        : emp.weeklyDayOff === Number(selectedDayOffFilter));
+
     const matchesSearch =
       emp.nameKh.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.nameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -349,7 +510,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       emp.departmentKh?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       emp.phone.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesBranch && matchesRole && matchesSearch;
+    return matchesBranch && matchesRole && matchesShift && matchesDayOff && matchesSearch;
   });
 
   const getBranch = (branchId: string) => branches.find((b) => b.id === branchId);
@@ -392,7 +553,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
 
       {/* Filter and Search Controls */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-        <div className="sm:col-span-6 relative">
+        {/* Search Input */}
+        <div className="sm:col-span-12 lg:col-span-4 relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -403,14 +565,15 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           />
         </div>
 
-        <div className="sm:col-span-3">
+        {/* Branch Filter */}
+        <div className="sm:col-span-6 lg:col-span-2">
           <select
             value={selectedBranchFilter}
             onChange={(e) => setSelectedBranchFilter(e.target.value)}
             aria-label={lang === 'km' ? 'ជ្រើសរើសសាខា' : 'Filter by branch'}
             className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
           >
-            <option value="all">{lang === 'km' ? 'គ្រប់សាខាទាំងអស់ (All Branches)' : 'All Branches (7)'}</option>
+            <option value="all">{lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All Branches'}</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {lang === 'km' ? b.nameKh : b.nameEn}
@@ -419,18 +582,56 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           </select>
         </div>
 
-        <div className="sm:col-span-3">
+        {/* Role Filter */}
+        <div className="sm:col-span-6 lg:col-span-2">
           <select
             value={selectedRoleFilter}
             onChange={(e) => setSelectedRoleFilter(e.target.value)}
             aria-label={lang === 'km' ? 'ជ្រើសរើសតួនាទី' : 'Filter by role'}
             className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
           >
-            <option value="all">{lang === 'km' ? 'គ្រប់តួនាទី (All Roles)' : 'All Roles'}</option>
-            <option value="manager">{lang === 'km' ? '★ ប្រធានគ្រប់គ្រងសាខា (Branch Managers)' : '★ Branch Managers'}</option>
-            <option value="supervisor">{lang === 'km' ? '⏱ ប្រធានវេន (Shift Supervisors)' : '⏱ Shift Supervisors'}</option>
-            <option value="hr">{lang === 'km' ? '👥 ធនធានមនុស្ស (HR Officers)' : '👥 HR Officers'}</option>
-            <option value="employee">{lang === 'km' ? '👤 បុគ្គលិកទូទៅ (General Staff)' : '👤 General Staff'}</option>
+            <option value="all">{lang === 'km' ? 'គ្រប់តួនាទី' : 'All Roles'}</option>
+            <option value="manager">{lang === 'km' ? '★ ប្រធានសាខា' : '★ Managers'}</option>
+            <option value="supervisor">{lang === 'km' ? '⏱ ប្រធានវេន' : '⏱ Supervisors'}</option>
+            <option value="hr">{lang === 'km' ? '👥 ធនធានមនុស្ស' : '👥 HR Officers'}</option>
+            <option value="employee">{lang === 'km' ? '👤 បុគ្គលិកទូទៅ' : '👤 General Staff'}</option>
+          </select>
+        </div>
+
+        {/* Shift Filter */}
+        <div className="sm:col-span-6 lg:col-span-2">
+          <select
+            value={selectedShiftFilter}
+            onChange={(e) => setSelectedShiftFilter(e.target.value)}
+            aria-label={lang === 'km' ? 'ជ្រើសរើសវេន' : 'Filter by shift'}
+            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
+          >
+            <option value="all">{lang === 'km' ? 'គ្រប់វេនទាំងអស់' : 'All Shifts'}</option>
+            {shifts.map((s) => (
+              <option key={s.id} value={s.id}>
+                {lang === 'km' ? s.nameKh : s.nameEn}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Day Off Filter */}
+        <div className="sm:col-span-6 lg:col-span-2">
+          <select
+            value={selectedDayOffFilter}
+            onChange={(e) => setSelectedDayOffFilter(e.target.value)}
+            aria-label={lang === 'km' ? 'ជ្រើសរើសថ្ងៃឈប់' : 'Filter by day off'}
+            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
+          >
+            <option value="all">{lang === 'km' ? 'គ្រប់ថ្ងៃឈប់' : 'All Day Offs'}</option>
+            <option value="0">{lang === 'km' ? 'អាទិត្យ (Sun)' : 'Sunday'}</option>
+            <option value="1">{lang === 'km' ? 'ច័ន្ទ (Mon)' : 'Monday'}</option>
+            <option value="2">{lang === 'km' ? 'អង្គារ (Tue)' : 'Tuesday'}</option>
+            <option value="3">{lang === 'km' ? 'ពុធ (Wed)' : 'Wednesday'}</option>
+            <option value="4">{lang === 'km' ? 'ព្រហស្បតិ៍ (Thu)' : 'Thursday'}</option>
+            <option value="5">{lang === 'km' ? 'សុក្រ (Fri)' : 'Friday'}</option>
+            <option value="6">{lang === 'km' ? 'សៅរ៍ (Sat)' : 'Saturday'}</option>
+            <option value="rotating">{lang === 'km' ? 'វិលជុំ (Rotating)' : 'Rotating'}</option>
           </select>
         </div>
       </div>
@@ -442,6 +643,9 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
           const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
           const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+          const matchedShift = shifts.find((s) => s.id === emp.shiftId);
+          const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
+          const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
 
           return (
             <div
@@ -483,7 +687,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   <h4 className="text-sm font-bold text-slate-800 truncate mt-1">
                     {lang === 'km' ? emp.nameKh : emp.nameEn}
                   </h4>
-                  <div className="mt-1">
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                     <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
                       isManager
                         ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -499,6 +703,23 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 </div>
               </div>
 
+              {/* Shift & Schedule Badge */}
+              <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-100">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 shrink-0 ${shiftBadge.badgeBg} ${shiftBadge.badgeText} ${shiftBadge.badgeBorder}`}>
+                  {emp.shiftId?.includes('cafe') || emp.departmentKh?.includes('កាហ្វេ') ? (
+                    <Coffee className="w-3 h-3" />
+                  ) : emp.shiftId?.includes('gas') || emp.departmentKh?.includes('ប្រេង') ? (
+                    <Fuel className="w-3 h-3" />
+                  ) : (
+                    <Clock className="w-3 h-3" />
+                  )}
+                  <span>{matchedShift ? (lang === 'km' ? matchedShift.nameKh.split('(')[0] : matchedShift.nameEn.split('(')[0]) : shiftBadge.label}</span>
+                </span>
+                <span className="font-mono text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg truncate" title={workingHoursStr}>
+                  {workingHoursStr}
+                </span>
+              </div>
+
               {/* Branch Assignment Info */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] space-y-1.5">
                 <div className="text-slate-500 flex items-center justify-between">
@@ -509,7 +730,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 </div>
                 <div className="text-slate-500 flex items-center justify-between">
                   <span>{lang === 'km' ? 'ផ្នែក:' : 'Department:'}</span>
-                  <span className="text-slate-700 font-medium">{emp.departmentKh}</span>
+                  <span className="text-slate-700 font-medium truncate max-w-[140px]">{emp.departmentKh}</span>
                 </div>
                 <div className="text-slate-500 flex items-center justify-between">
                   <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
@@ -551,6 +772,16 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 >
                   <QrCode className="w-3.5 h-3.5" />
                   <span>{lang === 'km' ? 'កាត QR' : 'QR Badge'}</span>
+                </button>
+
+                {/* Quick Shift & Working Hours Button */}
+                <button
+                  onClick={() => handleOpenQuickSchedule(emp)}
+                  title={lang === 'km' ? 'កំណត់វេនការងារ និងម៉ោង' : 'Set shift & working hours'}
+                  className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition flex items-center gap-1"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span className="text-[11px] hidden sm:inline">{lang === 'km' ? 'វេន' : 'Shift'}</span>
                 </button>
 
                 {onOpenTransferModal && (
@@ -811,26 +1042,185 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
-                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off):'}</span>
-                  <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                    {lang === 'km' ? 'សម្រាប់ហាងកាហ្វេ / វេន' : 'Cafe & Shift Staff'}
+              {/* Shift & Working Hours Section */}
+              <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 text-indigo-900 font-bold text-xs">
+                    <Clock className="w-4 h-4 text-indigo-600" />
+                    <span>{lang === 'km' ? 'វេនការងារ & ម៉ោងបំពេញ (Work Shift & Hours)' : 'Work Shift & Working Hours'}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    {lang === 'km' ? 'បារីស្តា • ស្ថានីយប្រេង • ការិយាល័យ' : 'Barista • Gas Station • Office'}
                   </span>
-                </label>
-                <select
-                  value={editWeeklyDayOff}
-                  onChange={(e) => setEditWeeklyDayOff(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                >
-                  <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
-                  <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Monday [Cafe Shop Staff]'}</option>
-                  <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Tuesday [Cafe Shop Staff]'}</option>
-                  <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Wednesday [Cafe Shop Staff]'}</option>
-                  <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Thursday [Cafe Shop Staff]'}</option>
-                  <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Friday [Cafe Shop Staff]'}</option>
-                  <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Saturday [Cafe Shop Staff]'}</option>
-                </select>
+                </div>
+
+                {/* Quick 1-Click Shift Presets */}
+                <div>
+                  <label className="block text-[11px] text-slate-600 mb-1.5 font-bold">
+                    {lang === 'km' ? 'ជ្រើសរើសវេនរហ័ស (Quick Shift Presets):' : 'Quick Shift Presets:'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_morning', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_cafe_morning'
+                          ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ព្រឹក' : 'Barista Morning'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono">06:30-14:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_afternoon', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_cafe_afternoon'
+                          ? 'border-orange-600 bg-orange-50 text-orange-900 ring-1 ring-orange-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា រសៀល' : 'Barista Afternoon'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-800 font-mono">13:30-21:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_fulltime', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_cafe_fulltime'
+                          ? 'border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ពេញម៉ោង' : 'Barista Full-Time'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-teal-100 text-teal-800 font-mono">07:00-16:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_morning', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_gas_morning'
+                          ? 'border-amber-600 bg-amber-50 text-amber-900 ring-1 ring-amber-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ព្រឹក' : 'Gas Station AM'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-800 font-mono">06:00-14:00</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_afternoon', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_gas_afternoon'
+                          ? 'border-red-600 bg-red-50 text-red-900 ring-1 ring-red-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង រសៀល' : 'Gas Station PM'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-800 font-mono">14:00-22:00</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_fulltime', 'edit')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        editShiftId === 'shift_gas_fulltime'
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ពេញម៉ោង' : 'Gas Full-Time'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">07:00-16:30</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Shift Selector Dropdown */}
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'ជ្រើសរើសវេនការងារ (Shift):' : 'Select Work Shift:'}
+                  </label>
+                  <select
+                    value={editShiftId}
+                    onChange={(e) => applyShiftToForm(e.target.value, 'edit')}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {lang === 'km' ? s.nameKh : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Custom Hours Overrides */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងចូល (Start):' : 'Start Time:'}
+                    </label>
+                    <input
+                      type="time"
+                      value={editShiftStartTime}
+                      onChange={(e) => setEditShiftStartTime(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងចេញ (End):' : 'End Time:'}
+                    </label>
+                    <input
+                      type="time"
+                      value={editShiftEndTime}
+                      onChange={(e) => setEditShiftEndTime(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងសរុប (Hours):' : 'Daily Hours:'}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      max="16"
+                      value={editScheduledHours}
+                      onChange={(e) => setEditScheduledHours(Number(e.target.value))}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Weekly Day Off Dropdown */}
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                    <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off / Rotating):'}</span>
+                    <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                      {lang === 'km' ? 'បារីស្តា & ស្ថានីយប្រេង' : 'Cafe & Gas Station'}
+                    </span>
+                  </label>
+                  <select
+                    value={editWeeklyDayOff}
+                    onChange={(e) => setEditWeeklyDayOff(Number(e.target.value))}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  >
+                    <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
+                    <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Monday [Cafe Barista / Gas Station]'}</option>
+                    <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Tuesday [Cafe Barista / Gas Station]'}</option>
+                    <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Wednesday [Cafe Barista / Gas Station]'}</option>
+                    <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Thursday [Cafe Barista / Gas Station]'}</option>
+                    <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Friday [Cafe Barista / Gas Station]'}</option>
+                    <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Saturday [Cafe Barista / Gas Station]'}</option>
+                    <option value={-1}>{lang === 'km' ? '🔄 វេនវិលជុំ (Rotating / No Fixed Day Off)' : '🔄 Rotating / No Fixed Day Off'}</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">
@@ -1023,26 +1413,185 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
-                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off):'}</span>
-                  <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                    {lang === 'km' ? 'សម្រាប់ហាងកាហ្វេ / វេន' : 'Cafe & Shift Staff'}
+              {/* Shift & Working Hours Section */}
+              <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 text-indigo-900 font-bold text-xs">
+                    <Clock className="w-4 h-4 text-indigo-600" />
+                    <span>{lang === 'km' ? 'វេនការងារ & ម៉ោងបំពេញ (Work Shift & Hours)' : 'Work Shift & Working Hours'}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    {lang === 'km' ? 'បារីស្តា • ស្ថានីយប្រេង • ការិយាល័យ' : 'Barista • Gas Station • Office'}
                   </span>
-                </label>
-                <select
-                  value={newEmpWeeklyDayOff}
-                  onChange={(e) => setNewEmpWeeklyDayOff(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                >
-                  <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
-                  <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Monday [Cafe Shop Staff]'}</option>
-                  <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Tuesday [Cafe Shop Staff]'}</option>
-                  <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Wednesday [Cafe Shop Staff]'}</option>
-                  <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Thursday [Cafe Shop Staff]'}</option>
-                  <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Friday [Cafe Shop Staff]'}</option>
-                  <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / វេន]' : '☕ Saturday [Cafe Shop Staff]'}</option>
-                </select>
+                </div>
+
+                {/* Quick 1-Click Shift Presets */}
+                <div>
+                  <label className="block text-[11px] text-slate-600 mb-1.5 font-bold">
+                    {lang === 'km' ? 'ជ្រើសរើសវេនរហ័ស (Quick Shift Presets):' : 'Quick Shift Presets:'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_morning', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_cafe_morning'
+                          ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ព្រឹក' : 'Barista Morning'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono">06:30-14:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_afternoon', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_cafe_afternoon'
+                          ? 'border-orange-600 bg-orange-50 text-orange-900 ring-1 ring-orange-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា រសៀល' : 'Barista Afternoon'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-800 font-mono">13:30-21:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_cafe_fulltime', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_cafe_fulltime'
+                          ? 'border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ពេញម៉ោង' : 'Barista Full-Time'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-teal-100 text-teal-800 font-mono">07:00-16:30</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_morning', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_gas_morning'
+                          ? 'border-amber-600 bg-amber-50 text-amber-900 ring-1 ring-amber-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ព្រឹក' : 'Gas Station AM'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-800 font-mono">06:00-14:00</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_afternoon', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_gas_afternoon'
+                          ? 'border-red-600 bg-red-50 text-red-900 ring-1 ring-red-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង រសៀល' : 'Gas Station PM'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-800 font-mono">14:00-22:00</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyShiftToForm('shift_gas_fulltime', 'add')}
+                      className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                        newEmpShiftId === 'shift_gas_fulltime'
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500'
+                          : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ពេញម៉ោង' : 'Gas Full-Time'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">07:00-16:30</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Shift Selector Dropdown */}
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'ជ្រើសរើសវេនការងារ (Shift):' : 'Select Work Shift:'}
+                  </label>
+                  <select
+                    value={newEmpShiftId}
+                    onChange={(e) => applyShiftToForm(e.target.value, 'add')}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {lang === 'km' ? s.nameKh : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Custom Hours Overrides */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងចូល (Start):' : 'Start Time:'}
+                    </label>
+                    <input
+                      type="time"
+                      value={newEmpShiftStartTime}
+                      onChange={(e) => setNewEmpShiftStartTime(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងចេញ (End):' : 'End Time:'}
+                    </label>
+                    <input
+                      type="time"
+                      value={newEmpShiftEndTime}
+                      onChange={(e) => setNewEmpShiftEndTime(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ម៉ោងសរុប (Hours):' : 'Daily Hours:'}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      max="16"
+                      value={newEmpScheduledHours}
+                      onChange={(e) => setNewEmpScheduledHours(Number(e.target.value))}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Weekly Day Off Dropdown */}
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                    <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off / Rotating):'}</span>
+                    <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                      {lang === 'km' ? 'បារីស្តា & ស្ថានីយប្រេង' : 'Cafe & Gas Station'}
+                    </span>
+                  </label>
+                  <select
+                    value={newEmpWeeklyDayOff}
+                    onChange={(e) => setNewEmpWeeklyDayOff(Number(e.target.value))}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  >
+                    <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
+                    <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Monday [Cafe Barista / Gas Station]'}</option>
+                    <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Tuesday [Cafe Barista / Gas Station]'}</option>
+                    <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Wednesday [Cafe Barista / Gas Station]'}</option>
+                    <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Thursday [Cafe Barista / Gas Station]'}</option>
+                    <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Friday [Cafe Barista / Gas Station]'}</option>
+                    <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Saturday [Cafe Barista / Gas Station]'}</option>
+                    <option value={-1}>{lang === 'km' ? '🔄 វេនវិលជុំ (Rotating / No Fixed Day Off)' : '🔄 Rotating / No Fixed Day Off'}</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">
@@ -1058,6 +1607,218 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-200 transition"
                 >
                   {lang === 'km' ? 'រក្សាទុក' : 'Save Employee'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated Quick Shift & Working Hours Modal */}
+      {quickScheduleEmp && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm sm:text-base">
+                    {lang === 'km' ? 'កំណត់វេនការងារ & ម៉ោងបំពេញ' : 'Set Work Shift, Hours & Day Off'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {quickScheduleEmp.nameKh || quickScheduleEmp.nameEn} ({quickScheduleEmp.code})
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setQuickScheduleEmp(null)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveQuickSchedule} className="space-y-4 text-xs">
+              {/* Quick Shift Presets */}
+              <div>
+                <label className="block text-[11px] text-slate-600 mb-1.5 font-bold">
+                  {lang === 'km' ? 'ជ្រើសរើសវេនរហ័ស (Quick Shift Presets):' : 'Quick Shift Presets:'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_cafe_morning', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_cafe_morning'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ព្រឹក' : 'Barista Morning'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono">06:30-14:30</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_cafe_afternoon', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_cafe_afternoon'
+                        ? 'border-orange-600 bg-orange-50 text-orange-900 ring-1 ring-orange-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា រសៀល' : 'Barista Afternoon'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-orange-100 text-orange-800 font-mono">13:30-21:30</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_cafe_fulltime', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_cafe_fulltime'
+                        ? 'border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">☕ {lang === 'km' ? 'បារីស្តា ពេញម៉ោង' : 'Barista Full-Time'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-teal-100 text-teal-800 font-mono">07:00-16:30</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_gas_morning', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_gas_morning'
+                        ? 'border-amber-600 bg-amber-50 text-amber-900 ring-1 ring-amber-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ព្រឹក' : 'Gas Station AM'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-800 font-mono">06:00-14:00</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_gas_afternoon', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_gas_afternoon'
+                        ? 'border-red-600 bg-red-50 text-red-900 ring-1 ring-red-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង រសៀល' : 'Gas Station PM'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-800 font-mono">14:00-22:00</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyShiftToForm('shift_gas_fulltime', 'quick')}
+                    className={`p-1.5 rounded-xl border text-left flex items-center justify-between text-[11px] font-semibold transition cursor-pointer ${
+                      quickShiftId === 'shift_gas_fulltime'
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500'
+                        : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">⛽ {lang === 'km' ? 'ស្ថានីយប្រេង ពេញម៉ោង' : 'Gas Full-Time'}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">07:00-16:30</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Shift Selector */}
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold">
+                  {lang === 'km' ? 'ជ្រើសរើសវេនការងារ (Shift):' : 'Select Work Shift:'}
+                </label>
+                <select
+                  value={quickShiftId}
+                  onChange={(e) => applyShiftToForm(e.target.value, 'quick')}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  {shifts.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {lang === 'km' ? s.nameKh : s.nameEn}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Working Hours Input */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'ម៉ោងចូល (Start):' : 'Start Time:'}
+                  </label>
+                  <input
+                    type="time"
+                    value={quickStartTime}
+                    onChange={(e) => setQuickStartTime(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'ម៉ោងចេញ (End):' : 'End Time:'}
+                  </label>
+                  <input
+                    type="time"
+                    value={quickEndTime}
+                    onChange={(e) => setQuickEndTime(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">
+                    {lang === 'km' ? 'ម៉ោងសរុប (Hours):' : 'Daily Hours:'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    max="16"
+                    value={quickScheduledHours}
+                    onChange={(e) => setQuickScheduledHours(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Weekly Day Off */}
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍ (Weekly Day Off):' : 'Weekly Day Off (1 Day Off / Rotating):'}</span>
+                  <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                    {lang === 'km' ? 'បារីស្តា & ស្ថានីយប្រេង' : 'Cafe & Gas Station'}
+                  </span>
+                </label>
+                <select
+                  value={quickWeeklyDayOff}
+                  onChange={(e) => setQuickWeeklyDayOff(Number(e.target.value))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value={0}>{lang === 'km' ? '🔴 ថ្ងៃអាទិត្យ (Sunday) [ការិយាល័យ / ឃ្លាំង]' : '🔴 Sunday [Office / Warehouse]'}</option>
+                  <option value={1}>{lang === 'km' ? '☕ ថ្ងៃច័ន្ទ (Monday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Monday [Cafe Barista / Gas Station]'}</option>
+                  <option value={2}>{lang === 'km' ? '☕ ថ្ងៃអង្គារ (Tuesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Tuesday [Cafe Barista / Gas Station]'}</option>
+                  <option value={3}>{lang === 'km' ? '☕ ថ្ងៃពុធ (Wednesday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Wednesday [Cafe Barista / Gas Station]'}</option>
+                  <option value={4}>{lang === 'km' ? '☕ ថ្ងៃព្រហស្បតិ៍ (Thursday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Thursday [Cafe Barista / Gas Station]'}</option>
+                  <option value={5}>{lang === 'km' ? '☕ ថ្ងៃសុក្រ (Friday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Friday [Cafe Barista / Gas Station]'}</option>
+                  <option value={6}>{lang === 'km' ? '☕ ថ្ងៃសៅរ៍ (Saturday) [បុគ្គលិកកាហ្វេ / បារីស្តា / ស្ថានីយ]' : '☕ Saturday [Cafe Barista / Gas Station]'}</option>
+                  <option value={-1}>{lang === 'km' ? '🔄 វេនវិលជុំ (Rotating / No Fixed Day Off)' : '🔄 Rotating / No Fixed Day Off'}</option>
+                </select>
+              </div>
+
+              <div className="flex space-x-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setQuickScheduleEmp(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition"
+                >
+                  {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold shadow-md shadow-purple-200 transition"
+                >
+                  {lang === 'km' ? 'រក្សាទុកវេន & ម៉ោង' : 'Save Shift & Schedule'}
                 </button>
               </div>
             </form>

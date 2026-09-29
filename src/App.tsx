@@ -14,13 +14,15 @@ import {
   INITIAL_BRANDING,
   INITIAL_ROLE_PERMISSIONS,
   INITIAL_SYSTEM_SETTINGS,
-  INITIAL_AUDIT_LOGS
+  INITIAL_AUDIT_LOGS,
+  INITIAL_SHIFTS
 } from './data/initialData';
 import { DEFAULT_AUTH_USER } from './data/authUsers';
 import { 
   Branch, 
   BranchTypeConfig,
   Employee, 
+  Shift,
   AttendanceRecord, 
   LeaveRequest, 
   UserGeoLocation, 
@@ -176,6 +178,12 @@ export default function App() {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
     const saved = localStorage.getItem('attend_system_settings');
     return saved ? JSON.parse(saved) : INITIAL_SYSTEM_SETTINGS;
+  });
+
+  // Working Shifts State (Barista, Gas Station, Office, Warehouse)
+  const [shifts, setShifts] = useState<Shift[]>(() => {
+    const saved = localStorage.getItem('attend_shifts');
+    return saved ? JSON.parse(saved) : INITIAL_SHIFTS;
   });
 
   // Administrative Audit Logs
@@ -967,6 +975,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('attend_admin_profile', JSON.stringify(adminProfile));
   }, [adminProfile]);
+
+  useEffect(() => {
+    localStorage.setItem('attend_shifts', JSON.stringify(shifts));
+  }, [shifts]);
 
   // Automatically sync any local modifications to Firebase Cloud Firestore
   useEffect(() => {
@@ -1938,6 +1950,8 @@ export default function App() {
               employees={employees}
               branches={branches}
               attendanceRecords={attendanceRecords}
+              shifts={shifts}
+              onUpdateShifts={setShifts}
               onAddEmployee={handleAddEmployee}
               onUpdateEmployee={handleUpdateEmployee}
               onDeleteEmployee={handleDeleteEmployee}
@@ -2007,6 +2021,8 @@ export default function App() {
               leaveRequests={leaveRequests}
               onUpdateLeaveStatus={handleUpdateLeaveStatus}
               transferRecords={transferRecords}
+              shifts={shifts}
+              onUpdateShifts={setShifts}
               onRestoreBackup={handleRestoreBackup}
               onResetSystem={handleResetSystem}
               onUpdateLeaveRequests={setLeaveRequests}

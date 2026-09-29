@@ -49,7 +49,11 @@ import {
   Monitor,
   ExternalLink,
   LayoutGrid,
-  Type
+  Type,
+  Fuel,
+  Sun,
+  Moon,
+  X
 } from 'lucide-react';
 import { 
   Branch, 
@@ -65,14 +69,17 @@ import {
   BranchTransferRecord,
   SystemBackupData,
   ConnectedPeer,
-  AuthUser
+  AuthUser,
+  Shift
 } from '../types';
+import { INITIAL_SHIFTS } from '../data/initialData';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { BackupRestorePanel } from './BackupRestorePanel';
 import { updateDynamicAppBranding } from '../utils/pwaBrandUtils';
 import { KhmerTypographySettings } from './KhmerTypographySettings';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
+import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge } from '../utils/dayOffUtils';
 
 interface AdminSettingsViewProps {
   branches: Branch[];
@@ -95,7 +102,9 @@ interface AdminSettingsViewProps {
   leaveRequests?: LeaveRequest[];
   onUpdateLeaveStatus?: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
   transferRecords?: BranchTransferRecord[];
-  initialActiveTab?: 'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
+  shifts?: Shift[];
+  onUpdateShifts?: (shifts: Shift[]) => void;
+  initialActiveTab?: 'branches' | 'shifts' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
   onRestoreBackup?: (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => void;
   onResetSystem?: (type: 'demo_seed' | 'clean_fresh') => void;
   onUpdateLeaveRequests?: (leaves: LeaveRequest[]) => void;
@@ -155,6 +164,8 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   leaveRequests = [],
   onUpdateLeaveStatus,
   transferRecords = [],
+  shifts = INITIAL_SHIFTS,
+  onUpdateShifts,
   initialActiveTab,
   onRestoreBackup = () => {},
   onResetSystem = () => {},
@@ -166,9 +177,26 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   connectedPeers = [],
   lang,
 }) => {
-  const [activeTab, setActiveTab] = useState<'branches' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup'>(
+  const [activeTab, setActiveTab] = useState<'branches' | 'shifts' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup'>(
     initialActiveTab || 'branches'
   );
+
+  // Shift Management State
+  const [shiftsList, setShiftsList] = useState<Shift[]>(shifts);
+  const [shiftFilter, setShiftFilter] = useState<'all' | 'cafe' | 'gas_station' | 'office'>('all');
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [showAddShiftModal, setShowAddShiftModal] = useState<boolean>(false);
+  const [newShiftForm, setNewShiftForm] = useState<Partial<Shift>>({
+    nameKh: '',
+    nameEn: '',
+    startTime: '08:00',
+    endTime: '17:00',
+    workHours: 8,
+    shiftCategory: 'cafe',
+    branchTypes: ['cafe'],
+    description: '',
+  });
+  const [assignShiftModal, setAssignShiftModal] = useState<Shift | null>(null);
 
   // Device Management & Anti-Fraud State
   const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
@@ -622,6 +650,117 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     showToast(lang === 'km' ? 'បានដោះសោឧបករណ៍បុគ្គលិកទាំងអស់រួចរាល់!' : 'Reset all employee device bindings!');
   };
 
+  // Shift Management Handlers
+  const handleSaveEditShift = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingShift) return;
+    const updated = shiftsList.map(s => s.id === editingShift.id ? editingShift : s);
+    setShiftsList(updated);
+    if (onUpdateShifts) onUpdateShifts(updated);
+
+    // Sync assigned employees with updated shift timing
+    const updatedEmployees = employees.map(emp => {
+      if (emp.shiftId === editingShift.id) {
+        return {
+          ...emp,
+          shiftStartTime: editingShift.startTime,
+          shiftEndTime: editingShift.endTime,
+          scheduledDailyHours: editingShift.workHours,
+          workingHoursText: `${editingShift.startTime} - ${editingShift.endTime} (${editingShift.workHours || 8}h)`,
+        };
+      }
+      return emp;
+    });
+    if (onUpdateEmployeesList) {
+      onUpdateEmployeesList(updatedEmployees);
+    }
+
+    onAddAuditLog({
+      id: `shift_mod_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: currentUser?.name || adminProfile?.name || 'Super Admin',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Updated Work Shift',
+      actionKh: 'បានកែប្រែវេនការងារ',
+      module: 'system',
+      details: `Updated shift ${editingShift.nameEn} (${editingShift.startTime} - ${editingShift.endTime}).`,
+      detailsKh: `បានកែប្រែវេនការងារ ${editingShift.nameKh} (${editingShift.startTime} - ${editingShift.endTime})។`,
+      status: 'success',
+    });
+
+    setEditingShift(null);
+    showToast(lang === 'km' ? 'បានរក្សាទុកការកែប្រែវេនការងារជោគជ័យ!' : 'Shift updated successfully!');
+  };
+
+  const handleCreateNewShift = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newShiftForm.nameKh || !newShiftForm.startTime || !newShiftForm.endTime) return;
+    const newId = `shift_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const createdShift: Shift = {
+      id: newId,
+      nameKh: newShiftForm.nameKh || 'វេនការងារថ្មី',
+      nameEn: newShiftForm.nameEn || 'New Shift',
+      startTime: newShiftForm.startTime || '08:00',
+      endTime: newShiftForm.endTime || '17:00',
+      workHours: Number(newShiftForm.workHours) || 8,
+      gracePeriodMins: 15,
+      shiftCategory: newShiftForm.shiftCategory || 'cafe',
+      branchTypes: newShiftForm.branchTypes || ['cafe'],
+      description: newShiftForm.description || '',
+    };
+    const updated = [...shiftsList, createdShift];
+    setShiftsList(updated);
+    if (onUpdateShifts) onUpdateShifts(updated);
+
+    onAddAuditLog({
+      id: `shift_add_${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      actorName: currentUser?.name || adminProfile?.name || 'Super Admin',
+      actorRole: currentUser?.role || 'admin',
+      action: 'Created New Work Shift',
+      actionKh: 'បានបង្កើតវេនការងារថ្មី',
+      module: 'system',
+      details: `Created new shift ${createdShift.nameEn} (${createdShift.startTime} - ${createdShift.endTime}).`,
+      detailsKh: `បានបង្កើតវេនការងារថ្មី ${createdShift.nameKh} (${createdShift.startTime} - ${createdShift.endTime})។`,
+      status: 'success',
+    });
+
+    setShowAddShiftModal(false);
+    setNewShiftForm({
+      nameKh: '',
+      nameEn: '',
+      startTime: '08:00',
+      endTime: '17:00',
+      workHours: 8,
+      shiftCategory: 'cafe',
+      branchTypes: ['cafe'],
+      description: '',
+    });
+    showToast(lang === 'km' ? 'បានបង្កើតវេនការងារថ្មីជោគជ័យ!' : 'New shift created successfully!');
+  };
+
+  const handleAssignEmployeeToShift = (empId: string, shift: Shift, dayOff?: number) => {
+    const targetEmp = employees.find(e => e.id === empId);
+    if (!targetEmp) return;
+    const defaultDayOff = dayOff !== undefined ? dayOff : (targetEmp.weeklyDayOff !== undefined ? targetEmp.weeklyDayOff : 1);
+    const updated: Employee = {
+      ...targetEmp,
+      shiftId: shift.id,
+      shiftStartTime: shift.startTime,
+      shiftEndTime: shift.endTime,
+      scheduledDailyHours: shift.workHours || 8,
+      workingHoursText: `${shift.startTime} - ${shift.endTime} (${shift.workHours || 8}h)`,
+      weeklyDayOff: defaultDayOff,
+    };
+    if (onUpdateEmployee) {
+      onUpdateEmployee(updated);
+    }
+    if (onUpdateEmployeesList) {
+      onUpdateEmployeesList(employees.map(e => e.id === empId ? updated : e));
+    }
+    showToast(lang === 'km' ? `បានចាត់តាំង ${targetEmp.nameKh} ទៅ ${shift.nameKh}` : `Assigned ${targetEmp.nameEn} to ${shift.nameEn}`);
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Admin Control Center Header */}
@@ -681,6 +820,22 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
         <button
           type="button"
+          onClick={() => setActiveTab('shifts')}
+          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
+            activeTab === 'shifts'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-amber-300" />
+          <span>{lang === 'km' ? '២. វេនការងារ & ម៉ោងបំពេញ' : '2. Work Shifts & Hours'}</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === 'shifts' ? 'bg-indigo-700 text-white' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
+            {shiftsList.length} Shifts
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('branding')}
           className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
             activeTab === 'branding'
@@ -689,7 +844,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Palette className="w-4 h-4" />
-          <span>{lang === 'km' ? '២. ស្លាកយីហោ & Logo ក្រុមហ៊ុន' : '2. Branding & Corporate Logo'}</span>
+          <span>{lang === 'km' ? '៣. ស្លាកយីហោ & Logo ក្រុមហ៊ុន' : '3. Branding & Corporate Logo'}</span>
         </button>
 
         <button
@@ -702,7 +857,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Type className="w-4 h-4 text-amber-300" />
-          <span>{lang === 'km' ? '៣. អក្សរ & Visual (Khmer Fonts)' : '3. Khmer Typography & Visual'}</span>
+          <span>{lang === 'km' ? '៤. អក្សរ & Visual (Khmer Fonts)' : '4. Khmer Typography & Visual'}</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === 'typography' ? 'bg-indigo-700 text-white' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
             ADMIN ONLY
           </span>
@@ -718,7 +873,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Shield className="w-4 h-4" />
-          <span>{lang === 'km' ? '៤. សិទ្ធិតួនាទី (RBAC Permissions)' : '4. RBAC Role Permissions'}</span>
+          <span>{lang === 'km' ? '៥. សិទ្ធិតួនាទី (RBAC Permissions)' : '5. RBAC Role Permissions'}</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'roles' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
             {rolesForm.length} Roles
           </span>
@@ -734,7 +889,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <CalendarCheck className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៥. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត' : '5. Leave & Quota Controls'}</span>
+          <span>{lang === 'km' ? '៦. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត' : '6. Leave & Quota Controls'}</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'leaves' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
             {leaveRequests.length}
           </span>
@@ -750,7 +905,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Zap className="w-4 h-4" />
-          <span>{lang === 'km' ? '៦. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស' : '6. System Rules & Broadcast'}</span>
+          <span>{lang === 'km' ? '៧. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស' : '7. System Rules & Broadcast'}</span>
         </button>
 
         <button
@@ -763,7 +918,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <History className="w-4 h-4" />
-          <span>{lang === 'km' ? '៧. កំណត់ត្រាសវនកម្ម (Audit Trail)' : '7. Audit Trail & Logs'}</span>
+          <span>{lang === 'km' ? '៨. កំណត់ត្រាសវនកម្ម (Audit Trail)' : '8. Audit Trail & Logs'}</span>
         </button>
 
         <button
@@ -776,7 +931,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           }`}
         >
           <Database className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៨. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)' : '8. Backup, Restore & Sync'}</span>
+          <span>{lang === 'km' ? '៩. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)' : '9. Backup, Restore & Sync'}</span>
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </button>
       </div>
@@ -1093,7 +1248,702 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: BRANDING & LOGO CUSTOMIZATION */}
+      {/* TAB 2: WORKING SHIFTS, HOURS & DAY OFF (BARISTA, GAS STATION, OFFICE) */}
+      {/* ========================================================================= */}
+      {activeTab === 'shifts' && (
+        <div className="space-y-6">
+          {/* Header & Quick Action */}
+          <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 rounded-2xl bg-amber-50 text-amber-600 border border-amber-100">
+                  <Clock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black text-slate-800">
+                    {lang === 'km' ? 'វេនការងារ ម៉ោងបំពេញ & ថ្ងៃឈប់សម្រាក (Working Shifts & Hours)' : 'Working Shifts, Scheduled Hours & Weekly Day-Off'}
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {lang === 'km'
+                      ? 'កំណត់វេនព្រឹក វេនរសៀល និងវេនពេញម៉ោង សម្រាប់បុគ្គលិកកាហ្វេ (Barista), ស្ថានីយប្រេង (Gas Station) និងការិយាល័យ'
+                      : 'Configure Morning, Afternoon, and Full-Time shifts for Baristas, Gas Station staff, and Office employees'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAddShiftModal(true)}
+                className="flex items-center space-x-1.5 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition cursor-pointer self-start sm:self-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{lang === 'km' ? 'បង្កើតវេនការងារថ្មី' : 'Create New Shift'}</span>
+              </button>
+            </div>
+
+            {/* Shift Distribution Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                    <Coffee className="w-4 h-4 text-emerald-600" />
+                    <span>{lang === 'km' ? '☕ ហាងកាហ្វេ & បារីស្តា (Cafe)' : '☕ Cafe & Barista'}</span>
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                    {shiftsList.filter(s => s.shiftCategory === 'cafe').length} {lang === 'km' ? 'វេន' : 'shifts'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• វេនព្រឹក:' : '• Morning:'}</span>
+                    <span className="font-mono font-semibold">06:30 - 14:30 (8h)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• វេនរសៀល:' : '• Afternoon:'}</span>
+                    <span className="font-mono font-semibold">13:30 - 21:30 (8h)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• ពេញម៉ោង:' : '• Full-Time:'}</span>
+                    <span className="font-mono font-semibold">07:00 - 16:30 (8.5h)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                    <Fuel className="w-4 h-4 text-amber-600" />
+                    <span>{lang === 'km' ? '⛽ ស្ថានីយប្រេងឥន្ធនៈ (Gas)' : '⛽ Gas Station Staff'}</span>
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    {shiftsList.filter(s => s.shiftCategory === 'gas_station').length} {lang === 'km' ? 'វេន' : 'shifts'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• វេនព្រឹក:' : '• Morning:'}</span>
+                    <span className="font-mono font-semibold">06:00 - 14:00 (8h)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• វេនរសៀល:' : '• Afternoon:'}</span>
+                    <span className="font-mono font-semibold">14:00 - 22:00 (8h)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• ពេញម៉ោង:' : '• Full-Time:'}</span>
+                    <span className="font-mono font-semibold">07:00 - 16:30 (8.5h)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-indigo-50/60 border border-indigo-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    <span>{lang === 'km' ? '🏢 ការិយាល័យ & ឃ្លាំង' : '🏢 Office & Warehouse'}</span>
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                    {shiftsList.filter(s => s.shiftCategory !== 'cafe' && s.shiftCategory !== 'gas_station').length} {lang === 'km' ? 'វេន' : 'shifts'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• ម៉ោងរដ្ឋបាល:' : '• Standard Hours:'}</span>
+                    <span className="font-mono font-semibold">08:00 - 17:30 (8.5h)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• សម្រាកបាយថ្ងៃ:' : '• Lunch Break:'}</span>
+                    <span className="font-mono font-semibold">12:00 - 13:00</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">{lang === 'km' ? '• ថ្ងៃឈប់សម្រាក:' : '• Day Off:'}</span>
+                    <span className="font-semibold text-indigo-700">{lang === 'km' ? 'ថ្ងៃអាទិត្យ (Sunday)' : 'Sunday'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Operational Policy Guide */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-slate-800">
+                  {lang === 'km' 
+                    ? '💡 គោលការណ៍ថ្ងៃឈប់សម្រាក (Weekly Day Off Policy) សម្រាប់បុគ្គលិកបារីស្តា និងស្ថានីយប្រេង:' 
+                    : '💡 Weekly Day Off Policy for Baristas and Gas Station Staff:'}
+                </p>
+                <p className="text-[11px] leading-relaxed text-slate-600">
+                  {lang === 'km'
+                    ? 'ដោយសារហាងកាហ្វេ និងស្ថានីយប្រេងឥន្ធនៈដំណើរការ ៧ថ្ងៃក្នុងមួយសប្តាហ៍ បុគ្គលិកផ្នែកនេះអាចកំណត់ថ្ងៃឈប់សម្រាកប្រចាំសប្តាហ៍នៅថ្ងៃធ្វើការ (ច័ន្ទ, អង្គារ, ពុធ, ព្រហស្បតិ៍, សុក្រ, សៅរ៍) ឬវេនវិលជុំ (Rotating) ដើម្បីធានាបាននូវការបម្រើសេវាកម្មរលូនគ្រប់ពេលវេលា។'
+                    : 'Because cafe and gas station branches operate 7 days a week, staff can be assigned weekday day-offs (Monday through Saturday) or rotating schedules, while working on Sunday shifts.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              onClick={() => setShiftFilter('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                shiftFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+              }`}
+            >
+              {lang === 'km' ? 'ទាំងអស់' : 'All Shifts'} ({shiftsList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setShiftFilter('cafe')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                shiftFilter === 'cafe'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+              }`}
+            >
+              <Coffee className="w-3.5 h-3.5" />
+              <span>{lang === 'km' ? '☕ ហាងកាហ្វេ & បារីស្តា' : '☕ Barista / Cafe'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-800">
+                {shiftsList.filter(s => s.shiftCategory === 'cafe').length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShiftFilter('gas_station')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                shiftFilter === 'gas_station'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+              }`}
+            >
+              <Fuel className="w-3.5 h-3.5" />
+              <span>{lang === 'km' ? '⛽ ស្ថានីយប្រេងឥន្ធនៈ' : '⛽ Gas Station'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 text-amber-800">
+                {shiftsList.filter(s => s.shiftCategory === 'gas_station').length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShiftFilter('office')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                shiftFilter === 'office'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'km' ? '🏢 ការិយាល័យ & ឃ្លាំង' : '🏢 Office & Warehouse'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 text-indigo-800">
+                {shiftsList.filter(s => s.shiftCategory !== 'cafe' && s.shiftCategory !== 'gas_station').length}
+              </span>
+            </button>
+          </div>
+
+          {/* Shifts Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {shiftsList
+              .filter(s => {
+                if (shiftFilter === 'cafe') return s.shiftCategory === 'cafe';
+                if (shiftFilter === 'gas_station') return s.shiftCategory === 'gas_station';
+                if (shiftFilter === 'office') return s.shiftCategory !== 'cafe' && s.shiftCategory !== 'gas_station';
+                return true;
+              })
+              .map(shift => {
+                const assignedStaff = employees.filter(e => e.shiftId === shift.id);
+                const isCafe = shift.shiftCategory === 'cafe';
+                const isGas = shift.shiftCategory === 'gas_station';
+
+                return (
+                  <div
+                    key={shift.id}
+                    className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-3">
+                      {/* Shift Header */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center space-x-2.5">
+                          <div className={`p-2.5 rounded-2xl ${
+                            isCafe 
+                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
+                              : isGas 
+                              ? 'bg-amber-50 text-amber-600 border border-amber-100' 
+                              : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+                          }`}>
+                            {isCafe ? <Coffee className="w-5 h-5" /> : isGas ? <Fuel className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-800 text-sm">
+                              {lang === 'km' ? shift.nameKh : shift.nameEn}
+                            </h3>
+                            <p className="text-[11px] text-slate-500 font-medium">
+                              {lang === 'km' ? shift.nameEn : shift.nameKh}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          isCafe
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : isGas
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        }`}>
+                          {isCafe ? '☕ Cafe / Barista' : isGas ? '⛽ Gas Station' : '🏢 Office'}
+                        </span>
+                      </div>
+
+                      {/* Working Time Badge */}
+                      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                            {lang === 'km' ? 'ម៉ោងបំពេញការងារ' : 'Working Shift Time'}
+                          </span>
+                          <span className="font-mono text-base font-black text-slate-800">
+                            {shift.startTime} <span className="text-slate-400 font-sans">➔</span> {shift.endTime}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                            {lang === 'km' ? 'ម៉ោងសរុប' : 'Duration'}
+                          </span>
+                          <span className="font-bold text-xs px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            {shift.workHours || 8} {lang === 'km' ? 'ម៉ោង' : 'Hours'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      {shift.description && (
+                        <p className="text-[11px] text-slate-500 line-clamp-2">
+                          {shift.description}
+                        </p>
+                      )}
+
+                      {/* Assigned Employees */}
+                      <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-semibold flex items-center gap-1">
+                            <span>{lang === 'km' ? 'បុគ្គលិកប្រចាំវេន:' : 'Assigned Staff:'}</span>
+                            <span className="font-bold text-slate-800">({assignedStaff.length})</span>
+                          </span>
+                          <span className="text-[10px] text-indigo-600 font-bold">
+                            {lang === 'km' ? 'ថ្ងៃឈប់សម្រាក' : 'Weekly Day Off'}
+                          </span>
+                        </div>
+
+                        {assignedStaff.length > 0 ? (
+                          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                            {assignedStaff.map(emp => (
+                              <div
+                                key={emp.id}
+                                className="flex items-center justify-between p-1.5 rounded-xl bg-slate-50 border border-slate-100 text-xs"
+                              >
+                                <div className="flex items-center space-x-2 truncate">
+                                  <img
+                                    src={emp.avatar || LOGO_PRESETS[0]}
+                                    alt=""
+                                    className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-200"
+                                  />
+                                  <span className="font-semibold text-slate-700 truncate text-[11px]">
+                                    {emp.nameKh || emp.nameEn}
+                                  </span>
+                                  <span className="font-mono text-[9px] text-slate-400 shrink-0">
+                                    ({emp.code})
+                                  </span>
+                                </div>
+                                <span className="font-bold text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
+                                  {getEmployeeDayOffName(emp, lang)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-3 text-center rounded-xl bg-slate-50 text-[11px] text-slate-400 italic">
+                            {lang === 'km' ? 'មិនទាន់មានបុគ្គលិកចាត់តាំងនៅឡើយ' : 'No staff currently assigned'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card Actions */}
+                    <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingShift(shift)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5"
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{lang === 'km' ? 'កែប្រែម៉ោង' : 'Edit Shift'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setAssignShiftModal(shift)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition flex items-center justify-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{lang === 'km' ? 'ចាត់តាំងបុគ្គលិក' : 'Assign Staff'}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Edit Shift Timing Modal */}
+          {editingShift && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl my-8">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-2">
+                    <Clock className="w-5 h-5 text-indigo-600" />
+                    <h3 className="font-bold text-slate-800 text-base">
+                      {lang === 'km' ? 'កែប្រែព័ត៌មានវេនការងារ' : 'Edit Shift & Timing'}
+                    </h3>
+                  </div>
+                  <button onClick={() => setEditingShift(null)} className="text-slate-400 hover:text-slate-700">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveEditShift} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ឈ្មោះវេន (Khmer):' : 'Shift Name (Khmer):'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editingShift.nameKh}
+                      onChange={(e) => setEditingShift({ ...editingShift, nameKh: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ឈ្មោះវេន (English):' : 'Shift Name (English):'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editingShift.nameEn}
+                      onChange={(e) => setEditingShift({ ...editingShift, nameEn: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងចូល:' : 'Start Time:'}
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={editingShift.startTime}
+                        onChange={(e) => setEditingShift({ ...editingShift, startTime: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងចេញ:' : 'End Time:'}
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={editingShift.endTime}
+                        onChange={(e) => setEditingShift({ ...editingShift, endTime: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងសរុប:' : 'Daily Hours:'}
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="1"
+                        max="16"
+                        required
+                        value={editingShift.workHours || 8}
+                        onChange={(e) => setEditingShift({ ...editingShift, workHours: Number(e.target.value) })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ការពិពណ៌នាអំពីការងារ (Description):' : 'Role Description:'}
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={editingShift.description || ''}
+                      onChange={(e) => setEditingShift({ ...editingShift, description: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="flex space-x-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setEditingShift(null)}
+                      className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition"
+                    >
+                      {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-200 transition"
+                    >
+                      {lang === 'km' ? 'រក្សាទុកការកែប្រែ' : 'Save Changes'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Add New Custom Shift Modal */}
+          {showAddShiftModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl my-8">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-2">
+                    <Plus className="w-5 h-5 text-indigo-600" />
+                    <h3 className="font-bold text-slate-800 text-base">
+                      {lang === 'km' ? 'បង្កើតវេនការងារថ្មី' : 'Create New Shift'}
+                    </h3>
+                  </div>
+                  <button onClick={() => setShowAddShiftModal(false)} className="text-slate-400 hover:text-slate-700">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateNewShift} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ប្រភេទវេន (Category):' : 'Shift Category:'}
+                    </label>
+                    <select
+                      value={newShiftForm.shiftCategory}
+                      onChange={(e) => setNewShiftForm({ ...newShiftForm, shiftCategory: e.target.value as any })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="cafe">☕ ហាងកាហ្វេ & បារីស្តា (Cafe / Barista)</option>
+                      <option value="gas_station">⛽ ស្ថានីយប្រេងឥន្ធនៈ (Gas Station)</option>
+                      <option value="standard">🏢 ការិយាល័យ & ឃ្លាំង (Office / Warehouse)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ឈ្មោះវេន (Khmer):' : 'Shift Name (Khmer):'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="ឧ. វេនយប់ / វេនចុងសប្តាហ៍"
+                      value={newShiftForm.nameKh}
+                      onChange={(e) => setNewShiftForm({ ...newShiftForm, nameKh: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ឈ្មោះវេន (English):' : 'Shift Name (English):'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Night Shift / Weekend Shift"
+                      value={newShiftForm.nameEn}
+                      onChange={(e) => setNewShiftForm({ ...newShiftForm, nameEn: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងចូល:' : 'Start Time:'}
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={newShiftForm.startTime}
+                        onChange={(e) => setNewShiftForm({ ...newShiftForm, startTime: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងចេញ:' : 'End Time:'}
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={newShiftForm.endTime}
+                        onChange={(e) => setNewShiftForm({ ...newShiftForm, endTime: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1 font-semibold">
+                        {lang === 'km' ? 'ម៉ោងសរុប:' : 'Daily Hours:'}
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="1"
+                        max="16"
+                        required
+                        value={newShiftForm.workHours}
+                        onChange={(e) => setNewShiftForm({ ...newShiftForm, workHours: Number(e.target.value) })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-slate-800 font-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-600 mb-1 font-semibold">
+                      {lang === 'km' ? 'ការពិពណ៌នាអំពីភារកិច្ច:' : 'Role Description:'}
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Fuel dispensing, store checkout, customer assistance"
+                      value={newShiftForm.description}
+                      onChange={(e) => setNewShiftForm({ ...newShiftForm, description: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="flex space-x-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddShiftModal(false)}
+                      className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition"
+                    >
+                      {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-200 transition"
+                    >
+                      {lang === 'km' ? 'បង្កើតវេនការងារ' : 'Create Shift'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Staff Assignment Modal */}
+          {assignShiftModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl my-8">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                      <Plus className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base">
+                        {lang === 'km' ? `ចាត់តាំងបុគ្គលិកទៅ ${assignShiftModal.nameKh}` : `Assign Staff to ${assignShiftModal.nameEn}`}
+                      </h3>
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        {assignShiftModal.startTime} - {assignShiftModal.endTime} ({assignShiftModal.workHours || 8}h)
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={() => setAssignShiftModal(null)} className="text-slate-400 hover:text-slate-700">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500 font-medium">
+                    {lang === 'km'
+                      ? 'ជ្រើសរើសបុគ្គលិកដើម្បីប្តូរវេនការងារ និងម៉ោងបំពេញដោយស្វ័យប្រវត្តិ:'
+                      : 'Select employee to immediately update their working shift, timing, and daily hours:'}
+                  </p>
+
+                  <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                    {employees.map(emp => {
+                      const isAlreadyAssigned = emp.shiftId === assignShiftModal.id;
+
+                      return (
+                        <div
+                          key={emp.id}
+                          className={`p-3 rounded-2xl border transition flex items-center justify-between ${
+                            isAlreadyAssigned
+                              ? 'bg-indigo-50/70 border-indigo-200'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3 truncate">
+                            <img
+                              src={emp.avatar || LOGO_PRESETS[0]}
+                              alt=""
+                              className="w-9 h-9 rounded-xl object-cover shrink-0 border border-slate-200"
+                            />
+                            <div className="truncate">
+                              <h4 className="font-bold text-slate-800 text-xs truncate">
+                                {emp.nameKh || emp.nameEn}
+                              </h4>
+                              <p className="text-[10px] text-slate-500">
+                                {emp.code} • {emp.departmentKh || emp.role}
+                              </p>
+                              <div className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                {lang === 'km' ? 'វេនបច្ចុប្បន្ន:' : 'Current Shift:'} {emp.workingHoursText || 'Default'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 flex items-center gap-2">
+                            {isAlreadyAssigned ? (
+                              <span className="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-indigo-600 text-white flex items-center gap-1">
+                                <Check className="w-3 h-3" />
+                                <span>{lang === 'km' ? 'ក្នុងវេននេះ' : 'Assigned'}</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleAssignEmployeeToShift(emp.id, assignShiftModal)}
+                                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white font-bold text-xs transition cursor-pointer shadow-xs"
+                              >
+                                {lang === 'km' ? 'ចាត់តាំង' : 'Assign'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setAssignShiftModal(null)}
+                    className="py-2.5 px-6 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+                  >
+                    {lang === 'km' ? 'បិទ' : 'Done'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 3: BRANDING & LOGO CUSTOMIZATION */}
       {/* ========================================================================= */}
       {activeTab === 'branding' && (
         <form onSubmit={handleSaveBranding} className="space-y-6">

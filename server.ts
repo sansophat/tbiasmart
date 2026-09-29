@@ -3,24 +3,11 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer as createViteServer } from 'vite';
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
-import {
-  INITIAL_BRANCH_TYPES,
-  INITIAL_BRANCHES,
-  INITIAL_EMPLOYEES,
-  INITIAL_ATTENDANCE_RECORDS,
-  INITIAL_LEAVE_REQUESTS,
-  INITIAL_TRANSFER_RECORDS,
-  INITIAL_BRANDING,
-  INITIAL_ROLE_PERMISSIONS,
-  INITIAL_SYSTEM_SETTINGS,
-  INITIAL_AUDIT_LOGS,
-} from './src/data/initialData';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const server = http.createServer(app);
 
 // Enable JSON body parser with increased limit for backups
@@ -112,17 +99,44 @@ const DEFAULT_ADMIN_PROFILE = {
   password: 'admin',
 };
 
+const DEFAULT_BRANDING = {
+  companyNameKh: 'ក្លឹបកម្សាន្ត & ភោជនីយដ្ឋាន ស្តារឡាយ',
+  companyNameEn: 'STARLIGHT ENTERTAINMENT GROUP',
+  sloganKh: 'សេវាកម្មកម្សាន្ត និងបដិសណ្ឋារកិច្ចលំដាប់ខ្ពស់',
+  sloganEn: 'Premier Nightlife, Hospitality & F&B Services',
+  logoUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format&fit=crop&q=80',
+  supportPhone: '+855 23 888 999',
+  primaryColor: '#4f46e5',
+  accentColor: '#10b981',
+};
+
+function readDbFileFromDisk(): any {
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      const raw = fs.readFileSync(DB_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.branches)) {
+        return parsed;
+      }
+    } catch (e) {
+      console.warn('[DB] Could not parse DB_FILE:', e);
+    }
+  }
+  return null;
+}
+
 function getCleanBlankState() {
+  const current = readDbFileFromDisk();
   return {
     branches: [DEFAULT_STARTER_BRANCH],
-    branchTypes: INITIAL_BRANCH_TYPES,
+    branchTypes: current?.branchTypes || [],
     employees: [],
     attendanceRecords: [],
     leaveRequests: [],
     transferRecords: [],
-    branding: INITIAL_BRANDING,
-    rolePermissions: INITIAL_ROLE_PERMISSIONS,
-    systemSettings: INITIAL_SYSTEM_SETTINGS,
+    branding: current?.branding || DEFAULT_BRANDING,
+    rolePermissions: current?.rolePermissions || [],
+    systemSettings: current?.systemSettings || {},
     adminProfile: DEFAULT_ADMIN_PROFILE,
     auditLogs: [],
     lastUpdated: new Date().toISOString(),
@@ -131,18 +145,20 @@ function getCleanBlankState() {
 }
 
 function getDemoSeedState() {
+  const diskState = readDbFileFromDisk();
+  if (diskState) return diskState;
   return {
-    branches: INITIAL_BRANCHES,
-    branchTypes: INITIAL_BRANCH_TYPES,
-    employees: INITIAL_EMPLOYEES,
-    attendanceRecords: INITIAL_ATTENDANCE_RECORDS,
-    leaveRequests: INITIAL_LEAVE_REQUESTS,
-    transferRecords: INITIAL_TRANSFER_RECORDS,
-    branding: INITIAL_BRANDING,
-    rolePermissions: INITIAL_ROLE_PERMISSIONS,
-    systemSettings: INITIAL_SYSTEM_SETTINGS,
+    branches: [DEFAULT_STARTER_BRANCH],
+    branchTypes: [],
+    employees: [],
+    attendanceRecords: [],
+    leaveRequests: [],
+    transferRecords: [],
+    branding: DEFAULT_BRANDING,
+    rolePermissions: [],
+    systemSettings: {},
     adminProfile: DEFAULT_ADMIN_PROFILE,
-    auditLogs: INITIAL_AUDIT_LOGS,
+    auditLogs: [],
     lastUpdated: new Date().toISOString(),
     isReset: false,
   };
@@ -155,35 +171,11 @@ try {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  if (fs.existsSync(DB_FILE)) {
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.branches)) {
-      serverDb = parsed;
-      if (!serverDb.adminProfile) {
-        serverDb.adminProfile = DEFAULT_ADMIN_PROFILE;
-      }
-      if (!Array.isArray(serverDb.branchTypes) || serverDb.branchTypes.length === 0) {
-        serverDb.branchTypes = INITIAL_BRANCH_TYPES;
-      }
-      // Ensure full staff list is available for roster & timesheet printing
-      if (!Array.isArray(serverDb.employees) || serverDb.employees.length < 5) {
-        const existingEmpIds = new Set((serverDb.employees || []).map((e: any) => e.id));
-        const missingEmps = INITIAL_EMPLOYEES.filter((e) => !existingEmpIds.has(e.id));
-        serverDb.employees = [...(serverDb.employees || []), ...missingEmps];
-      }
-      // Ensure complete leave, sick, and overtime approval stream requests exist
-      if (!Array.isArray(serverDb.leaveRequests) || serverDb.leaveRequests.length < 4) {
-        const existingReqIds = new Set((serverDb.leaveRequests || []).map((r: any) => r.id));
-        const missingReqs = INITIAL_LEAVE_REQUESTS.filter((r) => !existingReqIds.has(r.id));
-        serverDb.leaveRequests = [...(serverDb.leaveRequests || []), ...missingReqs];
-      }
-      persistDatabase();
-      console.log(`[DB] Loaded system database from disk. (${serverDb.branches.length} branches, ${serverDb.employees.length} employees, ${serverDb.leaveRequests.length} leave requests)`);
-    }
-  } else {
+  if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify(serverDb, null, 2), 'utf-8');
     console.log('[DB] Initialized new system database file on disk.');
+  } else {
+    console.log(`[DB] Loaded system database from disk. (${serverDb.branches?.length || 0} branches, ${serverDb.employees?.length || 0} employees)`);
   }
 } catch (err) {
   console.error('[DB] Error initializing system database file:', err);
@@ -487,9 +479,9 @@ app.post('/api/system/restore', (req, res) => {
       attendanceRecords: backupData.attendanceRecords || [],
       leaveRequests: backupData.leaveRequests || [],
       transferRecords: backupData.transferRecords || [],
-      branding: backupData.branding || INITIAL_BRANDING,
-      rolePermissions: backupData.rolePermissions || INITIAL_ROLE_PERMISSIONS,
-      systemSettings: backupData.systemSettings || INITIAL_SYSTEM_SETTINGS,
+      branding: backupData.branding || serverDb?.branding || DEFAULT_BRANDING,
+      rolePermissions: backupData.rolePermissions || serverDb?.rolePermissions || [],
+      systemSettings: backupData.systemSettings || serverDb?.systemSettings || {},
       adminProfile: backupData.adminProfile || (backupData as any).profile || serverDb.adminProfile || DEFAULT_ADMIN_PROFILE,
       auditLogs: backupData.auditLogs || [],
       lastUpdated: new Date().toISOString(),
@@ -864,7 +856,7 @@ app.get('/api/presence', (req, res) => {
 
 // Dynamic Web App Manifest Endpoint for PWA Installation
 app.get(['/manifest.webmanifest', '/manifest.json'], (req, res) => {
-  const b = serverDb.branding || INITIAL_BRANDING;
+  const b = serverDb?.branding || DEFAULT_BRANDING;
   const iconUrl = b.logoUrl || b.appIcon || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=512&auto=format&fit=crop&q=80';
   const appTitle = b.companyNameKh || 'ប្រព័ន្ធគ្រប់គ្រងវត្តមាន';
   const appTitleEn = b.companyNameEn || 'Smart Attendance';
@@ -915,12 +907,27 @@ app.get(['/manifest.webmanifest', '/manifest.json'], (req, res) => {
 // ==========================================
 
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
+
+  if (!isProduction) {
+    try {
+      // Dynamic import to avoid requiring vite in production
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (err) {
+      console.warn('Vite dev middleware not available, falling back to static:', err);
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
