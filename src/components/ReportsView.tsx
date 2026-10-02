@@ -46,14 +46,29 @@ import {
   generateEmployeeMergedSummaries,
   exportTimesheetToCsv, 
   exportTimesheetToPdf, 
+  exportTimesheetToXlsx,
   exportMergedSummaryToCsv,
   exportMergedSummaryToPdf,
+  exportMergedSummaryToXlsx,
   exportRosterPrintSheetsToPdf,
+  exportRosterToXlsx,
+  exportRosterToCsv,
   renderSingleContainerToA4Pdf,
   TimesheetRow,
   EmployeeMergedSummary
 } from '../utils/reportExportUtils';
 import { getEmployeeDayOffName } from '../utils/dayOffUtils';
+import { ReportTableCustomizerModal } from './ReportTableCustomizerModal';
+import { ReportTableToolbar } from './ReportTableToolbar';
+import { useTableColumnResize } from '../utils/useTableColumnResize';
+import {
+  ReportTableSettings,
+  TableColumnDef,
+  DAILY_TIMESHEET_COLUMNS,
+  MERGED_SUMMARY_COLUMNS,
+  AVAILABLE_FONTS,
+  getDefaultTableSettings,
+} from '../types/tableCustomization';
 
 interface ReportsViewProps {
   attendanceRecords: AttendanceRecord[];
@@ -147,6 +162,139 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printPreviewType, setPrintPreviewType] = useState<'detailed' | 'merged'>('detailed');
 
+  // Table Customization State for Daily Matrix Table
+  const [dailyTableSettings, setDailyTableSettings] = useState<ReportTableSettings>(() => {
+    try {
+      const saved = localStorage.getItem('attend_report_daily_table_customization');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return getDefaultTableSettings(DAILY_TIMESHEET_COLUMNS);
+  });
+
+  // Table Customization State for Merged / Consolidated Summary Table
+  const [mergedTableSettings, setMergedTableSettings] = useState<ReportTableSettings>(() => {
+    try {
+      const saved = localStorage.getItem('attend_report_merged_table_customization');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return getDefaultTableSettings(MERGED_SUMMARY_COLUMNS);
+  });
+
+  // Merged Display Mode: 'cards' (Employee Accordion Cards) vs 'table' (Consolidated Summary Table)
+  const [mergedDisplayMode, setMergedDisplayMode] = useState<'cards' | 'table'>('cards');
+
+  // Customizer Modal State
+  const [showCustomizerModal, setShowCustomizerModal] = useState(false);
+  const [customizerTarget, setCustomizerTarget] = useState<'daily' | 'merged'>('daily');
+
+  // Persist Daily Table Settings to localStorage
+  const handleUpdateDailySettings = (newSettings: ReportTableSettings) => {
+    setDailyTableSettings(newSettings);
+    try {
+      localStorage.setItem('attend_report_daily_table_customization', JSON.stringify(newSettings));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleResetDailySettings = () => {
+    const defaults = getDefaultTableSettings(DAILY_TIMESHEET_COLUMNS);
+    setDailyTableSettings(defaults);
+    try {
+      localStorage.removeItem('attend_report_daily_table_customization');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Persist Merged Table Settings to localStorage
+  const handleUpdateMergedSettings = (newSettings: ReportTableSettings) => {
+    setMergedTableSettings(newSettings);
+    try {
+      localStorage.setItem('attend_report_merged_table_customization', JSON.stringify(newSettings));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleResetMergedSettings = () => {
+    const defaults = getDefaultTableSettings(MERGED_SUMMARY_COLUMNS);
+    setMergedTableSettings(defaults);
+    try {
+      localStorage.removeItem('attend_report_merged_table_customization');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Draggable column resize for Daily table
+  const handleDailyColumnWidthUpdate = (colId: string, width: number) => {
+    handleUpdateDailySettings({
+      ...dailyTableSettings,
+      columnWidths: {
+        ...dailyTableSettings.columnWidths,
+        [colId]: width,
+      },
+    });
+  };
+
+  const dailyDefaultWidths = useMemo(() => {
+    const map: Record<string, number> = {};
+    DAILY_TIMESHEET_COLUMNS.forEach((c) => {
+      map[c.id] = c.defaultWidth;
+    });
+    return map;
+  }, []);
+
+  const mergedDefaultWidths = useMemo(() => {
+    const map: Record<string, number> = {};
+    MERGED_SUMMARY_COLUMNS.forEach((c) => {
+      map[c.id] = c.defaultWidth;
+    });
+    return map;
+  }, []);
+
+  const totalDailyTableWidth = useMemo(() => {
+    return DAILY_TIMESHEET_COLUMNS
+      .filter((col) => dailyTableSettings.visibleColumns.includes(col.id))
+      .reduce((sum, col) => sum + (dailyTableSettings.columnWidths[col.id] || col.defaultWidth), 0);
+  }, [dailyTableSettings.visibleColumns, dailyTableSettings.columnWidths]);
+
+  const totalMergedTableWidth = useMemo(() => {
+    return MERGED_SUMMARY_COLUMNS
+      .filter((col) => mergedTableSettings.visibleColumns.includes(col.id))
+      .reduce((sum, col) => sum + (mergedTableSettings.columnWidths[col.id] || col.defaultWidth), 0);
+  }, [mergedTableSettings.visibleColumns, mergedTableSettings.columnWidths]);
+
+  const { resizingColId: resizingDailyColId, onMouseDown: onDailyColumnResizeMouseDown } = useTableColumnResize({
+    columnWidths: dailyTableSettings.columnWidths,
+    defaultWidths: dailyDefaultWidths,
+    onUpdateWidth: handleDailyColumnWidthUpdate,
+    minWidth: 40,
+  });
+
+  // Draggable column resize for Merged Summary table
+  const handleMergedColumnWidthUpdate = (colId: string, width: number) => {
+    handleUpdateMergedSettings({
+      ...mergedTableSettings,
+      columnWidths: {
+        ...mergedTableSettings.columnWidths,
+        [colId]: width,
+      },
+    });
+  };
+
+  const { resizingColId: resizingMergedColId, onMouseDown: onMergedColumnResizeMouseDown } = useTableColumnResize({
+    columnWidths: mergedTableSettings.columnWidths,
+    defaultWidths: mergedDefaultWidths,
+    onUpdateWidth: handleMergedColumnWidthUpdate,
+    minWidth: 40,
+  });
+
   // Unique Departments across employees
   const departmentsList = useMemo(() => {
     const set = new Set<string>();
@@ -201,6 +349,262 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       if (!existsInBranch) {
         setSelectedEmployeeFilter('all');
       }
+    }
+  };
+
+  // Selected Font Objects
+  const selectedDailyFont = useMemo(() => {
+    return AVAILABLE_FONTS.find((f) => f.id === dailyTableSettings.fontFamily) || AVAILABLE_FONTS[0];
+  }, [dailyTableSettings.fontFamily]);
+
+  const selectedMergedFont = useMemo(() => {
+    return AVAILABLE_FONTS.find((f) => f.id === mergedTableSettings.fontFamily) || AVAILABLE_FONTS[0];
+  }, [mergedTableSettings.fontFamily]);
+
+  // Daily Table Styling Classes
+  const dailyDensityClass = useMemo(() => {
+    if (dailyTableSettings.density === 'compact') return 'py-1 px-2';
+    if (dailyTableSettings.density === 'spacious') return 'py-3.5 px-4';
+    return 'py-2 px-2.5';
+  }, [dailyTableSettings.density]);
+
+  const dailyBorderClass = useMemo(() => {
+    if (dailyTableSettings.borderStyle === 'grid') return 'border-r border-b border-slate-200 last:border-r-0';
+    if (dailyTableSettings.borderStyle === 'subtle') return 'border-b border-slate-100';
+    return 'border-b border-transparent';
+  }, [dailyTableSettings.borderStyle]);
+
+  const dailyHeaderThemeClass = useMemo(() => {
+    if (dailyTableSettings.headerTheme === 'slate-dark') return 'bg-slate-800 text-white border-b border-slate-900';
+    if (dailyTableSettings.headerTheme === 'indigo') return 'bg-indigo-700 text-white border-b border-indigo-800';
+    if (dailyTableSettings.headerTheme === 'clean-white') return 'bg-white text-slate-900 border-b-2 border-slate-200';
+    return 'bg-slate-100/90 text-slate-700 border-b border-slate-200';
+  }, [dailyTableSettings.headerTheme]);
+
+  // Merged Table Styling Classes
+  const mergedDensityClass = useMemo(() => {
+    if (mergedTableSettings.density === 'compact') return 'py-1 px-2';
+    if (mergedTableSettings.density === 'spacious') return 'py-3.5 px-4';
+    return 'py-2 px-2.5';
+  }, [mergedTableSettings.density]);
+
+  const mergedBorderClass = useMemo(() => {
+    if (mergedTableSettings.borderStyle === 'grid') return 'border-r border-b border-slate-200 last:border-r-0';
+    if (mergedTableSettings.borderStyle === 'subtle') return 'border-b border-slate-100';
+    return 'border-b border-transparent';
+  }, [mergedTableSettings.borderStyle]);
+
+  const mergedHeaderThemeClass = useMemo(() => {
+    if (mergedTableSettings.headerTheme === 'slate-dark') return 'bg-slate-800 text-white border-b border-slate-900';
+    if (mergedTableSettings.headerTheme === 'indigo') return 'bg-indigo-700 text-white border-b border-indigo-800';
+    if (mergedTableSettings.headerTheme === 'clean-white') return 'bg-white text-slate-900 border-b-2 border-slate-200';
+    return 'bg-slate-100/90 text-slate-700 border-b border-slate-200';
+  }, [mergedTableSettings.headerTheme]);
+
+  // Daily Cell Content Renderer
+  const renderDailyCellContent = (row: TimesheetRow, colId: string) => {
+    const isSun = row.isSunday;
+    const isDayOff = row.isDayOff;
+    const isLeave = row.isLeave;
+
+    switch (colId) {
+      case 'no':
+        return (
+          <span className={`font-bold ${isSun ? 'text-rose-700' : isDayOff ? 'text-amber-700' : isLeave ? 'text-purple-700' : 'text-slate-400'}`}>
+            {row.no}
+          </span>
+        );
+      case 'date':
+        return (
+          <span className={`font-bold whitespace-nowrap ${isSun ? 'text-rose-900' : isDayOff ? 'text-amber-950' : isLeave ? 'text-purple-950' : 'text-slate-800'}`}>
+            {row.date}
+          </span>
+        );
+      case 'dayOfWeek':
+        return (
+          <span className={`font-medium uppercase whitespace-nowrap ${isSun ? 'text-rose-700 font-bold' : isDayOff ? 'text-amber-800' : isLeave ? 'text-purple-800' : 'text-slate-600'}`}>
+            {row.dayOfWeek.split(' ')[0]}
+          </span>
+        );
+      case 'name':
+        return (
+          <div className="min-w-0 overflow-hidden leading-snug">
+            <div className={`font-bold truncate ${isSun ? 'text-rose-800' : isDayOff ? 'text-amber-900' : isLeave ? 'text-purple-900' : 'text-slate-800'}`}>
+              {lang === 'km' ? row.nameKh : row.nameEn}
+            </div>
+            <div className="text-[0.8em] text-slate-500 truncate mt-0.5">
+              {row.role}
+            </div>
+          </div>
+        );
+      case 'employeeId':
+        return (
+          <span className="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 whitespace-nowrap">
+            {row.enrollId}
+          </span>
+        );
+      case 'department':
+        return (
+          <span className={`truncate block ${isSun ? 'text-rose-600' : isDayOff ? 'text-amber-800' : isLeave ? 'text-purple-800' : 'text-slate-700'}`}>
+            {row.department || '---'}
+          </span>
+        );
+      case 'branch':
+        return (
+          <span className={`truncate block ${isSun ? 'text-rose-700' : isDayOff ? 'text-amber-800' : isLeave ? 'text-purple-800' : 'text-slate-600'}`}>
+            {row.branchNameEn}
+          </span>
+        );
+      case 'timeIn':
+        if (isSun || isDayOff || isLeave) return <span className="text-slate-400">--:--</span>;
+        return (
+          <span className={`font-bold whitespace-nowrap ${row.timeIn !== '--:--' ? 'text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200' : 'text-slate-400'}`}>
+            {row.timeIn}
+          </span>
+        );
+      case 'timeOut':
+        if (isSun || isDayOff || isLeave) return <span className="text-slate-400">--:--</span>;
+        return (
+          <span className={`font-bold whitespace-nowrap ${row.timeOut !== '--:--' ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}`}>
+            {row.timeOut}
+          </span>
+        );
+      case 'duration':
+        if (isSun || isDayOff || isLeave) return <span className="text-slate-400 whitespace-nowrap">0.0h</span>;
+        return <span className="font-bold text-slate-700 whitespace-nowrap">{row.durationHours}</span>;
+      case 'status':
+        if (isSun) {
+          return (
+            <span className="inline-block px-2 py-0.5 rounded-full text-[0.8em] font-black bg-rose-200/80 text-rose-800 border border-rose-300 whitespace-nowrap">
+              SUNDAY REST
+            </span>
+          );
+        }
+        if (isDayOff) {
+          return (
+            <span className="inline-block px-2 py-0.5 rounded-full text-[0.8em] font-black bg-amber-200 text-amber-900 border border-amber-300 whitespace-nowrap">
+              DAY OFF (សម្រាក)
+            </span>
+          );
+        }
+        if (isLeave) {
+          return (
+            <span className="inline-block px-2 py-0.5 rounded-full text-[0.8em] font-black bg-purple-200 text-purple-900 border border-purple-300 whitespace-nowrap">
+              ON LEAVE (ច្បាប់)
+            </span>
+          );
+        }
+        return (
+          <span className={`inline-block px-2 py-0.5 rounded-full text-[0.82em] font-bold whitespace-nowrap ${
+            row.status.toLowerCase().includes('on-time')
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              : row.status.toLowerCase().includes('late')
+              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+              : row.status.toLowerCase().includes('overtime')
+              ? 'bg-purple-50 text-purple-700 border border-purple-200'
+              : row.status.toLowerCase().includes('absent')
+              ? 'bg-rose-100 text-rose-800 border border-rose-200'
+              : 'bg-slate-100 text-slate-600 border border-slate-200'
+          }`}>
+            {row.status}
+          </span>
+        );
+      case 'remark':
+        return (
+          <span className={`truncate block ${isSun ? 'text-rose-700 font-semibold italic' : isDayOff ? 'text-amber-800 font-semibold' : isLeave ? 'text-purple-800 font-semibold' : 'text-slate-600'}`}>
+            {row.remark}
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // Merged Cell Content Renderer
+  const renderMergedCellContent = (summary: EmployeeMergedSummary, idx: number, colId: string) => {
+    switch (colId) {
+      case 'no':
+        return <span className="text-slate-400 font-bold">{idx + 1}</span>;
+      case 'enrollId':
+        return (
+          <span className="font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 whitespace-nowrap">
+            {summary.enrollId}
+          </span>
+        );
+      case 'name':
+        return (
+          <div className="min-w-0 overflow-hidden leading-snug">
+            <div className="font-bold text-slate-900 truncate">
+              {lang === 'km' ? summary.nameKh : summary.nameEn}
+            </div>
+            <div className="text-[0.8em] text-slate-400 truncate mt-0.5">({summary.nameEn})</div>
+          </div>
+        );
+      case 'department':
+        return <span className="font-semibold text-slate-700 truncate block">{summary.department}</span>;
+      case 'role':
+        return <span className="text-slate-600 truncate block">{summary.role}</span>;
+      case 'branch':
+        return (
+          <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 truncate block">
+            {summary.branchNameEn}
+          </span>
+        );
+      case 'daysPresent':
+        return <span className="font-bold text-emerald-700 whitespace-nowrap">{summary.daysPresent}</span>;
+      case 'totalWorkHours':
+        return <span className="font-black text-indigo-700 whitespace-nowrap">{summary.totalWorkHours}h</span>;
+      case 'daysOnTime':
+        return <span className="font-bold text-emerald-600 whitespace-nowrap">{summary.daysOnTime}</span>;
+      case 'daysLate':
+        return <span className={`font-bold whitespace-nowrap ${summary.daysLate > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{summary.daysLate}</span>;
+      case 'totalOtHours':
+        return <span className="font-bold text-purple-700 whitespace-nowrap">{summary.totalOtHours}h</span>;
+      case 'sundaysCount':
+        return <span className="font-bold text-rose-700 whitespace-nowrap">{summary.sundaysCount}</span>;
+      case 'attendanceRate':
+        return (
+          <div className="flex items-center gap-1.5 justify-center">
+            <div className="w-10 bg-slate-100 rounded-full h-1.5 overflow-hidden shrink-0">
+              <div
+                className={`h-full rounded-full ${
+                  summary.attendanceRate >= 90 ? 'bg-emerald-500' : summary.attendanceRate >= 75 ? 'bg-amber-500' : 'bg-rose-500'
+                }`}
+                style={{ width: `${summary.attendanceRate}%` }}
+              />
+            </div>
+            <span className="font-bold text-[0.85em] text-slate-800 whitespace-nowrap">{summary.attendanceRate}%</span>
+          </div>
+        );
+      case 'actions':
+        return (
+          <div className="flex items-center justify-center space-x-1">
+            <button
+              type="button"
+              onClick={() => {
+                setPrintStaffFilter(summary.employeeId);
+                setPrintBranchFilter('all');
+                setPrintDepartmentFilter('all');
+                setPrintPreviewType('detailed');
+                setShowPrintModal(true);
+              }}
+              className="p-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition cursor-pointer"
+              title="Print Roster"
+            >
+              <Printer className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleEmployeeExpand(summary.employeeId)}
+              className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+              title="View Daily Attendance"
+            >
+              {expandedEmployeeIds[summary.employeeId] ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        );
+      default:
+        return null;
     }
   };
 
@@ -438,18 +842,72 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
   }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
 
-  // Group printable staff by department so timesheets can be organized systematically
-  const departmentStaffGroups = useMemo(() => {
-    const map = new Map<string, typeof printableStaffGroups>();
-    printableStaffGroups.forEach((group) => {
-      const dept = group.employee.department || (printDepartmentFilter !== 'all' ? printDepartmentFilter : 'Operations');
+  // Group printable staff by department helper function for any given filters
+  const getDepartmentStaffGroups = (
+    branchFilter: string = printBranchFilter,
+    staffFilter: string = printStaffFilter,
+    deptFilter: string = printDepartmentFilter
+  ) => {
+    let targetEmps = employees;
+    if (branchFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.branchId === branchFilter);
+    }
+    if (staffFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.id === staffFilter || e.code === staffFilter);
+    }
+    if (deptFilter !== 'all') {
+      targetEmps = targetEmps.filter((e) => e.department && e.department.toLowerCase() === deptFilter.toLowerCase());
+    }
+
+    const groups = targetEmps.map((emp) => {
+      const empRows = generateDailyTimesheetRows(
+        attendanceRecords,
+        [emp],
+        branches,
+        startDate,
+        endDate,
+        'all',
+        emp.id,
+        leaveRequests
+      ).filter((r) => r.employeeId === emp.id);
+
+      const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
+      const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
+      const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
+      const daysLeave = empRows.filter((r) => r.isLeave).length;
+      const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
+      const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
+
+      return {
+        employee: emp,
+        rows: empRows,
+        summary: {
+          totalWorkHours: totalWork,
+          daysWorked,
+          daysOff,
+          daysLeave,
+          lateDays,
+          otDays,
+        },
+      };
+    });
+
+    const map = new Map<string, typeof groups>();
+    groups.forEach((group) => {
+      const dept = group.employee.department || (deptFilter !== 'all' ? deptFilter : 'Operations');
       if (!map.has(dept)) map.set(dept, []);
       map.get(dept)!.push(group);
     });
+
     return Array.from(map.entries()).map(([department, staffList]) => ({
       department,
       staffList,
     }));
+  };
+
+  // Group printable staff by department so timesheets can be organized systematically
+  const departmentStaffGroups = useMemo(() => {
+    return getDepartmentStaffGroups(printBranchFilter, printStaffFilter, printDepartmentFilter);
   }, [printableStaffGroups, printDepartmentFilter]);
 
   // Merged summaries specifically for the Print Modal (honors printBranchFilter, printStaffFilter, printDepartmentFilter)
@@ -481,12 +939,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const dateRangeLabel = `${startDate} to ${endDate}${employeeFilterLabel}`;
 
-  // Export CSV Handler
+  // Export CSV Handler (Formatted with Audit & KPI Summaries)
   const handleDownloadCsv = () => {
+    const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
     if (timesheetViewMode === 'merged') {
-      exportMergedSummaryToCsv(filteredMergedSummaries, currentBranchTitle, dateRangeLabel);
+      exportMergedSummaryToCsv(filteredMergedSummaries, currentBranchTitle, dateRangeLabel, compName);
     } else {
-      exportTimesheetToCsv(filteredTimesheetRows, currentBranchTitle, dateRangeLabel);
+      exportTimesheetToCsv(filteredTimesheetRows, currentBranchTitle, dateRangeLabel, compName);
+    }
+  };
+
+  // Export Styled Excel (XLSX) Handler with exact format and styling as PDF
+  const [isExportingXlsx, setIsExportingXlsx] = useState(false);
+  const handleDownloadXlsx = async () => {
+    if (isExportingXlsx) return;
+    setIsExportingXlsx(true);
+    const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
+    try {
+      if (timesheetViewMode === 'merged') {
+        await exportMergedSummaryToXlsx(filteredMergedSummaries, currentBranchTitle, dateRangeLabel, compName, mergedTableSettings);
+      } else {
+        await exportTimesheetToXlsx(filteredTimesheetRows, currentBranchTitle, dateRangeLabel, compName, dailyTableSettings);
+      }
+    } catch (err) {
+      console.error('Failed to export XLSX:', err);
+    } finally {
+      setIsExportingXlsx(false);
     }
   };
 
@@ -509,8 +987,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     }
   };
 
-  // Batch Export: Separate CSV & PDF for EACH individual branch
-  const handleBatchExportAllBranches = (format: 'csv' | 'pdf', mode: 'merged' | 'detailed' = timesheetViewMode === 'merged' ? 'merged' : 'detailed') => {
+  // Batch Export: Separate XLSX, CSV & PDF for EACH individual branch
+  const handleBatchExportAllBranches = (format: 'xlsx' | 'csv' | 'pdf', mode: 'merged' | 'detailed' = timesheetViewMode === 'merged' ? 'merged' : 'detailed') => {
     setIsExportingBatch(true);
     const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
 
@@ -528,8 +1006,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               selectedEmployeeFilter,
               leaveRequests
             );
-            if (format === 'csv') {
-              exportMergedSummaryToCsv(branchSummaries, b.nameEn, dateRangeLabel);
+            if (format === 'xlsx') {
+              await exportMergedSummaryToXlsx(branchSummaries, b.nameKh || b.nameEn, dateRangeLabel, compName, mergedTableSettings);
+            } else if (format === 'csv') {
+              exportMergedSummaryToCsv(branchSummaries, b.nameEn, dateRangeLabel, compName);
             } else {
               await exportMergedSummaryToPdf(branchSummaries, b.nameKh || b.nameEn, dateRangeLabel, compName);
             }
@@ -544,8 +1024,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               selectedEmployeeFilter,
               leaveRequests
             );
-            if (format === 'csv') {
-              exportTimesheetToCsv(branchRows, b.nameEn, dateRangeLabel);
+            if (format === 'xlsx') {
+              await exportTimesheetToXlsx(branchRows, b.nameKh || b.nameEn, dateRangeLabel, compName, dailyTableSettings);
+            } else if (format === 'csv') {
+              exportTimesheetToCsv(branchRows, b.nameEn, dateRangeLabel, compName);
             } else {
               await exportTimesheetToPdf(branchRows, b.nameKh || b.nameEn, dateRangeLabel, compName);
             }
@@ -558,9 +1040,93 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     }, 200);
   };
 
-  // Dedicated Print Modal Handlers: Supports both system print and direct PDF download
+  // Dedicated Print Modal Handlers: Supports system print, direct PDF, Excel (.xlsx), and CSV exports
   const [isExportingModalPdf, setIsExportingModalPdf] = useState(false);
+  const [isExportingRosterXlsx, setIsExportingRosterXlsx] = useState(false);
+  const [isExportingRosterCsv, setIsExportingRosterCsv] = useState(false);
   const [printFeedback, setPrintFeedback] = useState<string | null>(null);
+
+  const handleDownloadRosterXlsx = async (targetBranch?: string, targetStaff?: string, targetDept?: string) => {
+    if (isExportingRosterXlsx) return;
+    setIsExportingRosterXlsx(true);
+    const activeBranchFilter = targetBranch !== undefined ? targetBranch : printBranchFilter;
+    const activeStaffFilter = targetStaff !== undefined ? targetStaff : printStaffFilter;
+    const activeDeptFilter = targetDept !== undefined ? targetDept : printDepartmentFilter;
+
+    const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
+    const monthYearLabel = formatMonthYearHeader(startDate);
+    const branchObj = branches.find((b) => b.id === activeBranchFilter);
+    const branchLabel = activeBranchFilter === 'all' 
+      ? (branches.length > 0 ? (lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All Branches') : 'Main Branch')
+      : (branchObj ? (lang === 'km' ? `${branchObj.nameEn} (${branchObj.nameKh})` : branchObj.nameEn) : activeBranchFilter);
+
+    const activeGroups = getDepartmentStaffGroups(activeBranchFilter, activeStaffFilter, activeDeptFilter);
+
+    try {
+      await exportRosterToXlsx(
+        activeGroups,
+        branchLabel,
+        monthYearLabel,
+        `${startDate} ~ ${endDate}`,
+        compName
+      );
+      setPrintFeedback(
+        lang === 'km'
+          ? 'បានបង្កើត និងទាញយកឯកសារ Roster Excel (.xlsx) ជោគជ័យ!'
+          : 'Official Roster Excel (.xlsx) generated & downloaded successfully!'
+      );
+    } catch (err) {
+      console.error('Failed to export Roster Excel:', err);
+      setPrintFeedback(
+        lang === 'km'
+          ? 'មានបញ្ហាក្នុងការបង្កើត Excel។ សូមព្យាយាមម្តងទៀត។'
+          : 'Failed to generate Roster Excel. Please try again.'
+      );
+    } finally {
+      setIsExportingRosterXlsx(false);
+    }
+  };
+
+  const handleDownloadRosterCsv = (targetBranch?: string, targetStaff?: string, targetDept?: string) => {
+    if (isExportingRosterCsv) return;
+    setIsExportingRosterCsv(true);
+    const activeBranchFilter = targetBranch !== undefined ? targetBranch : printBranchFilter;
+    const activeStaffFilter = targetStaff !== undefined ? targetStaff : printStaffFilter;
+    const activeDeptFilter = targetDept !== undefined ? targetDept : printDepartmentFilter;
+
+    const compName = branding ? (lang === 'km' ? branding.companyNameKh : branding.companyNameEn) : 'Enterprise Multi-Branch HR Suite';
+    const monthYearLabel = formatMonthYearHeader(startDate);
+    const branchObj = branches.find((b) => b.id === activeBranchFilter);
+    const branchLabel = activeBranchFilter === 'all' 
+      ? (branches.length > 0 ? (lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All Branches') : 'Main Branch')
+      : (branchObj ? (lang === 'km' ? `${branchObj.nameEn} (${branchObj.nameKh})` : branchObj.nameEn) : activeBranchFilter);
+
+    const activeGroups = getDepartmentStaffGroups(activeBranchFilter, activeStaffFilter, activeDeptFilter);
+
+    try {
+      exportRosterToCsv(
+        activeGroups,
+        branchLabel,
+        monthYearLabel,
+        `${startDate} ~ ${endDate}`,
+        compName
+      );
+      setPrintFeedback(
+        lang === 'km'
+          ? 'បានបង្កើត និងទាញយកឯកសារ Roster CSV ជោគជ័យ!'
+          : 'Official Roster CSV generated & downloaded successfully!'
+      );
+    } catch (err) {
+      console.error('Failed to export Roster CSV:', err);
+      setPrintFeedback(
+        lang === 'km'
+          ? 'មានបញ្ហាក្នុងការបង្កើត CSV។ សូមព្យាយាមម្តងទៀត។'
+          : 'Failed to generate Roster CSV. Please try again.'
+      );
+    } finally {
+      setIsExportingRosterCsv(false);
+    }
+  };
 
   const handleDownloadPdfFromModal = async () => {
     if (isExportingModalPdf) return;
@@ -680,18 +1246,39 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         {/* Quick Export Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+          {/* Excel XLSX Download Button (With Exact PDF Format & Style) */}
+          <button
+            type="button"
+            disabled={isExportingXlsx}
+            onClick={handleDownloadXlsx}
+            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-md shadow-emerald-200 transition cursor-pointer disabled:opacity-60"
+            title={`Download Excel XLSX with PDF Format Style (${timesheetViewMode === 'merged' ? 'Merged Summary' : 'Detailed Timesheet'})`}
+          >
+            <FileSpreadsheet className={`w-4 h-4 text-emerald-200 ${isExportingXlsx ? 'animate-pulse' : ''}`} />
+            <span>
+              {isExportingXlsx
+                ? (lang === 'km' ? 'កំពុងបង្កើត Excel...' : 'Generating Excel...')
+                : timesheetViewMode === 'merged'
+                ? (lang === 'km' ? 'ទាញយក Excel (.xlsx)' : 'Export Merged Excel (.xlsx)')
+                : (lang === 'km' ? 'ទាញយក Excel (.xlsx)' : 'Export Detailed Excel (.xlsx)')}
+            </span>
+            <span className="hidden sm:inline-block px-1.5 py-0.5 rounded-md bg-emerald-900/60 text-emerald-200 text-[10px] font-mono">
+              PDF Styled
+            </span>
+          </button>
+
           {/* CSV Download Button */}
           <button
             type="button"
             onClick={handleDownloadCsv}
-            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-200 transition cursor-pointer"
-            title={`Download CSV (${timesheetViewMode === 'merged' ? 'Merged Summary' : 'Detailed Timesheet'})`}
+            className="flex items-center space-x-2 px-3.5 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-md shadow-teal-200 transition cursor-pointer"
+            title={`Download CSV with Report Summary (${timesheetViewMode === 'merged' ? 'Merged Summary' : 'Detailed Timesheet'})`}
           >
             <Download className="w-4 h-4" />
             <span>
               {timesheetViewMode === 'merged'
-                ? (lang === 'km' ? 'ទាញយក CSV (សង្ខេបផ្ដុំ)' : 'Export Merged CSV')
-                : (lang === 'km' ? 'ទាញយក CSV (លម្អិត)' : 'Export Detailed CSV')}
+                ? (lang === 'km' ? 'ទាញយក CSV' : 'Export CSV')
+                : (lang === 'km' ? 'ទាញយក CSV' : 'Export CSV')}
             </span>
           </button>
 
@@ -700,7 +1287,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             type="button"
             disabled={isExportingPdf}
             onClick={handleDownloadPdf}
-            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer disabled:opacity-60"
+            className="flex items-center space-x-2 px-3.5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition cursor-pointer disabled:opacity-60"
             title={`Download PDF (${timesheetViewMode === 'merged' ? 'Merged Summary' : 'Detailed Timesheet'})`}
           >
             <FileDown className={`w-4 h-4 ${isExportingPdf ? 'animate-bounce' : ''}`} />
@@ -708,8 +1295,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               {isExportingPdf
                 ? (lang === 'km' ? 'កំពុងបង្កើត PDF...' : 'Generating PDF...')
                 : timesheetViewMode === 'merged'
-                ? (lang === 'km' ? 'ទាញយក PDF (សង្ខេបផ្ដុំ)' : 'Export Merged PDF')
-                : (lang === 'km' ? 'ទាញយក PDF (លម្អិត)' : 'Export Detailed PDF')}
+                ? (lang === 'km' ? 'ទាញយក PDF' : 'Export PDF')
+                : (lang === 'km' ? 'ទាញយក PDF' : 'Export PDF')}
             </span>
           </button>
 
@@ -729,6 +1316,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </div>
               <button
                 type="button"
+                onClick={() => handleBatchExportAllBranches('xlsx', 'merged')}
+                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 rounded-xl transition flex items-center gap-2"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Download 7 Merged Excels (.xlsx)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => handleBatchExportAllBranches('pdf', 'merged')}
                 className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition flex items-center gap-2"
               >
@@ -738,15 +1333,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleBatchExportAllBranches('csv', 'merged')}
-                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 rounded-xl transition flex items-center gap-2"
+                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-teal-50 hover:text-teal-700 rounded-xl transition flex items-center gap-2"
               >
-                <Download className="w-4 h-4 text-emerald-600" />
+                <Download className="w-4 h-4 text-teal-600" />
                 <span>Download 7 Merged CSVs (1/branch)</span>
               </button>
 
               <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pt-2">
                 Daily Detailed Timesheet
               </div>
+              <button
+                type="button"
+                onClick={() => handleBatchExportAllBranches('xlsx', 'detailed')}
+                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 rounded-xl transition flex items-center gap-2"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Download 7 Detailed Excels (.xlsx)</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleBatchExportAllBranches('pdf', 'detailed')}
@@ -758,15 +1361,45 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleBatchExportAllBranches('csv', 'detailed')}
+                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-teal-50 hover:text-teal-700 rounded-xl transition flex items-center gap-2"
+              >
+                <Download className="w-4 h-4 text-teal-600" />
+                <span>Download 7 Detailed CSVs</span>
+              </button>
+
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pt-2">
+                Official Roster Exports
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintBranchFilter(selectedBranchFilter);
+                  setPrintStaffFilter('all');
+                  setPrintDepartmentFilter('all');
+                  handleDownloadRosterXlsx(selectedBranchFilter, 'all', 'all');
+                }}
                 className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 rounded-xl transition flex items-center gap-2"
               >
-                <Download className="w-4 h-4 text-emerald-600" />
-                <span>Download 7 Detailed CSVs</span>
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Export Roster Excel (.xlsx)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintBranchFilter(selectedBranchFilter);
+                  setPrintStaffFilter('all');
+                  setPrintDepartmentFilter('all');
+                  handleDownloadRosterCsv(selectedBranchFilter, 'all', 'all');
+                }}
+                className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-teal-50 hover:text-teal-700 rounded-xl transition flex items-center gap-2"
+              >
+                <Download className="w-4 h-4 text-teal-600" />
+                <span>Export Roster CSV</span>
               </button>
             </div>
           </div>
 
-          {/* Official Timesheet & Roster Print Button */}
+          {/* Official Timesheet & Roster Print / View Button */}
           <button
             type="button"
             onClick={() => {
@@ -1135,25 +1768,190 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </div>
 
               {timesheetViewMode === 'merged' && (
-                <button
-                  type="button"
-                  onClick={handleToggleExpandAll}
-                  className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
-                  title="Expand/Collapse all employee daily details"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{lang === 'km' ? 'ពង្រីក/បង្រួមទាំងអស់' : 'Toggle All Details'}</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-xl bg-slate-100 p-0.5 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setMergedDisplayMode('cards')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        mergedDisplayMode === 'cards'
+                          ? 'bg-white text-indigo-600 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {lang === 'km' ? 'កាតបុគ្គលិក (Cards)' : 'Staff Cards'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMergedDisplayMode('table')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        mergedDisplayMode === 'table'
+                          ? 'bg-white text-indigo-600 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {lang === 'km' ? 'តារាងសង្ខេប (Summary Table)' : 'Summary Table'}
+                    </button>
+                  </div>
+
+                  {mergedDisplayMode === 'cards' && (
+                    <button
+                      type="button"
+                      onClick={handleToggleExpandAll}
+                      className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+                      title="Expand/Collapse all employee daily details"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+                      <span>{lang === 'km' ? 'ពង្រីក/បង្រួមទាំងអស់' : 'Toggle All Details'}</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
 
           {/* ========================================================== */}
-          {/* MODE A: MERGED BY EMPLOYEE (CONSOLIDATED SUMMARY TABLE) */}
+          {/* MODE A: MERGED BY EMPLOYEE (CONSOLIDATED SUMMARY TABLE OR CARDS) */}
           {/* ========================================================== */}
           {timesheetViewMode === 'merged' && (
             <div className="space-y-4">
-              {filteredMergedSummaries.length === 0 ? (
+              {mergedDisplayMode === 'table' ? (
+                /* Consolidated Summary Table View with full Customizer & Resize */
+                <div className="space-y-3">
+                  <ReportTableToolbar
+                    settings={mergedTableSettings}
+                    onUpdateSettings={handleUpdateMergedSettings}
+                    onOpenCustomizerModal={() => {
+                      setCustomizerTarget('merged');
+                      setShowCustomizerModal(true);
+                    }}
+                    availableColumns={MERGED_SUMMARY_COLUMNS}
+                    lang={lang}
+                    onResetSettings={handleResetMergedSettings}
+                    onExportXlsx={handleDownloadXlsx}
+                    onExportCsv={handleDownloadCsv}
+                  />
+
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs">
+                    <table
+                      className="text-left border-collapse"
+                      style={{
+                        fontFamily: selectedMergedFont.familyCss,
+                        fontSize: `${mergedTableSettings.fontSizePx}px`,
+                        tableLayout: 'fixed',
+                        width: `${totalMergedTableWidth}px`,
+                        minWidth: '100%',
+                      }}
+                    >
+                      <colgroup>
+                        {MERGED_SUMMARY_COLUMNS
+                          .filter((col) => mergedTableSettings.visibleColumns.includes(col.id))
+                          .map((col) => {
+                            const colW = mergedTableSettings.columnWidths[col.id] || col.defaultWidth;
+                            return <col key={`mcol_${col.id}`} style={{ width: `${colW}px`, minWidth: `${colW}px` }} />;
+                          })}
+                      </colgroup>
+                      <thead>
+                        <tr className={mergedHeaderThemeClass}>
+                          {MERGED_SUMMARY_COLUMNS
+                            .filter((col) => mergedTableSettings.visibleColumns.includes(col.id))
+                            .map((col) => {
+                              const colW = mergedTableSettings.columnWidths[col.id] || col.defaultWidth;
+                              return (
+                                <th
+                                  key={col.id}
+                                  style={{
+                                    width: `${colW}px`,
+                                    minWidth: `${colW}px`,
+                                    maxWidth: `${colW}px`,
+                                    fontFamily: selectedMergedFont.familyCss,
+                                    fontSize: `${mergedTableSettings.fontSizePx}px`,
+                                    overflow: 'hidden',
+                                  }}
+                                  className={`relative group ${mergedDensityClass} ${
+                                    col.align === 'center' ? 'text-center' : 'text-left'
+                                  } font-black uppercase tracking-wider select-none`}
+                                >
+                                  <div className="flex items-center justify-between gap-1 overflow-hidden">
+                                    <span className="truncate" style={{ fontFamily: 'inherit', fontSize: 'inherit' }}>
+                                      {lang === 'km' ? col.labelKh : col.labelEn}
+                                    </span>
+                                  </div>
+
+                                  {/* Interactive Column Resize Handle */}
+                                  <div
+                                    onMouseDown={(e) => onMergedColumnResizeMouseDown(col.id, e)}
+                                    className={`absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize hover:bg-indigo-500 transition-colors z-10 flex items-center justify-center ${
+                                      resizingMergedColId === col.id ? 'bg-indigo-600' : 'opacity-40 hover:opacity-100'
+                                    }`}
+                                    title={lang === 'km' ? 'អូសដើម្បីប្តូរទទឹងជួរឈរ' : 'Drag left/right to adjust column width'}
+                                  >
+                                    <span className="w-0.5 h-3 bg-slate-400 group-hover:bg-white rounded-full" />
+                                  </div>
+                                </th>
+                              );
+                            })}
+                        </tr>
+                      </thead>
+                      <tbody className={mergedTableSettings.zebraStripes ? 'divide-y divide-slate-100' : ''}>
+                        {filteredMergedSummaries.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={mergedTableSettings.visibleColumns.length}
+                              className="py-12 text-center text-slate-400 font-sans"
+                            >
+                              <Users className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                              <p className="font-bold">
+                                {lang === 'km' ? 'មិនមានបុគ្គលិកត្រូវតាមការស្វែងរកនេះទេ' : 'No employee records match your filter criteria'}
+                              </p>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredMergedSummaries.map((summary, idx) => {
+                            const rowBg =
+                              mergedTableSettings.zebraStripes && idx % 2 === 1
+                                ? 'bg-slate-50/60 hover:bg-slate-100/80'
+                                : 'bg-white hover:bg-slate-50/80';
+
+                            return (
+                              <tr
+                                key={`merged_row_${summary.employeeId}`}
+                                className={`${rowBg} transition`}
+                              >
+                                {MERGED_SUMMARY_COLUMNS
+                                  .filter((col) => mergedTableSettings.visibleColumns.includes(col.id))
+                                  .map((col) => {
+                                    const colW = mergedTableSettings.columnWidths[col.id] || col.defaultWidth;
+                                    return (
+                                      <td
+                                        key={col.id}
+                                        style={{
+                                          width: `${colW}px`,
+                                          minWidth: `${colW}px`,
+                                          maxWidth: `${colW}px`,
+                                          fontFamily: selectedMergedFont.familyCss,
+                                          fontSize: `${mergedTableSettings.fontSizePx}px`,
+                                          overflow: 'hidden',
+                                        }}
+                                        className={`${mergedDensityClass} ${mergedBorderClass} ${
+                                          col.align === 'center' ? 'text-center' : 'text-left'
+                                        }`}
+                                      >
+                                        {renderMergedCellContent(summary, idx, col.id)}
+                                      </td>
+                                    );
+                                  })}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                /* Card View */
+                filteredMergedSummaries.length === 0 ? (
                 <div className="py-12 text-center text-slate-400">
                   <Users className="w-10 h-10 mx-auto text-slate-300 mb-2" />
                   <p className="font-bold">{lang === 'km' ? 'មិនមានបុគ្គលិកត្រូវតាមការស្វែងរកនេះទេ' : 'No employee records match your filter criteria'}</p>
@@ -1174,18 +1972,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             <span className="w-6 text-center font-mono text-xs font-bold text-slate-400">
                               {idx + 1}
                             </span>
-                            <div className="relative">
-                              <img
-                                src={summary.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                                alt={summary.nameEn}
-                                className="w-12 h-12 rounded-2xl object-cover border border-slate-200 shadow-sm"
-                                onError={(e) => {
-                                  e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                                }}
-                              />
-                              <span className="absolute -bottom-1 -right-1 px-1.5 py-0.2 bg-indigo-600 text-white font-mono text-[9px] font-bold rounded-md shadow-xs">
-                                {summary.enrollId}
-                              </span>
+                            <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                              {summary.enrollId}
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
@@ -1417,7 +2205,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     );
                   })}
                 </div>
-              )}
+              )
+            )}
             </div>
           )}
 
@@ -1426,10 +2215,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           {/* ========================================================== */}
           {timesheetViewMode === 'daily' && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs text-slate-500 font-medium">
-                  {lang === 'km' ? 'តារាងវត្តមានប្រចាំថ្ងៃពេញលេញ រួមមានកាលបរិច្ឆេទ ថ្ងៃនៃសប្តាហ៍ អត្តលេខបុគ្គលិក ម៉ោងការងារ និង OT' : 'Complete daily roster matrix including Date, Day of Week, Staff ID, Work & OT hours.'}
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1">
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">
+                    {lang === 'km' ? 'តារាងវត្តមានប្រចាំថ្ងៃពេញលេញ (Daily Roster Matrix)' : 'Daily Chronological Timesheet Matrix'}
+                  </h4>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {lang === 'km'
+                      ? 'តារាងវត្តមានលម្អិតប្រចាំថ្ងៃ រួមមានកាលបរិច្ឆេទ ថ្ងៃនៃសប្តាហ៍ ម៉ោងការងារ OT និងស្ថានភាព'
+                      : 'Complete roster matrix including Date, Day of Week, Staff ID, Work & OT hours.'}
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -1439,7 +2235,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     setPrintPreviewType('detailed');
                     setShowPrintModal(true);
                   }}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 cursor-pointer"
+                  className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition border border-indigo-200 cursor-pointer shadow-2xs self-start sm:self-auto"
                   title="Print Official Timesheet & Roster"
                 >
                   <Printer className="w-3.5 h-3.5 text-indigo-600" />
@@ -1447,189 +2243,136 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </button>
               </div>
 
-              <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="w-full text-left text-xs text-slate-700 border-collapse">
+              {/* Table Customization & Typography Toolbar */}
+              <ReportTableToolbar
+                settings={dailyTableSettings}
+                onUpdateSettings={handleUpdateDailySettings}
+                onOpenCustomizerModal={() => {
+                  setCustomizerTarget('daily');
+                  setShowCustomizerModal(true);
+                }}
+                availableColumns={DAILY_TIMESHEET_COLUMNS}
+                lang={lang}
+                onResetSettings={handleResetDailySettings}
+                onExportXlsx={handleDownloadXlsx}
+                onExportCsv={handleDownloadCsv}
+              />
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs">
+                <table
+                  className="text-left border-collapse"
+                  style={{
+                    fontFamily: selectedDailyFont.familyCss,
+                    fontSize: `${dailyTableSettings.fontSizePx}px`,
+                    tableLayout: 'fixed',
+                    width: `${totalDailyTableWidth}px`,
+                    minWidth: '100%',
+                  }}
+                >
+                  <colgroup>
+                    {DAILY_TIMESHEET_COLUMNS
+                      .filter((col) => dailyTableSettings.visibleColumns.includes(col.id))
+                      .map((col) => {
+                        const colW = dailyTableSettings.columnWidths[col.id] || col.defaultWidth;
+                        return <col key={`dcol_${col.id}`} style={{ width: `${colW}px`, minWidth: `${colW}px` }} />;
+                      })}
+                  </colgroup>
                   <thead>
-                    <tr className="bg-slate-100/90 text-slate-700 font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
-                      <th className="py-2 px-2.5 w-10 text-center">No</th>
-                      <th className="py-2 px-2.5">Date</th>
-                      <th className="py-2 px-2.5">Day of Week</th>
-                      <th className="py-2 px-3">Employee Name</th>
-                      <th className="py-2 px-2.5">Department</th>
-                      <th className="py-2 px-2.5">Branch</th>
-                      <th className="py-2 px-2 text-center">Time In</th>
-                      <th className="py-2 px-2 text-center">Time Out</th>
-                      <th className="py-2 px-2 text-center">Work Hrs</th>
-                      <th className="py-2 px-2.5">Status</th>
-                      <th className="py-2 px-3">Remark & GPS Verification</th>
+                    <tr className={dailyHeaderThemeClass}>
+                      {DAILY_TIMESHEET_COLUMNS
+                        .filter((col) => dailyTableSettings.visibleColumns.includes(col.id))
+                        .map((col) => {
+                          const colW = dailyTableSettings.columnWidths[col.id] || col.defaultWidth;
+                          return (
+                            <th
+                              key={col.id}
+                              style={{
+                                width: `${colW}px`,
+                                minWidth: `${colW}px`,
+                                maxWidth: `${colW}px`,
+                                fontFamily: selectedDailyFont.familyCss,
+                                fontSize: `${dailyTableSettings.fontSizePx}px`,
+                                overflow: 'hidden',
+                              }}
+                              className={`relative group ${dailyDensityClass} ${
+                                col.align === 'center' ? 'text-center' : 'text-left'
+                              } font-black uppercase tracking-wider select-none`}
+                            >
+                              <div className="flex items-center justify-between gap-1 overflow-hidden">
+                                <span className="truncate" style={{ fontFamily: 'inherit', fontSize: 'inherit' }}>
+                                  {lang === 'km' ? col.labelKh : col.labelEn}
+                                </span>
+                              </div>
+
+                              {/* Interactive Column Resize Handle */}
+                              <div
+                                onMouseDown={(e) => onDailyColumnResizeMouseDown(col.id, e)}
+                                className={`absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize hover:bg-indigo-500 transition-colors z-10 flex items-center justify-center ${
+                                  resizingDailyColId === col.id ? 'bg-indigo-600' : 'opacity-40 hover:opacity-100'
+                                }`}
+                                title={lang === 'km' ? 'អូសដើម្បីប្តូរទទឹងជួរឈរ' : 'Drag left/right to adjust column width'}
+                              >
+                                <span className="w-0.5 h-3 bg-slate-400 group-hover:bg-white rounded-full" />
+                              </div>
+                            </th>
+                          );
+                        })}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-[11px] leading-tight">
+                  <tbody className={dailyTableSettings.zebraStripes ? 'divide-y divide-slate-100' : ''}>
                     {filteredTimesheetRows.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="py-10 text-center text-slate-400 font-sans">
+                        <td
+                          colSpan={dailyTableSettings.visibleColumns.length}
+                          className="py-12 text-center text-slate-400 font-sans"
+                        >
                           <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                          <p className="font-bold">{lang === 'km' ? 'មិនមានទិន្នន័យក្នុងកាលបរិច្ឆេទនេះទេ' : 'No timesheet records found for this date range'}</p>
+                          <p className="font-bold">
+                            {lang === 'km' ? 'មិនមានទិន្នន័យក្នុងកាលបរិច្ឆេទនេះទេ' : 'No timesheet records found for this date range'}
+                          </p>
                         </td>
                       </tr>
                     ) : (
-                      filteredTimesheetRows.map((row) => {
-                        if (row.isSunday) {
-                          return (
-                            <tr
-                              key={`sunday_${row.no}_${row.date}`}
-                              className="bg-rose-50/90 border-y border-rose-200 font-bold text-rose-900 transition hover:bg-rose-100/90"
-                            >
-                              <td className="py-1.5 px-2.5 text-center text-rose-700">{row.no}</td>
-                              <td className="py-1.5 px-2.5 font-black text-rose-900">{row.date}</td>
-                              <td className="py-1.5 px-2.5 font-sans font-bold text-rose-700 uppercase">{row.dayOfWeek}</td>
-                              <td className="py-1.5 px-3 font-sans">
-                                <div className="flex items-center space-x-2">
-                                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
-                                  <span className="font-black text-rose-800">
-                                    {lang === 'km' ? row.nameKh : row.nameEn}
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="py-1.5 px-2.5 font-sans text-rose-500">---</td>
-                              <td className="py-1.5 px-2.5 font-sans text-rose-700">{row.branchNameEn}</td>
-                              <td className="py-1.5 px-2 text-center text-rose-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-rose-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-rose-400">0.0h</td>
-                              <td className="py-1.5 px-2.5 font-sans">
-                                <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-200/80 text-rose-800 border border-rose-300">
-                                  SUNDAY REST
-                                </span>
-                              </td>
-                              <td className="py-1.5 px-3 font-sans text-[11px] text-rose-700 font-semibold italic">
-                                {row.remark}
-                              </td>
-                            </tr>
-                          );
-                        }
+                      filteredTimesheetRows.map((row, rIdx) => {
+                        const isSun = row.isSunday;
+                        const isDayOff = row.isDayOff;
+                        const isLeave = row.isLeave;
 
-                        if (row.isDayOff) {
-                          return (
-                            <tr
-                              key={`dayoff_${row.no}_${row.employeeId}_${row.date}`}
-                              className="bg-amber-50/70 border-y border-amber-200/80 font-medium text-amber-900 transition hover:bg-amber-100/70"
-                            >
-                              <td className="py-1.5 px-2.5 text-center text-amber-700 font-bold">{row.no}</td>
-                              <td className="py-1.5 px-2.5 font-bold text-amber-950">{row.date}</td>
-                              <td className="py-1.5 px-2.5 font-sans text-amber-800">{row.dayOfWeek}</td>
-                              <td className="py-1.5 px-3 font-sans">
-                                <div className="font-bold text-amber-900 text-xs truncate">
-                                  {lang === 'km' ? row.nameKh : row.nameEn}
-                                </div>
-                              </td>
-                              <td className="py-1.5 px-2.5 font-sans text-xs text-amber-700">{row.department}</td>
-                              <td className="py-1.5 px-2.5 font-sans text-xs text-amber-700">{row.branchNameEn}</td>
-                              <td className="py-1.5 px-2 text-center text-amber-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-amber-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-amber-400">0.0h</td>
-                              <td className="py-1.5 px-2.5 font-sans">
-                                <span className="inline-block px-2 py-0.5 rounded-full text-[9.5px] font-black bg-amber-200 text-amber-900 border border-amber-300">
-                                  DAY OFF (សម្រាក)
-                                </span>
-                              </td>
-                              <td className="py-1.5 px-3 font-sans text-[11px] text-amber-800 font-semibold">
-                                {row.remark}
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        if (row.isLeave) {
-                          return (
-                            <tr
-                              key={`leave_${row.no}_${row.employeeId}_${row.date}`}
-                              className="bg-purple-50/70 border-y border-purple-200/80 font-medium text-purple-900 transition hover:bg-purple-100/70"
-                            >
-                              <td className="py-1.5 px-2.5 text-center text-purple-700 font-bold">{row.no}</td>
-                              <td className="py-1.5 px-2.5 font-bold text-purple-950">{row.date}</td>
-                              <td className="py-1.5 px-2.5 font-sans text-purple-800">{row.dayOfWeek}</td>
-                              <td className="py-1.5 px-3 font-sans">
-                                <div className="font-bold text-purple-900 text-xs truncate">
-                                  {lang === 'km' ? row.nameKh : row.nameEn}
-                                </div>
-                              </td>
-                              <td className="py-1.5 px-2.5 font-sans text-xs text-purple-700">{row.department}</td>
-                              <td className="py-1.5 px-2.5 font-sans text-xs text-purple-700">{row.branchNameEn}</td>
-                              <td className="py-1.5 px-2 text-center text-purple-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-purple-400">--:--</td>
-                              <td className="py-1.5 px-2 text-center text-purple-400">0.0h</td>
-                              <td className="py-1.5 px-2.5 font-sans">
-                                <span className="inline-block px-2 py-0.5 rounded-full text-[9.5px] font-black bg-purple-200 text-purple-900 border border-purple-300">
-                                  ON LEAVE (ច្បាប់)
-                                </span>
-                              </td>
-                              <td className="py-1.5 px-3 font-sans text-[11px] text-purple-800 font-semibold">
-                                {row.remark}
-                              </td>
-                            </tr>
-                          );
-                        }
+                        let rowBg = '';
+                        if (isSun) rowBg = 'bg-rose-50/90 text-rose-900 font-bold border-y border-rose-200 hover:bg-rose-100/90';
+                        else if (isDayOff) rowBg = 'bg-amber-50/70 border-y border-amber-200/80 font-medium text-amber-900 hover:bg-amber-100/70';
+                        else if (isLeave) rowBg = 'bg-purple-50/70 border-y border-purple-200/80 font-medium text-purple-900 hover:bg-purple-100/70';
+                        else if (dailyTableSettings.zebraStripes && rIdx % 2 === 1) rowBg = 'bg-slate-50/60 hover:bg-slate-100/80';
+                        else rowBg = 'bg-white hover:bg-slate-50/80';
 
                         return (
-                          <tr key={`row_${row.no}_${row.employeeId}_${row.date}`} className="hover:bg-slate-50/90 transition">
-                            <td className="py-1.5 px-2.5 text-center text-slate-500 font-bold">{row.no}</td>
-                            <td className="py-1.5 px-2.5 font-bold text-slate-800">{row.date}</td>
-                            <td className="py-1.5 px-2.5 font-sans font-medium text-slate-600">{row.dayOfWeek}</td>
-                            <td className="py-1.5 px-3 font-sans">
-                              <div className="flex items-center space-x-2">
-                                {row.avatar && (
-                                  <img
-                                    src={row.avatar}
-                                    alt={row.nameEn}
-                                    className="w-6 h-6 rounded-md object-cover border border-slate-200 shrink-0"
-                                    onError={(e) => {
-                                      e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                          <tr
+                            key={`daily_row_${row.no}_${row.employeeId}_${row.date}`}
+                            className={`${rowBg} transition`}
+                          >
+                            {DAILY_TIMESHEET_COLUMNS
+                              .filter((col) => dailyTableSettings.visibleColumns.includes(col.id))
+                              .map((col) => {
+                                const colW = dailyTableSettings.columnWidths[col.id] || col.defaultWidth;
+                                return (
+                                  <td
+                                    key={col.id}
+                                    style={{
+                                      width: `${colW}px`,
+                                      minWidth: `${colW}px`,
+                                      maxWidth: `${colW}px`,
+                                      fontFamily: selectedDailyFont.familyCss,
+                                      fontSize: `${dailyTableSettings.fontSizePx}px`,
+                                      overflow: 'hidden',
                                     }}
-                                  />
-                                )}
-                                <div className="min-w-0">
-                                  <div className="font-bold text-slate-800 text-xs truncate">
-                                    {lang === 'km' ? row.nameKh : row.nameEn}
-                                  </div>
-                                  <div className="text-[10px] text-slate-500 truncate">
-                                    {row.role}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-1.5 px-2.5 font-sans text-xs text-slate-700">{row.department}</td>
-                            <td className="py-1.5 px-2.5 font-sans text-xs text-slate-600">{row.branchNameEn}</td>
-                            <td className="py-1.5 px-2 text-center font-bold">
-                              <span className={row.timeIn !== '--:--' ? 'text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200' : 'text-slate-400'}>
-                                {row.timeIn}
-                              </span>
-                            </td>
-                            <td className="py-1.5 px-2 text-center font-bold">
-                              <span className={row.timeOut !== '--:--' ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}>
-                                {row.timeOut}
-                              </span>
-                            </td>
-                            <td className="py-1.5 px-2 text-center font-bold text-slate-700">
-                              {row.durationHours}
-                            </td>
-                            <td className="py-1.5 px-2.5 font-sans">
-                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                row.status.toLowerCase().includes('on-time')
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : row.status.toLowerCase().includes('late')
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : row.status.toLowerCase().includes('overtime')
-                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                  : row.status.toLowerCase().includes('absent')
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                  : 'bg-slate-100 text-slate-600 border border-slate-200'
-                              }`}>
-                                {row.status}
-                              </span>
-                            </td>
-                            <td className="py-1.5 px-3 font-sans text-xs text-slate-600">
-                              {row.remark}
-                            </td>
+                                    className={`${dailyDensityClass} ${dailyBorderClass} ${
+                                      col.align === 'center' ? 'text-center' : 'text-left'
+                                    }`}
+                                  >
+                                    {renderDailyCellContent(row, col.id)}
+                                  </td>
+                                );
+                              })}
                           </tr>
                         );
                       })
@@ -2354,8 +3097,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </button>
                 </div>
 
+                {/* Print Modal Customizer Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomizerTarget(printPreviewType === 'detailed' ? 'daily' : 'merged');
+                    setShowCustomizerModal(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1.5 border border-slate-200 shadow-2xs transition cursor-pointer"
+                  title="Customize table columns, font size, and fonts"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>{lang === 'km' ? 'កែតារាង (Customize)' : 'Customize'}</span>
+                </button>
+
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2">
+                  {/* Roster Excel Export */}
+                  <button
+                    type="button"
+                    disabled={isExportingRosterXlsx}
+                    onClick={() => handleDownloadRosterXlsx()}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-900/20 transition cursor-pointer disabled:opacity-60"
+                    title="Export Roster to formatted Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className={`w-4 h-4 text-emerald-300 ${isExportingRosterXlsx ? 'animate-bounce' : ''}`} />
+                    <span>
+                      {isExportingRosterXlsx
+                        ? (lang === 'km' ? 'កំពុងបង្កើត...' : 'Generating...')
+                        : (lang === 'km' ? 'ទាញយក Excel' : 'Export Excel (.xlsx)')}
+                    </span>
+                  </button>
+
+                  {/* Roster CSV Export */}
+                  <button
+                    type="button"
+                    disabled={isExportingRosterCsv}
+                    onClick={() => handleDownloadRosterCsv()}
+                    className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-teal-900/20 transition cursor-pointer disabled:opacity-60"
+                    title="Export Roster to CSV"
+                  >
+                    <Download className="w-4 h-4 text-teal-300" />
+                    <span>
+                      {lang === 'km' ? 'ទាញយក CSV' : 'Export CSV'}
+                    </span>
+                  </button>
+
                   <button
                     type="button"
                     disabled={isExportingModalPdf}
@@ -2496,85 +3283,83 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                                 {/* Detailed Table of Month Days scaled to full A4 landscape page */}
                                 <div className="border border-slate-300 rounded-xl overflow-hidden shadow-xs">
-                                  <table className="w-full text-left text-[10.5px] leading-snug border-collapse">
-                                    <thead className="bg-slate-800 text-white font-bold uppercase text-[9.5px] tracking-wider">
-                                      <tr className="border-b border-slate-800">
-                                        <th className="py-1.5 px-2 w-8 text-center border-r border-slate-700 whitespace-nowrap">No</th>
-                                        <th className="py-1.5 px-2.5 border-r border-slate-700 w-24 whitespace-nowrap">Date</th>
-                                        <th className="py-1.5 px-2.5 border-r border-slate-700 w-28 whitespace-nowrap">Day of Week</th>
-                                        <th className="py-1.5 px-3 border-r border-slate-700 whitespace-nowrap">Employee Name</th>
-                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Department</th>
-                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Branch</th>
-                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Time In</th>
-                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Time Out</th>
-                                        <th className="py-1.5 px-2 text-center border-r border-slate-700 w-20 whitespace-nowrap">Work Hours</th>
-                                        <th className="py-1.5 px-3 border-r border-slate-700 w-32 whitespace-nowrap">Status</th>
-                                        <th className="py-1.5 px-3 whitespace-nowrap">Remark / Verification</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-200 font-sans text-[10px] leading-snug">
-                                      {group.rows.map((r, rIdx) => {
-                                        const isSun = r.isSunday;
-                                        const isDayOff = r.isDayOff;
-                                        const isLeave = r.isLeave;
+                                  {(() => {
+                                    const printDailyCols = dailyTableSettings.applyToPrint
+                                      ? DAILY_TIMESHEET_COLUMNS.filter((col) => dailyTableSettings.visibleColumns.includes(col.id))
+                                      : DAILY_TIMESHEET_COLUMNS;
 
-                                        let rowBg = rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50';
-                                        if (isSun) rowBg = 'bg-rose-50/70 text-rose-900 font-bold';
-                                        else if (isDayOff) rowBg = 'bg-amber-50/70 text-amber-950 font-medium';
-                                        else if (isLeave) rowBg = 'bg-purple-50/70 text-purple-950 font-medium';
-
-                                        return (
-                                          <tr
-                                            key={`row_${emp.id}_${r.date}_${rIdx}`}
-                                            className={rowBg}
-                                          >
-                                            <td className="py-1 px-2 text-center border-r border-slate-200 whitespace-nowrap">{rIdx + 1}</td>
-                                            <td className="py-1 px-2.5 font-bold border-r border-slate-200 whitespace-nowrap">{r.date}</td>
-                                            <td className="py-1 px-2.5 border-r border-slate-200 font-sans font-medium whitespace-nowrap">{r.dayOfWeek}</td>
-                                            <td className="py-1 px-3 font-sans font-semibold border-r border-slate-200 whitespace-nowrap">{emp.nameEn} {emp.nameKh ? `(${emp.nameKh})` : ''}</td>
-                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{emp.department || 'Operations'}</td>
-                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">{r.branchNameEn}</td>
-                                            <td className="py-1 px-2 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">{r.timeIn}</td>
-                                            <td className="py-1 px-2 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">{r.timeOut}</td>
-                                            <td className="py-1 px-2 text-center font-bold text-indigo-700 border-r border-slate-200 whitespace-nowrap">{r.durationHours}</td>
-                                            <td className="py-1 px-3 font-sans border-r border-slate-200 whitespace-nowrap">
-                                              {isSun ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                                                  SUNDAY REST
-                                                </span>
-                                              ) : isDayOff ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                                                  DAY OFF (សម្រាក)
-                                                </span>
-                                              ) : isLeave ? (
-                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
-                                                  LEAVE (ច្បាប់)
-                                                </span>
-                                              ) : (
-                                                <span className={r.status.toLowerCase().includes('late') ? 'text-amber-700 font-bold' : r.status.toLowerCase().includes('absent') ? 'text-rose-700 font-bold' : 'text-emerald-700 font-bold'}>
-                                                  {r.status}
-                                                </span>
-                                              )}
-                                            </td>
-                                            <td className="py-1 px-3 font-sans text-slate-600 text-[9.5px] leading-tight whitespace-nowrap">{r.remark}</td>
+                                    return (
+                                      <table
+                                        className="w-full text-left leading-snug border-collapse"
+                                        style={{
+                                          fontFamily: dailyTableSettings.applyToPrint
+                                            ? selectedDailyFont.familyCss
+                                            : "'Kantumruy Pro', 'Battambang', 'Noto Sans Khmer', sans-serif",
+                                          fontSize: dailyTableSettings.applyToPrint
+                                            ? `${Math.max(8.5, dailyTableSettings.fontSizePx - 1.5)}px`
+                                            : '10px',
+                                        }}
+                                      >
+                                        <thead className="bg-slate-800 text-white font-bold uppercase text-[9px] tracking-wider">
+                                          <tr className="border-b border-slate-800">
+                                            {printDailyCols.map((c) => (
+                                              <th
+                                                key={c.id}
+                                                className={`py-1.5 px-2 border-r border-slate-700 whitespace-nowrap ${
+                                                  c.align === 'center' ? 'text-center' : 'text-left'
+                                                }`}
+                                              >
+                                                {lang === 'km' ? c.labelKh : c.labelEn}
+                                              </th>
+                                            ))}
                                           </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                    <tfoot className="bg-slate-100 text-slate-800 font-bold text-[10px] border-t-2 border-slate-300">
-                                      <tr className="whitespace-nowrap">
-                                        <td colSpan={8} className="py-1.5 px-3 text-right font-sans uppercase">
-                                          {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
-                                        </td>
-                                        <td className="py-1.5 px-2 text-center text-indigo-700 font-bold font-mono text-[11px]">
-                                          {group.summary.totalWorkHours}h
-                                        </td>
-                                        <td colSpan={2} className="py-1.5 px-3 text-left text-slate-600 font-sans font-medium text-[9.5px]">
-                                          Days Present: {group.summary.daysWorked} | Days Off: {group.summary.daysOff} | Leave: {group.summary.daysLeave} | Late: {group.summary.lateDays}
-                                        </td>
-                                      </tr>
-                                    </tfoot>
-                                  </table>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 font-sans leading-snug">
+                                          {group.rows.map((r, rIdx) => {
+                                            const isSun = r.isSunday;
+                                            const isDayOff = r.isDayOff;
+                                            const isLeave = r.isLeave;
+
+                                            let rowBg = rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50';
+                                            if (isSun) rowBg = 'bg-rose-50/70 text-rose-900 font-bold';
+                                            else if (isDayOff) rowBg = 'bg-amber-50/70 text-amber-950 font-medium';
+                                            else if (isLeave) rowBg = 'bg-purple-50/70 text-purple-950 font-medium';
+
+                                            return (
+                                              <tr key={`row_${emp.id}_${r.date}_${rIdx}`} className={rowBg}>
+                                                {printDailyCols.map((c) => (
+                                                  <td
+                                                    key={c.id}
+                                                    className={`py-1 px-2 border-r border-slate-200 whitespace-nowrap ${
+                                                      c.align === 'center' ? 'text-center' : 'text-left'
+                                                    }`}
+                                                  >
+                                                    {renderDailyCellContent(r, c.id)}
+                                                  </td>
+                                                ))}
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                        <tfoot className="bg-slate-100 text-slate-800 font-bold text-[9.5px] border-t-2 border-slate-300">
+                                          <tr className="whitespace-nowrap">
+                                            <td
+                                              colSpan={Math.max(1, printDailyCols.length - 2)}
+                                              className="py-1.5 px-3 text-right font-sans uppercase"
+                                            >
+                                              {lang === 'km' ? 'សរុបម៉ោងការងារប្រចាំខែ:' : 'Monthly Total Work Hours:'}
+                                            </td>
+                                            <td className="py-1.5 px-2 text-center text-indigo-700 font-bold font-mono text-[10.5px]">
+                                              {group.summary.totalWorkHours}h
+                                            </td>
+                                            <td className="py-1.5 px-3 text-left text-slate-600 font-sans font-medium text-[9px]">
+                                              Worked: {group.summary.daysWorked}d | Off: {group.summary.daysOff}d | Leave: {group.summary.daysLeave}d | Late: {group.summary.lateDays}d
+                                            </td>
+                                          </tr>
+                                        </tfoot>
+                                      </table>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             );
@@ -2701,6 +3486,34 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 7. Report Table Customizer Dialog (Remove Columns, Font Size, Fonts, Column Widths, Styles) */}
+      <ReportTableCustomizerModal
+        isOpen={showCustomizerModal}
+        onClose={() => setShowCustomizerModal(false)}
+        settings={customizerTarget === 'daily' ? dailyTableSettings : mergedTableSettings}
+        onSaveSettings={(newSettings) => {
+          if (customizerTarget === 'daily') {
+            handleUpdateDailySettings(newSettings);
+          } else {
+            handleUpdateMergedSettings(newSettings);
+          }
+        }}
+        onResetSettings={() => {
+          if (customizerTarget === 'daily') {
+            handleResetDailySettings();
+          } else {
+            handleResetMergedSettings();
+          }
+        }}
+        availableColumns={customizerTarget === 'daily' ? DAILY_TIMESHEET_COLUMNS : MERGED_SUMMARY_COLUMNS}
+        lang={lang}
+        tableTitle={
+          customizerTarget === 'daily'
+            ? (lang === 'km' ? 'តារាងវត្តមានប្រចាំថ្ងៃ (Daily Roster Matrix)' : 'Daily Chronological Timesheet Table')
+            : (lang === 'km' ? 'តារាងសង្ខេបបូកសរុបបុគ្គលិក (Merged Summary Table)' : 'Merged Employee Summary Table')
+        }
+      />
     </div>
   );
 };

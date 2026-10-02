@@ -1,8 +1,10 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas-pro';
+import ExcelJS from 'exceljs';
 import { AttendanceRecord, Branch, Employee, Language, LeaveRequest } from '../types';
 import { isEmployeeDayOff, isEmployeeSundayRest, getEmployeeLeaveOnDate, getEmployeeDayOffName } from './dayOffUtils';
+import { ReportTableSettings, DAILY_TIMESHEET_COLUMNS, MERGED_SUMMARY_COLUMNS } from '../types/tableCustomization';
 
 export interface TimesheetRow {
   no: number;
@@ -466,11 +468,23 @@ export function generateEmployeeMergedSummaries(
   });
 }
 
+// ---------------------------------------------------------------------------
+// CSV EXPORTS (ENHANCED WITH AUDIT METADATA & KPI SUMMARY ROWS)
+// ---------------------------------------------------------------------------
+
 export function exportTimesheetToCsv(
   rows: TimesheetRow[],
   branchTitle: string,
-  dateRangeStr: string
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE'
 ) {
+  const totalRows = rows.length;
+  const totalPunches = rows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
+  const totalSundays = rows.filter((r) => r.isSunday).length;
+  const onTimeCount = rows.filter((r) => r.status.toLowerCase().includes('on-time')).length;
+  const lateCount = rows.filter((r) => r.status.toLowerCase().includes('late')).length;
+  const totalWorkHoursNum = rows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0);
+
   const headers = [
     'No',
     'Enroll ID',
@@ -505,11 +519,31 @@ export function exportTimesheetToCsv(
     `"${r.remark.replace(/"/g, '""')}"`,
   ]);
 
+  // Total Summary row
+  const totalRow = [
+    '"TOTALS"',
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    `"Total Rows: ${totalRows}"`,
+    `"Sundays: ${totalSundays}"`,
+    `"Punches: ${totalPunches}"`,
+    `"On-Time: ${onTimeCount}"`,
+    `"${totalWorkHoursNum.toFixed(1)}h"`,
+    `"Late: ${lateCount}"`,
+    '""',
+  ];
+
   const csvContent =
     '\uFEFF' +
-    `"ATTENDANCE & TIMESHEET AUDIT REPORT"\n` +
-    `"Branch: ${branchTitle} | Date Range: ${dateRangeStr} | Generated: ${new Date().toLocaleString()}"\n\n` +
-    [headers.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
+    `"${companyName}"\n` +
+    `"DAILY ATTENDANCE AUDIT & PUNCH TIMESHEET / របាយការណ៍សវនកម្មវត្តមាន និងកត់ម៉ោងបុគ្គលិកប្រចាំថ្ងៃ"\n` +
+    `"Branch: ${branchTitle} | Date Range: ${dateRangeStr} | Generated: ${new Date().toLocaleString('km-KH')}"\n` +
+    `"KPI Summary: Total Records: ${totalRows} | Punches: ${totalPunches} | On-Time: ${onTimeCount} | Late: ${lateCount} | Sundays: ${totalSundays} | Total Hours: ${totalWorkHoursNum.toFixed(1)}h"\n\n` +
+    [headers.join(','), ...csvRows.map((row) => row.join(',')), totalRow.join(',')].join('\n');
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -522,13 +556,22 @@ export function exportTimesheetToCsv(
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function exportMergedSummaryToCsv(
   summaries: EmployeeMergedSummary[],
   branchTitle: string,
-  dateRangeStr: string
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE'
 ) {
+  const totalEmployees = summaries.length;
+  const totalWorkHours = summaries.reduce((acc, s) => acc + s.totalWorkHours, 0).toFixed(1);
+  const totalOtHours = summaries.reduce((acc, s) => acc + s.totalOtHours, 0).toFixed(1);
+  const avgAttendance = totalEmployees > 0
+    ? Math.round(summaries.reduce((acc, s) => acc + s.attendanceRate, 0) / totalEmployees)
+    : 100;
+
   const headers = [
     'No',
     'Enroll ID',
@@ -569,11 +612,33 @@ export function exportMergedSummaryToCsv(
     `"${s.attendanceRate}%"`,
   ]);
 
+  const totalRow = [
+    '"TOTALS"',
+    '""',
+    `"Staff: ${totalEmployees}"`,
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    `"${summaries.reduce((acc, s) => acc + s.daysPresent, 0)}"`,
+    `"${summaries.reduce((acc, s) => acc + s.daysAbsent, 0)}"`,
+    `"${summaries.reduce((acc, s) => acc + s.daysOnTime, 0)}"`,
+    `"${summaries.reduce((acc, s) => acc + s.daysLate, 0)}"`,
+    `"${summaries.reduce((acc, s) => acc + s.daysOvertime, 0)}"`,
+    `"${totalWorkHours}h"`,
+    `"${totalOtHours}h"`,
+    `"${summaries.reduce((acc, s) => acc + s.sundaysCount, 0)}"`,
+    `"${avgAttendance}% (Avg)"`,
+  ];
+
   const csvContent =
     '\uFEFF' +
-    `"MERGED EMPLOYEE ATTENDANCE & PAYROLL SUMMARY REPORT"\n` +
-    `"Branch: ${branchTitle} | Date Range: ${dateRangeStr} | Generated: ${new Date().toLocaleString()}"\n\n` +
-    [headers.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
+    `"${companyName}"\n` +
+    `"MERGED EMPLOYEE ATTENDANCE & WORK SUMMARY / របាយការណ៍សង្ខេបវត្តមាន និងម៉ោងការងារបុគ្គលិកប្រចាំខែ"\n` +
+    `"Branch: ${branchTitle} | Date Range: ${dateRangeStr} | Generated: ${new Date().toLocaleString('km-KH')}"\n` +
+    `"KPI Summary: Staff Count: ${totalEmployees} | Total Work Hours: ${totalWorkHours}h | Total OT Hours: ${totalOtHours}h | Avg Attendance: ${avgAttendance}%"\n\n` +
+    [headers.join(','), ...csvRows.map((row) => row.join(',')), totalRow.join(',')].join('\n');
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -586,6 +651,649 @@ export function exportMergedSummaryToCsv(
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// STYLED EXCEL (XLSX) EXPORTS WITH IDENTICAL VISUAL FORMAT AS PDF
+// ---------------------------------------------------------------------------
+
+/**
+ * Exports Daily Timesheet to a richly styled Excel (.xlsx) workbook,
+ * mirroring the exact visual structure, colors, KPI banners, and formatting of the PDF report.
+ */
+export async function exportTimesheetToXlsx(
+  rows: TimesheetRow[],
+  branchTitle: string,
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE',
+  customSettings?: ReportTableSettings
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = companyName;
+  workbook.created = new Date();
+
+  const worksheet = workbook.addWorksheet('Daily Timesheet', {
+    views: [{ showGridLines: true }],
+    pageSetup: {
+      orientation: 'landscape',
+      paperSize: 9, // A4
+      fitToWidth: 1,
+      fitToHeight: 0,
+    },
+  });
+
+  // Calculate KPIs
+  const totalRows = rows.length;
+  const totalPunches = rows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
+  const totalSundays = rows.filter((r) => r.isSunday).length;
+  const onTimeCount = rows.filter((r) => r.status.toLowerCase().includes('on-time')).length;
+  const lateCount = rows.filter((r) => r.status.toLowerCase().includes('late')).length;
+  const totalWorkHoursNum = rows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0);
+
+  // Column definitions matching the PDF layout
+  const columnsDef = [
+    { key: 'no', header: 'No', width: 7, align: 'center' },
+    { key: 'date', header: 'Date', width: 13, align: 'center' },
+    { key: 'dayOfWeek', header: 'Day of Week', width: 16, align: 'left' },
+    { key: 'enrollId', header: 'Staff ID', width: 12, align: 'center' },
+    { key: 'name', header: 'Employee Name (EN & KH)', width: 28, align: 'left' },
+    { key: 'department', header: 'Department (ផ្នែក)', width: 18, align: 'left' },
+    { key: 'branch', header: 'Branch (សាខា)', width: 18, align: 'left' },
+    { key: 'timeIn', header: 'Time In', width: 12, align: 'center' },
+    { key: 'timeOut', header: 'Time Out', width: 12, align: 'center' },
+    { key: 'durationHours', header: 'Work Hours', width: 13, align: 'center' },
+    { key: 'status', header: 'Status (ស្ថានភាព)', width: 18, align: 'center' },
+    { key: 'remark', header: 'Remark & GPS Verification', width: 34, align: 'left' },
+  ];
+
+  const colCount = columnsDef.length;
+
+  // Set column widths
+  worksheet.columns = columnsDef.map((col) => ({
+    key: col.key,
+    width: col.width,
+  }));
+
+  // Border presets
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+  };
+
+  const kpiBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  // 1. Company Name Header (Row 1)
+  const row1 = worksheet.getRow(1);
+  row1.height = 20;
+  worksheet.mergeCells(1, 1, 1, colCount);
+  const cellA1 = worksheet.getCell(1, 1);
+  cellA1.value = companyName.toUpperCase();
+  cellA1.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
+  cellA1.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 2. Main Title (Row 2)
+  const row2 = worksheet.getRow(2);
+  row2.height = 28;
+  worksheet.mergeCells(2, 1, 2, colCount);
+  const cellA2 = worksheet.getCell(2, 1);
+  cellA2.value = 'DAILY ATTENDANCE AUDIT & PUNCH TIMESHEET';
+  cellA2.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FF0F172A' } };
+  cellA2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 3. Khmer Subtitle (Row 3)
+  const row3 = worksheet.getRow(3);
+  row3.height = 22;
+  worksheet.mergeCells(3, 1, 3, colCount);
+  const cellA3 = worksheet.getCell(3, 1);
+  cellA3.value = 'របាយការណ៍សវនកម្មវត្តមាន និងកត់ម៉ោងបុគ្គលិកប្រចាំថ្ងៃ';
+  cellA3.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF475569' } };
+  cellA3.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 4. Spacer (Row 4)
+  worksheet.getRow(4).height = 6;
+
+  // 5. Metadata Banner Bar (Row 5)
+  const row5 = worksheet.getRow(5);
+  row5.height = 24;
+
+  worksheet.mergeCells(5, 1, 5, 4);
+  const cellMetaBranch = worksheet.getCell(5, 1);
+  cellMetaBranch.value = `សាខា (Branch): ${branchTitle}`;
+  cellMetaBranch.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+  cellMetaBranch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaBranch.alignment = { horizontal: 'left', vertical: 'middle' };
+  cellMetaBranch.border = thinBorder;
+
+  worksheet.mergeCells(5, 5, 5, 8);
+  const cellMetaPeriod = worksheet.getCell(5, 5);
+  cellMetaPeriod.value = `កាលបរិច្ឆេទ (Period): ${dateRangeStr}`;
+  cellMetaPeriod.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF4338CA' } };
+  cellMetaPeriod.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaPeriod.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellMetaPeriod.border = thinBorder;
+
+  worksheet.mergeCells(5, 9, 5, colCount);
+  const cellMetaGen = worksheet.getCell(5, 9);
+  cellMetaGen.value = `បង្កើតនៅ (Generated): ${new Date().toLocaleDateString('km-KH')} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  cellMetaGen.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF475569' } };
+  cellMetaGen.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaGen.alignment = { horizontal: 'right', vertical: 'middle' };
+  cellMetaGen.border = thinBorder;
+
+  // 6. Spacer (Row 6)
+  worksheet.getRow(6).height = 8;
+
+  // 7 & 8. KPI Summary Tiles Strip (Rows 7-8)
+  const row7 = worksheet.getRow(7);
+  const row8 = worksheet.getRow(8);
+  row7.height = 18;
+  row8.height = 24;
+
+  const kpis = [
+    { title: 'កំណត់ត្រាសរុប (Total)', val: `${totalRows}`, colStart: 1, colEnd: 2, bg: 'FFF1F5F9', text: 'FF0F172A', titleColor: 'FF64748B' },
+    { title: 'វត្តមានស្កេន (Punches)', val: `${totalPunches}`, colStart: 3, colEnd: 4, bg: 'FFECFDF5', text: 'FF047857', titleColor: 'FF065F46' },
+    { title: 'ទាន់ពេល (On-Time)', val: `${onTimeCount}`, colStart: 5, colEnd: 6, bg: 'FFEFF6FF', text: 'FF2563EB', titleColor: 'FF1E40AF' },
+    { title: 'មកយឺត (Late)', val: `${lateCount}`, colStart: 7, colEnd: 8, bg: 'FFFFFBEB', text: 'FFD97706', titleColor: 'FF92400E' },
+    { title: 'ថ្ងៃអាទិត្យ (Sundays)', val: `${totalSundays}`, colStart: 9, colEnd: 10, bg: 'FFFEF2F2', text: 'FFDC2626', titleColor: 'FF991B1B' },
+    { title: 'ម៉ោងការងារសរុប', val: `${totalWorkHoursNum.toFixed(1)}h`, colStart: 11, colEnd: colCount, bg: 'FFF5F3FF', text: 'FF6D28D9', titleColor: 'FF5B21B6' },
+  ];
+
+  kpis.forEach((kpi) => {
+    worksheet.mergeCells(7, kpi.colStart, 7, kpi.colEnd);
+    worksheet.mergeCells(8, kpi.colStart, 8, kpi.colEnd);
+
+    const titleCell = worksheet.getCell(7, kpi.colStart);
+    titleCell.value = kpi.title;
+    titleCell.font = { name: 'Arial', size: 9, bold: true, color: { argb: kpi.titleColor } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.border = kpiBorder;
+
+    const valCell = worksheet.getCell(8, kpi.colStart);
+    valCell.value = kpi.val;
+    valCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: kpi.text } };
+    valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+    valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    valCell.border = kpiBorder;
+  });
+
+  // 9. Spacer (Row 9)
+  worksheet.getRow(9).height = 8;
+
+  // 10. Table Header Row (Row 10)
+  const headerRowIdx = 10;
+  const headerRow = worksheet.getRow(headerRowIdx);
+  headerRow.height = 28;
+
+  columnsDef.forEach((col, idx) => {
+    const colIdx = idx + 1;
+    const cell = worksheet.getCell(headerRowIdx, colIdx);
+    cell.value = col.header;
+    cell.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } }; // Dark Navy Pro
+    cell.alignment = { horizontal: col.align as any, vertical: 'middle', wrapText: true };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF0F172A' } },
+      left: { style: 'thin', color: { argb: 'FF334155' } },
+      bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+      right: { style: 'thin', color: { argb: 'FF334155' } },
+    };
+  });
+
+  // 11+. Data Rows (Starting from Row 11)
+  let currentRowIdx = 11;
+
+  rows.forEach((r, idx) => {
+    const row = worksheet.getRow(currentRowIdx);
+    row.height = 21;
+
+    const isSun = r.isSunday;
+    const isOff = r.isDayOff;
+    const isLv = r.isLeave;
+
+    let rowBg = 'FFFFFFFF';
+    let textColor = 'FF1E293B';
+    let isSpecial = false;
+
+    if (isSun) {
+      rowBg = 'FFFEF2F2'; // soft red
+      textColor = 'FF991B1B'; // dark red
+      isSpecial = true;
+    } else if (isOff) {
+      rowBg = 'FFFEF3C7'; // soft amber
+      textColor = 'FF92400E'; // dark amber
+      isSpecial = true;
+    } else if (isLv) {
+      rowBg = 'FFF3E8FF'; // soft purple
+      textColor = 'FF6B21A8'; // dark purple
+      isSpecial = true;
+    } else if (idx % 2 === 1) {
+      rowBg = 'FFF8FAFC'; // zebra striping
+    }
+
+    const nameDisplay = r.nameKh ? `${r.nameEn} (${r.nameKh})` : r.nameEn;
+    const branchDisplay = r.branchNameKh ? `${r.branchNameEn} (${r.branchNameKh})` : r.branchNameEn;
+
+    const cellValues: Record<string, any> = {
+      no: idx + 1,
+      date: r.date,
+      dayOfWeek: r.dayOfWeek,
+      enrollId: r.enrollId || r.employeeId.slice(0, 6),
+      name: nameDisplay,
+      department: r.department || 'Operations',
+      branch: branchDisplay,
+      timeIn: r.timeIn,
+      timeOut: r.timeOut,
+      durationHours: r.durationHours !== '0.0h' ? r.durationHours : '--',
+      status: r.status,
+      remark: r.remark || '-',
+    };
+
+    columnsDef.forEach((col, cIdx) => {
+      const colIdx = cIdx + 1;
+      const cell = worksheet.getCell(currentRowIdx, colIdx);
+      cell.value = cellValues[col.key];
+
+      // Styling
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+      cell.border = thinBorder;
+      cell.alignment = {
+        horizontal: col.align as any,
+        vertical: 'middle',
+        wrapText: col.key === 'remark' || col.key === 'name',
+      };
+
+      if (col.key === 'durationHours' && r.durationHours !== '0.0h') {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF4338CA' } };
+      } else if (col.key === 'name' || col.key === 'enrollId') {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: textColor } };
+      } else if (isSpecial) {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: textColor } };
+      } else {
+        cell.font = { name: 'Arial', size: 10, color: { argb: textColor } };
+      }
+    });
+
+    currentRowIdx++;
+  });
+
+  // Summary / Totals Row at the bottom
+  const summaryRow = worksheet.getRow(currentRowIdx);
+  summaryRow.height = 26;
+
+  worksheet.mergeCells(currentRowIdx, 1, currentRowIdx, 9);
+  const cellSumLabel = worksheet.getCell(currentRowIdx, 1);
+  cellSumLabel.value = 'TOTALS / សរុបម៉ោងការងារ និងកំណត់ត្រា:';
+  cellSumLabel.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+  cellSumLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+  cellSumLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+  cellSumLabel.border = {
+    top: { style: 'medium', color: { argb: 'FF0F172A' } },
+    bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  const cellSumHours = worksheet.getCell(currentRowIdx, 10);
+  cellSumHours.value = `${totalWorkHoursNum.toFixed(1)}h`;
+  cellSumHours.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF4338CA' } };
+  cellSumHours.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+  cellSumHours.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellSumHours.border = {
+    top: { style: 'medium', color: { argb: 'FF0F172A' } },
+    bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  worksheet.mergeCells(currentRowIdx, 11, currentRowIdx, colCount);
+  const cellSumMeta = worksheet.getCell(currentRowIdx, 11);
+  cellSumMeta.value = `Punches: ${totalPunches} | Late: ${lateCount} | Sundays: ${totalSundays} | Total Rows: ${totalRows}`;
+  cellSumMeta.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF475569' } };
+  cellSumMeta.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+  cellSumMeta.alignment = { horizontal: 'left', vertical: 'middle' };
+  cellSumMeta.border = {
+    top: { style: 'medium', color: { argb: 'FF0F172A' } },
+    bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  // Write and trigger download
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute(
+    'download',
+    `Attendance_Report_${branchTitle.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`
+  );
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Exports Merged/Consolidated Employee Summary to a richly styled Excel (.xlsx) workbook,
+ * mirroring the exact visual structure, colors, KPI banners, and formatting of the PDF report.
+ */
+export async function exportMergedSummaryToXlsx(
+  summaries: EmployeeMergedSummary[],
+  branchTitle: string,
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE',
+  customSettings?: ReportTableSettings
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = companyName;
+  workbook.created = new Date();
+
+  const worksheet = workbook.addWorksheet('Employee Summary', {
+    views: [{ showGridLines: true }],
+    pageSetup: {
+      orientation: 'landscape',
+      paperSize: 9, // A4
+      fitToWidth: 1,
+      fitToHeight: 0,
+    },
+  });
+
+  const totalEmployees = summaries.length;
+  const totalWorkHours = summaries.reduce((acc, s) => acc + s.totalWorkHours, 0).toFixed(1);
+  const totalOtHours = summaries.reduce((acc, s) => acc + s.totalOtHours, 0).toFixed(1);
+  const avgAttendance = totalEmployees > 0
+    ? Math.round(summaries.reduce((acc, s) => acc + s.attendanceRate, 0) / totalEmployees)
+    : 100;
+
+  const columnsDef = [
+    { key: 'no', header: 'No', width: 7, align: 'center' },
+    { key: 'enrollId', header: 'Staff ID', width: 12, align: 'center' },
+    { key: 'name', header: 'Employee Name (ឈ្មោះបុគ្គលិក)', width: 28, align: 'left' },
+    { key: 'department', header: 'Department (ផ្នែក)', width: 18, align: 'left' },
+    { key: 'role', header: 'Position / Role', width: 18, align: 'left' },
+    { key: 'branch', header: 'Branch (សាខា)', width: 18, align: 'left' },
+    { key: 'daysPresent', header: 'Present Days', width: 13, align: 'center' },
+    { key: 'daysAbsent', header: 'Absent Days', width: 13, align: 'center' },
+    { key: 'daysOff', header: 'Days Off', width: 11, align: 'center' },
+    { key: 'daysLeave', header: 'Leave', width: 11, align: 'center' },
+    { key: 'daysLate', header: 'Late', width: 11, align: 'center' },
+    { key: 'totalWorkHours', header: 'Total Work Hours', width: 16, align: 'center' },
+    { key: 'totalOtHours', header: 'OT Hours', width: 12, align: 'center' },
+    { key: 'attendanceRate', header: 'Attendance %', width: 15, align: 'center' },
+  ];
+
+  const colCount = columnsDef.length;
+
+  worksheet.columns = columnsDef.map((c) => ({
+    key: c.key,
+    width: c.width,
+  }));
+
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+  };
+
+  const kpiBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  // 1. Company Header (Row 1)
+  const row1 = worksheet.getRow(1);
+  row1.height = 20;
+  worksheet.mergeCells(1, 1, 1, colCount);
+  const cellA1 = worksheet.getCell(1, 1);
+  cellA1.value = companyName.toUpperCase();
+  cellA1.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
+  cellA1.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 2. Main Title (Row 2)
+  const row2 = worksheet.getRow(2);
+  row2.height = 28;
+  worksheet.mergeCells(2, 1, 2, colCount);
+  const cellA2 = worksheet.getCell(2, 1);
+  cellA2.value = 'CONSOLIDATED EMPLOYEE ATTENDANCE & WORK SUMMARY';
+  cellA2.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FF0F172A' } };
+  cellA2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 3. Khmer Subtitle (Row 3)
+  const row3 = worksheet.getRow(3);
+  row3.height = 22;
+  worksheet.mergeCells(3, 1, 3, colCount);
+  const cellA3 = worksheet.getCell(3, 1);
+  cellA3.value = 'របាយការណ៍សង្ខេបវត្តមាន និងម៉ោងការងារបុគ្គលិកប្រចាំខែ';
+  cellA3.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF475569' } };
+  cellA3.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // 4. Spacer (Row 4)
+  worksheet.getRow(4).height = 6;
+
+  // 5. Meta Banner (Row 5)
+  const row5 = worksheet.getRow(5);
+  row5.height = 24;
+
+  worksheet.mergeCells(5, 1, 5, 5);
+  const cellMetaBranch = worksheet.getCell(5, 1);
+  cellMetaBranch.value = `សាខា (Branch): ${branchTitle}`;
+  cellMetaBranch.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+  cellMetaBranch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaBranch.alignment = { horizontal: 'left', vertical: 'middle' };
+  cellMetaBranch.border = thinBorder;
+
+  worksheet.mergeCells(5, 6, 5, 10);
+  const cellMetaPeriod = worksheet.getCell(5, 6);
+  cellMetaPeriod.value = `កាលបរិច្ឆេទ (Period): ${dateRangeStr}`;
+  cellMetaPeriod.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF4338CA' } };
+  cellMetaPeriod.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaPeriod.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellMetaPeriod.border = thinBorder;
+
+  worksheet.mergeCells(5, 11, 5, colCount);
+  const cellMetaGen = worksheet.getCell(5, 11);
+  cellMetaGen.value = `ចំនួនបុគ្គលិក: ${totalEmployees} នាក់ | ${new Date().toLocaleDateString('km-KH')}`;
+  cellMetaGen.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF475569' } };
+  cellMetaGen.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+  cellMetaGen.alignment = { horizontal: 'right', vertical: 'middle' };
+  cellMetaGen.border = thinBorder;
+
+  // 6. Spacer (Row 6)
+  worksheet.getRow(6).height = 8;
+
+  // 7 & 8. KPI Summary Tiles Strip (Rows 7-8)
+  const row7 = worksheet.getRow(7);
+  const row8 = worksheet.getRow(8);
+  row7.height = 18;
+  row8.height = 24;
+
+  const kpis = [
+    { title: 'បុគ្គលិកសរុប (Total Staff)', val: `${totalEmployees} នាក់`, colStart: 1, colEnd: 3, bg: 'FFF1F5F9', text: 'FF0F172A', titleColor: 'FF64748B' },
+    { title: 'ម៉ោងការងារសរុប (Total Work Hours)', val: `${totalWorkHours} hrs`, colStart: 4, colEnd: 7, bg: 'FFEFF6FF', text: 'FF2563EB', titleColor: 'FF1E40AF' },
+    { title: 'ម៉ោងបន្ថែម OT (Total OT Hours)', val: `${totalOtHours} hrs`, colStart: 8, colEnd: 10, bg: 'FFF5F3FF', text: 'FF6D28D9', titleColor: 'FF5B21B6' },
+    { title: 'អត្រាវត្តមានមធ្យម (Avg Attendance)', val: `${avgAttendance}%`, colStart: 11, colEnd: colCount, bg: 'FFECFDF5', text: 'FF047857', titleColor: 'FF065F46' },
+  ];
+
+  kpis.forEach((kpi) => {
+    worksheet.mergeCells(7, kpi.colStart, 7, kpi.colEnd);
+    worksheet.mergeCells(8, kpi.colStart, 8, kpi.colEnd);
+
+    const titleCell = worksheet.getCell(7, kpi.colStart);
+    titleCell.value = kpi.title;
+    titleCell.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: kpi.titleColor } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.border = kpiBorder;
+
+    const valCell = worksheet.getCell(8, kpi.colStart);
+    valCell.value = kpi.val;
+    valCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: kpi.text } };
+    valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+    valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    valCell.border = kpiBorder;
+  });
+
+  // 9. Spacer (Row 9)
+  worksheet.getRow(9).height = 8;
+
+  // 10. Table Header Row (Row 10)
+  const headerRowIdx = 10;
+  const headerRow = worksheet.getRow(headerRowIdx);
+  headerRow.height = 28;
+
+  columnsDef.forEach((col, idx) => {
+    const colIdx = idx + 1;
+    const cell = worksheet.getCell(headerRowIdx, colIdx);
+    cell.value = col.header;
+    cell.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    cell.alignment = { horizontal: col.align as any, vertical: 'middle', wrapText: true };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF0F172A' } },
+      left: { style: 'thin', color: { argb: 'FF334155' } },
+      bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+      right: { style: 'thin', color: { argb: 'FF334155' } },
+    };
+  });
+
+  // 11+. Data Rows (Starting from Row 11)
+  let currentRowIdx = 11;
+
+  summaries.forEach((s, idx) => {
+    const row = worksheet.getRow(currentRowIdx);
+    row.height = 22;
+
+    const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+    const nameDisplay = s.nameKh ? `${s.nameEn} (${s.nameKh})` : s.nameEn;
+    const branchDisplay = s.branchNameKh ? `${s.branchNameEn} (${s.branchNameKh})` : s.branchNameEn;
+
+    const cellValues: Record<string, any> = {
+      no: idx + 1,
+      enrollId: s.enrollId || s.employeeId.slice(0, 6),
+      name: nameDisplay,
+      department: s.department,
+      role: s.role,
+      branch: branchDisplay,
+      daysPresent: s.daysPresent,
+      daysAbsent: s.daysAbsent,
+      daysOff: s.daysOff,
+      daysLeave: s.daysLeave,
+      daysLate: s.daysLate,
+      totalWorkHours: `${s.totalWorkHours}h`,
+      totalOtHours: `${s.totalOtHours}h`,
+      attendanceRate: `${s.attendanceRate}%`,
+    };
+
+    columnsDef.forEach((col, cIdx) => {
+      const colIdx = cIdx + 1;
+      const cell = worksheet.getCell(currentRowIdx, colIdx);
+      cell.value = cellValues[col.key];
+
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+      cell.border = thinBorder;
+      cell.alignment = { horizontal: col.align as any, vertical: 'middle' };
+
+      if (col.key === 'name' || col.key === 'enrollId') {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+      } else if (col.key === 'daysPresent') {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF047857' } };
+      } else if (col.key === 'daysAbsent' && s.daysAbsent > 0) {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFDC2626' } };
+      } else if (col.key === 'totalWorkHours') {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF4338CA' } };
+      } else if (col.key === 'attendanceRate') {
+        const rateColor = s.attendanceRate >= 90 ? 'FF047857' : s.attendanceRate >= 75 ? 'FFD97706' : 'FFDC2626';
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: rateColor } };
+      } else {
+        cell.font = { name: 'Arial', size: 10, color: { argb: 'FF1E293B' } };
+      }
+    });
+
+    currentRowIdx++;
+  });
+
+  // Summary / Totals Row at the bottom
+  const summaryRow = worksheet.getRow(currentRowIdx);
+  summaryRow.height = 26;
+
+  worksheet.mergeCells(currentRowIdx, 1, currentRowIdx, 6);
+  const cellSumLabel = worksheet.getCell(currentRowIdx, 1);
+  cellSumLabel.value = `TOTALS / សរុបបុគ្គលិក (${totalEmployees} នាក់):`;
+  cellSumLabel.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+  cellSumLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+  cellSumLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+  cellSumLabel.border = {
+    top: { style: 'medium', color: { argb: 'FF0F172A' } },
+    bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  const totalPresentSum = summaries.reduce((acc, s) => acc + s.daysPresent, 0);
+  const totalAbsentSum = summaries.reduce((acc, s) => acc + s.daysAbsent, 0);
+  const totalOffSum = summaries.reduce((acc, s) => acc + s.daysOff, 0);
+  const totalLeaveSum = summaries.reduce((acc, s) => acc + s.daysLeave, 0);
+  const totalLateSum = summaries.reduce((acc, s) => acc + s.daysLate, 0);
+
+  const sumValues: Record<number, { val: string; color: string }> = {
+    7: { val: `${totalPresentSum}`, color: 'FF047857' },
+    8: { val: `${totalAbsentSum}`, color: 'FFDC2626' },
+    9: { val: `${totalOffSum}`, color: 'FFB45309' },
+    10: { val: `${totalLeaveSum}`, color: 'FF7E22CE' },
+    11: { val: `${totalLateSum}`, color: 'FFD97706' },
+    12: { val: `${totalWorkHours}h`, color: 'FF4338CA' },
+    13: { val: `${totalOtHours}h`, color: 'FF6D28D9' },
+    14: { val: `${avgAttendance}%`, color: 'FF047857' },
+  };
+
+  for (let c = 7; c <= colCount; c++) {
+    const cell = worksheet.getCell(currentRowIdx, c);
+    const item = sumValues[c];
+    if (item) {
+      cell.value = item.val;
+      cell.font = { name: 'Arial', size: 10.5, bold: true, color: { argb: item.color } };
+    }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF0F172A' } },
+      bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    };
+  }
+
+  // Write and trigger download
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute(
+    'download',
+    `Merged_Employee_Summary_${branchTitle.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`
+  );
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export async function exportTimesheetToPdf(
@@ -1176,4 +1884,646 @@ export async function exportRosterPrintSheetsToPdf(
   } finally {
     document.body.removeChild(offscreen);
   }
+}
+
+/**
+ * Exports Employee Roster & Timesheet to a styled Excel (.xlsx) workbook,
+ * mirroring the exact visual layout, colors, status badges, and typography of the PDF.
+ * Contains both a full detailed Day-by-Day Roster sheet and an Executive Staff Summary sheet.
+ */
+export async function exportRosterToXlsx(
+  departmentStaffGroups: PrintableDepartmentGroup[],
+  branchTitle: string,
+  monthYearStr: string,
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE'
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = companyName;
+  workbook.created = new Date();
+
+  // 1. Detailed Chronological Roster Worksheet
+  const worksheet = workbook.addWorksheet('Staff Roster Schedule', {
+    views: [{ showGridLines: true }],
+    pageSetup: {
+      orientation: 'landscape',
+      paperSize: 9, // A4
+      fitToWidth: 1,
+      fitToHeight: 0,
+    },
+  });
+
+  // Calculate Overall Roster KPIs
+  let totalStaff = 0;
+  let totalWorkHoursNum = 0;
+  let totalDaysWorked = 0;
+  let totalDaysOff = 0;
+  let totalDaysLeave = 0;
+  let totalLateCount = 0;
+
+  departmentStaffGroups.forEach((dept) => {
+    dept.staffList.forEach((st) => {
+      totalStaff++;
+      totalWorkHoursNum += parseFloat(st.summary.totalWorkHours) || 0;
+      totalDaysWorked += st.summary.daysWorked;
+      totalDaysOff += st.summary.daysOff;
+      totalDaysLeave += st.summary.daysLeave;
+      totalLateCount += st.summary.lateDays;
+    });
+  });
+
+  const columnsDef = [
+    { key: 'no', header: 'No', width: 7 },
+    { key: 'date', header: 'Date', width: 13 },
+    { key: 'dayOfWeek', header: 'Day of Week', width: 15 },
+    { key: 'name', header: 'Employee Name', width: 28 },
+    { key: 'department', header: 'Department (ផ្នែក)', width: 22 },
+    { key: 'branch', header: 'Branch (សាខា)', width: 20 },
+    { key: 'timeIn', header: 'Time In', width: 12 },
+    { key: 'timeOut', header: 'Time Out', width: 12 },
+    { key: 'durationHours', header: 'Work Hours', width: 13 },
+    { key: 'status', header: 'Status (ស្ថានភាព)', width: 20 },
+    { key: 'remark', header: 'Remark & Verification', width: 34 },
+  ];
+
+  const colCount = columnsDef.length;
+  worksheet.columns = columnsDef.map((c) => ({ key: c.key, width: c.width }));
+
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+  };
+
+  const kpiBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  // Row 1: Company Title
+  let currentRowNum = 1;
+  const row1 = worksheet.getRow(currentRowNum);
+  row1.height = 20;
+  worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+  const cellA1 = worksheet.getCell(currentRowNum, 1);
+  cellA1.value = companyName.toUpperCase();
+  cellA1.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
+  cellA1.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // Row 2: Main Title
+  currentRowNum++;
+  const row2 = worksheet.getRow(currentRowNum);
+  row2.height = 28;
+  worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+  const cellA2 = worksheet.getCell(currentRowNum, 1);
+  cellA2.value = `OFFICIAL EMPLOYEE ATTENDANCE & ROSTER SCHEDULE - ${monthYearStr.toUpperCase()}`;
+  cellA2.font = { name: 'Arial', size: 15, bold: true, color: { argb: 'FF0F172A' } };
+  cellA2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // Row 3: Khmer Subtitle
+  currentRowNum++;
+  const row3 = worksheet.getRow(currentRowNum);
+  row3.height = 22;
+  worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+  const cellA3 = worksheet.getCell(currentRowNum, 1);
+  cellA3.value = `របាយការណ៍កាលវិភាគការងារ និងវត្តមានបុគ្គលិកប្រចាំខែ ${monthYearStr}`;
+  cellA3.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF475569' } };
+  cellA3.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  // Row 4: Spacer
+  currentRowNum++;
+  worksheet.getRow(currentRowNum).height = 6;
+
+  // Row 5: Metadata Bar
+  currentRowNum++;
+  const row5 = worksheet.getRow(currentRowNum);
+  row5.height = 24;
+  worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+  const cellA5 = worksheet.getCell(currentRowNum, 1);
+  cellA5.value = `🏢 Branch: ${branchTitle}    |    📅 Period: ${dateRangeStr}    |    👥 Total Staff: ${totalStaff}    |    🕒 Generated: ${new Date().toLocaleString('km-KH')}`;
+  cellA5.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF1E293B' } };
+  cellA5.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFF1F5F9' },
+  };
+  cellA5.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellA5.border = kpiBorder;
+
+  // Row 6: Spacer
+  currentRowNum++;
+  worksheet.getRow(currentRowNum).height = 6;
+
+  // Row 7 & 8: Executive KPI Block
+  currentRowNum++;
+  const kpiRow1 = worksheet.getRow(currentRowNum);
+  kpiRow1.height = 18;
+  const kpiHeaders = [
+    { span: [1, 2], title: 'TOTAL STAFF' },
+    { span: [3, 4], title: 'TOTAL WORK HOURS' },
+    { span: [5, 6], title: 'DAYS WORKED (PRESENT)' },
+    { span: [7, 8], title: 'DAYS OFF & SUNDAYS' },
+    { span: [9, 10], title: 'LEAVE DAYS' },
+    { span: [11, 11], title: 'LATE INCIDENTS' },
+  ];
+
+  kpiHeaders.forEach((kpi) => {
+    worksheet.mergeCells(currentRowNum, kpi.span[0], currentRowNum, kpi.span[1]);
+    const cell = worksheet.getCell(currentRowNum, kpi.span[0]);
+    cell.value = kpi.title;
+    cell.font = { name: 'Arial', size: 8, bold: true, color: { argb: 'FF64748B' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+    cell.border = kpiBorder;
+  });
+
+  currentRowNum++;
+  const kpiRow2 = worksheet.getRow(currentRowNum);
+  kpiRow2.height = 26;
+  const kpiValues = [
+    { span: [1, 2], val: `${totalStaff} Staff`, color: 'FF4338CA' },
+    { span: [3, 4], val: `${totalWorkHoursNum.toFixed(1)}h`, color: 'FF059669' },
+    { span: [5, 6], val: `${totalDaysWorked} Days`, color: 'FF0284C7' },
+    { span: [7, 8], val: `${totalDaysOff} Days`, color: 'FFD97706' },
+    { span: [9, 10], val: `${totalDaysLeave} Days`, color: 'FF7C3AED' },
+    { span: [11, 11], val: `${totalLateCount}`, color: 'FFE11D48' },
+  ];
+
+  kpiValues.forEach((kpi) => {
+    worksheet.mergeCells(currentRowNum, kpi.span[0], currentRowNum, kpi.span[1]);
+    const cell = worksheet.getCell(currentRowNum, kpi.span[0]);
+    cell.value = kpi.val;
+    cell.font = { name: 'Arial', size: 13, bold: true, color: { argb: kpi.color } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    cell.border = kpiBorder;
+  });
+
+  // Render Department & Staff Sections
+  departmentStaffGroups.forEach((deptGroup) => {
+    // Spacer before department
+    currentRowNum++;
+    worksheet.getRow(currentRowNum).height = 10;
+
+    // Department Header Banner
+    currentRowNum++;
+    const deptRow = worksheet.getRow(currentRowNum);
+    deptRow.height = 26;
+    worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+    const deptCell = worksheet.getCell(currentRowNum, 1);
+    deptCell.value = `🏢 DEPARTMENT / ផ្នែក: ${deptGroup.department.toUpperCase()} (${deptGroup.staffList.length} STAFF)`;
+    deptCell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    deptCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E293B' },
+    };
+    deptCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    deptCell.border = thinBorder;
+
+    // For each staff member in this department
+    deptGroup.staffList.forEach((staffGroup) => {
+      const emp = staffGroup.employee;
+
+      // Staff Card Header
+      currentRowNum++;
+      const staffHeaderRow = worksheet.getRow(currentRowNum);
+      staffHeaderRow.height = 24;
+      worksheet.mergeCells(currentRowNum, 1, currentRowNum, colCount);
+      const staffHeaderCell = worksheet.getCell(currentRowNum, 1);
+      staffHeaderCell.value = `👤 ${emp.nameEn} (${emp.nameKh})  |  Staff ID: ${emp.code}  |  Role: ${emp.role || 'Staff'}  |  Branch: ${branchTitle}  |  Monthly Hours: ${staffGroup.summary.totalWorkHours}h`;
+      staffHeaderCell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF312E81' } };
+      staffHeaderCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFEEF2FF' }, // Soft Indigo Fill
+      };
+      staffHeaderCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      staffHeaderCell.border = thinBorder;
+
+      // Table Column Headers
+      currentRowNum++;
+      const thRow = worksheet.getRow(currentRowNum);
+      thRow.height = 22;
+      columnsDef.forEach((col, idx) => {
+        const cell = worksheet.getCell(currentRowNum, idx + 1);
+        cell.value = col.header;
+        cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF334155' }, // Slate-700
+        };
+        cell.alignment = {
+          horizontal: ['no', 'date', 'timeIn', 'timeOut', 'durationHours', 'status'].includes(col.key)
+            ? 'center'
+            : 'left',
+          vertical: 'middle',
+        };
+        cell.border = thinBorder;
+      });
+
+      // Data Rows
+      staffGroup.rows.forEach((r, rIdx) => {
+        currentRowNum++;
+        const row = worksheet.getRow(currentRowNum);
+        row.height = 20;
+
+        const isSun = r.isSunday;
+        const isOff = r.isDayOff;
+        const isLv = r.isLeave;
+        const isLate = r.status.toLowerCase().includes('late');
+
+        // Color coding matching PDF
+        let fillArgb = rIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+        let fontColor = 'FF1E293B';
+        let statusText = r.status;
+
+        if (isSun) {
+          fillArgb = 'FFFEF3C7'; // Soft Amber
+          fontColor = 'FF92400E';
+          statusText = 'Sunday Rest / ថ្ងៃអាទិត្យ';
+        } else if (isOff) {
+          fillArgb = 'FFFEF3C7'; // Soft Amber
+          fontColor = 'FF92400E';
+          statusText = 'Weekly Day Off / ថ្ងៃឈប់';
+        } else if (isLv) {
+          fillArgb = 'FFF3E8FF'; // Soft Purple
+          fontColor = 'FF6B21A8';
+          statusText = 'On Leave / ច្បាប់';
+        } else if (isLate) {
+          fillArgb = 'FFFFE4E6'; // Soft Rose
+          fontColor = 'FF9F1239';
+        }
+
+        const values = [
+          rIdx + 1,
+          r.date,
+          r.dayOfWeek,
+          `${r.nameEn} (${r.nameKh})`,
+          r.department,
+          r.branchNameEn,
+          r.timeIn,
+          r.timeOut,
+          r.durationHours !== '0.0h' ? r.durationHours : '--',
+          statusText,
+          r.remark || '-',
+        ];
+
+        values.forEach((val, cIdx) => {
+          const cell = worksheet.getCell(currentRowNum, cIdx + 1);
+          cell.value = val;
+          cell.font = {
+            name: 'Arial',
+            size: 9,
+            bold: isSun || isOff || isLv || cIdx === 3 || cIdx === 8,
+            color: { argb: fontColor },
+          };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: fillArgb },
+          };
+          cell.alignment = {
+            horizontal: [0, 1, 6, 7, 8, 9].includes(cIdx) ? 'center' : 'left',
+            vertical: 'middle',
+          };
+          cell.border = thinBorder;
+        });
+      });
+
+      // Staff Subtotal Row
+      currentRowNum++;
+      const subtotalRow = worksheet.getRow(currentRowNum);
+      subtotalRow.height = 22;
+      worksheet.mergeCells(currentRowNum, 1, currentRowNum, 8);
+      const subCellLabel = worksheet.getCell(currentRowNum, 1);
+      subCellLabel.value = `Monthly Total Work Hours for ${emp.nameEn} / សរុបម៉ោងការងារ:`;
+      subCellLabel.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF334155' } };
+      subCellLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+      subCellLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      subCellLabel.border = thinBorder;
+
+      const subCellHours = worksheet.getCell(currentRowNum, 9);
+      subCellHours.value = `${staffGroup.summary.totalWorkHours}h`;
+      subCellHours.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF4338CA' } };
+      subCellHours.alignment = { horizontal: 'center', vertical: 'middle' };
+      subCellHours.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      subCellHours.border = thinBorder;
+
+      worksheet.mergeCells(currentRowNum, 10, currentRowNum, 11);
+      const subCellDetails = worksheet.getCell(currentRowNum, 10);
+      subCellDetails.value = `Present: ${staffGroup.summary.daysWorked} | Days Off: ${staffGroup.summary.daysOff} | Leave: ${staffGroup.summary.daysLeave} | Late: ${staffGroup.summary.lateDays}`;
+      subCellDetails.font = { name: 'Arial', size: 8.5, bold: true, color: { argb: 'FF475569' } };
+      subCellDetails.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      subCellDetails.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      subCellDetails.border = thinBorder;
+
+      // Small spacer between staff
+      currentRowNum++;
+      worksheet.getRow(currentRowNum).height = 6;
+    });
+  });
+
+  // Grand Total Summary Block
+  currentRowNum++;
+  worksheet.getRow(currentRowNum).height = 10;
+  currentRowNum++;
+  const grandTotalRow = worksheet.getRow(currentRowNum);
+  grandTotalRow.height = 26;
+  worksheet.mergeCells(currentRowNum, 1, currentRowNum, 8);
+  const grandLabel = worksheet.getCell(currentRowNum, 1);
+  grandLabel.value = `GRAND TOTAL ROSTER HOURS (${totalStaff} STAFF):`;
+  grandLabel.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  grandLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+  grandLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+  grandLabel.border = kpiBorder;
+
+  const grandHours = worksheet.getCell(currentRowNum, 9);
+  grandHours.value = `${totalWorkHoursNum.toFixed(1)}h`;
+  grandHours.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF34D399' } };
+  grandHours.alignment = { horizontal: 'center', vertical: 'middle' };
+  grandHours.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+  grandHours.border = kpiBorder;
+
+  worksheet.mergeCells(currentRowNum, 10, currentRowNum, 11);
+  const grandDetails = worksheet.getCell(currentRowNum, 10);
+  grandDetails.value = `Total Punches: ${totalDaysWorked} | Rest Days: ${totalDaysOff} | Leaves: ${totalDaysLeave} | Late Incidents: ${totalLateCount}`;
+  grandDetails.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFE2E8F0' } };
+  grandDetails.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+  grandDetails.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+  grandDetails.border = kpiBorder;
+
+  // 2. Second Worksheet: Executive Staff Summary Sheet
+  const summarySheet = workbook.addWorksheet('Staff Roster Summary', {
+    views: [{ showGridLines: true }],
+  });
+
+  const sumCols = [
+    { header: 'No', key: 'no', width: 7 },
+    { header: 'Staff Code', key: 'code', width: 14 },
+    { header: 'Employee Name (EN)', key: 'nameEn', width: 25 },
+    { header: 'Employee Name (KH)', key: 'nameKh', width: 25 },
+    { header: 'Department', key: 'department', width: 22 },
+    { header: 'Role / Title', key: 'role', width: 22 },
+    { header: 'Assigned Branch', key: 'branch', width: 22 },
+    { header: 'Total Work Hours', key: 'hours', width: 16 },
+    { header: 'Present Days', key: 'present', width: 14 },
+    { header: 'Days Off', key: 'off', width: 14 },
+    { header: 'Leaves', key: 'leave', width: 14 },
+    { header: 'Late Days', key: 'late', width: 14 },
+    { header: 'OT Days', key: 'ot', width: 14 },
+  ];
+
+  summarySheet.columns = sumCols;
+
+  // Title Row on Summary Sheet
+  summarySheet.mergeCells(1, 1, 1, sumCols.length);
+  const sTitle = summarySheet.getCell(1, 1);
+  sTitle.value = `${companyName.toUpperCase()} - ROSTER STAFF SUMMARY (${monthYearStr})`;
+  sTitle.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+  sTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+  sTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+  summarySheet.getRow(1).height = 26;
+
+  // Header Row
+  const sHeadRow = summarySheet.getRow(2);
+  sHeadRow.height = 22;
+  sumCols.forEach((col, idx) => {
+    const c = summarySheet.getCell(2, idx + 1);
+    c.value = col.header;
+    c.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.border = thinBorder;
+  });
+
+  let sIdx = 0;
+  departmentStaffGroups.forEach((dept) => {
+    dept.staffList.forEach((st) => {
+      sIdx++;
+      const sRow = summarySheet.getRow(sIdx + 2);
+      sRow.height = 20;
+
+      const vals = [
+        sIdx,
+        st.employee.code,
+        st.employee.nameEn,
+        st.employee.nameKh,
+        dept.department,
+        st.employee.role || 'Staff',
+        branchTitle,
+        `${st.summary.totalWorkHours}h`,
+        st.summary.daysWorked,
+        st.summary.daysOff,
+        st.summary.daysLeave,
+        st.summary.lateDays,
+        st.summary.otDays,
+      ];
+
+      vals.forEach((v, vIdx) => {
+        const c = summarySheet.getCell(sIdx + 2, vIdx + 1);
+        c.value = v;
+        c.font = { name: 'Arial', size: 9, bold: vIdx === 7 };
+        c.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: sIdx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF' },
+        };
+        c.alignment = {
+          horizontal: [0, 1, 7, 8, 9, 10, 11, 12].includes(vIdx) ? 'center' : 'left',
+          vertical: 'middle',
+        };
+        c.border = thinBorder;
+      });
+    });
+  });
+
+  // Summary Sheet Footer Row
+  const sFooterRow = summarySheet.getRow(sIdx + 3);
+  sFooterRow.height = 24;
+  summarySheet.mergeCells(sIdx + 3, 1, sIdx + 3, 7);
+  const sFootLabel = summarySheet.getCell(sIdx + 3, 1);
+  sFootLabel.value = 'TOTALS ACROSS ALL ROSTER STAFF:';
+  sFootLabel.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF1E293B' } };
+  sFootLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+  sFootLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootLabel.border = kpiBorder;
+
+  const sFootHours = summarySheet.getCell(sIdx + 3, 8);
+  sFootHours.value = `${totalWorkHoursNum.toFixed(1)}h`;
+  sFootHours.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF4338CA' } };
+  sFootHours.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootHours.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootHours.border = kpiBorder;
+
+  const sFootPresent = summarySheet.getCell(sIdx + 3, 9);
+  sFootPresent.value = totalDaysWorked;
+  sFootPresent.font = { name: 'Arial', size: 9, bold: true };
+  sFootPresent.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootPresent.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootPresent.border = kpiBorder;
+
+  const sFootOff = summarySheet.getCell(sIdx + 3, 10);
+  sFootOff.value = totalDaysOff;
+  sFootOff.font = { name: 'Arial', size: 9, bold: true };
+  sFootOff.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootOff.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootOff.border = kpiBorder;
+
+  const sFootLeave = summarySheet.getCell(sIdx + 3, 11);
+  sFootLeave.value = totalDaysLeave;
+  sFootLeave.font = { name: 'Arial', size: 9, bold: true };
+  sFootLeave.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootLeave.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootLeave.border = kpiBorder;
+
+  const sFootLate = summarySheet.getCell(sIdx + 3, 12);
+  sFootLate.value = totalLateCount;
+  sFootLate.font = { name: 'Arial', size: 9, bold: true };
+  sFootLate.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootLate.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootLate.border = kpiBorder;
+
+  const sFootOt = summarySheet.getCell(sIdx + 3, 13);
+  sFootOt.value = '-';
+  sFootOt.font = { name: 'Arial', size: 9, bold: true };
+  sFootOt.alignment = { horizontal: 'center', vertical: 'middle' };
+  sFootOt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+  sFootOt.border = kpiBorder;
+
+  // Generate binary buffer and trigger browser download
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const cleanBranch = branchTitle.replace(/[^a-zA-Z0-9]/g, '_');
+  const cleanMonth = monthYearStr.replace(/[^a-zA-Z0-9]/g, '_');
+  link.download = `Official_Roster_${cleanBranch}_${cleanMonth}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Exports Employee Roster to a formatted CSV file with UTF-8 BOM,
+ * report metadata, and complete staff schedule rows.
+ */
+export function exportRosterToCsv(
+  departmentStaffGroups: PrintableDepartmentGroup[],
+  branchTitle: string,
+  monthYearStr: string,
+  dateRangeStr: string,
+  companyName: string = 'ENTERPRISE MULTI-BRANCH HR SUITE'
+) {
+  let totalStaff = 0;
+  let totalWorkHoursNum = 0;
+  let totalDaysWorked = 0;
+  let totalDaysOff = 0;
+  let totalDaysLeave = 0;
+  let totalLateCount = 0;
+
+  departmentStaffGroups.forEach((dept) => {
+    dept.staffList.forEach((st) => {
+      totalStaff++;
+      totalWorkHoursNum += parseFloat(st.summary.totalWorkHours) || 0;
+      totalDaysWorked += st.summary.daysWorked;
+      totalDaysOff += st.summary.daysOff;
+      totalDaysLeave += st.summary.daysLeave;
+      totalLateCount += st.summary.lateDays;
+    });
+  });
+
+  const headers = [
+    'No',
+    'Department',
+    'Staff ID',
+    'Staff Name (EN)',
+    'Staff Name (KH)',
+    'Role / Title',
+    'Branch',
+    'Date',
+    'Day of Week',
+    'Time In',
+    'Time Out',
+    'Work Hours',
+    'Status',
+    'Remark / Verification',
+  ];
+
+  const csvRows: (string | number)[][] = [];
+  let rowNo = 0;
+
+  departmentStaffGroups.forEach((deptGroup) => {
+    deptGroup.staffList.forEach((staffGroup) => {
+      staffGroup.rows.forEach((r) => {
+        rowNo++;
+        let statusStr = r.status;
+        if (r.isSunday) statusStr = 'Sunday Rest / ថ្ងៃអាទិត្យ';
+        else if (r.isDayOff) statusStr = 'Weekly Day Off / ថ្ងៃឈប់';
+        else if (r.isLeave) statusStr = 'On Leave / ច្បាប់';
+
+        csvRows.push([
+          rowNo,
+          `"${deptGroup.department}"`,
+          `"${staffGroup.employee.code}"`,
+          `"${staffGroup.employee.nameEn}"`,
+          `"${staffGroup.employee.nameKh}"`,
+          `"${staffGroup.employee.role || 'Staff'}"`,
+          `"${branchTitle}"`,
+          `"${r.date}"`,
+          `"${r.dayOfWeek}"`,
+          `"${r.timeIn}"`,
+          `"${r.timeOut}"`,
+          `"${r.durationHours !== '0.0h' ? r.durationHours : '--'}"`,
+          `"${statusStr}"`,
+          `"${(r.remark || '-').replace(/"/g, '""')}"`,
+        ]);
+      });
+    });
+  });
+
+  const totalRow = [
+    '"TOTALS"',
+    `"Staff: ${totalStaff}"`,
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    '""',
+    `"Present: ${totalDaysWorked}"`,
+    `"${totalWorkHoursNum.toFixed(1)}h"`,
+    `"Off: ${totalDaysOff} | Leave: ${totalDaysLeave} | Late: ${totalLateCount}"`,
+    '""',
+  ];
+
+  const csvContent =
+    '\uFEFF' +
+    `"${companyName}"\n` +
+    `"OFFICIAL EMPLOYEE ROSTER & TIMESHEET SCHEDULE - ${monthYearStr}"\n` +
+    `"Branch: ${branchTitle} | Date Range: ${dateRangeStr} | Generated: ${new Date().toLocaleString('km-KH')}"\n` +
+    `"KPI Summary: Total Staff: ${totalStaff} | Total Work Hours: ${totalWorkHoursNum.toFixed(1)}h | Present Days: ${totalDaysWorked} | Days Off: ${totalDaysOff} | Leaves: ${totalDaysLeave} | Late Incidents: ${totalLateCount}"\n\n` +
+    [headers.join(','), ...csvRows.map((row) => row.join(',')), totalRow.join(',')].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  const cleanBranch = branchTitle.replace(/[^a-zA-Z0-9]/g, '_');
+  const cleanMonth = monthYearStr.replace(/[^a-zA-Z0-9]/g, '_');
+  link.setAttribute('download', `Official_Roster_${cleanBranch}_${cleanMonth}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

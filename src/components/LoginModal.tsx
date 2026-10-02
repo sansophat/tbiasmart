@@ -267,7 +267,29 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         validDemoPins.includes(enteredPass.toLowerCase()) ||
         validDemoPins.includes(enteredPass)
       ) {
-        onLogin(matchedDemo);
+        // Merge with latest live employee data if matching
+        const liveEmp = employees.find(
+          (e) =>
+            e.id === matchedDemo.employeeId ||
+            (matchedDemo.employeeCode && e.code.toLowerCase() === matchedDemo.employeeCode.toLowerCase()) ||
+            e.code.toLowerCase() === matchedDemo.username.toLowerCase() ||
+            (matchedDemo.email && e.email && e.email.toLowerCase() === matchedDemo.email.toLowerCase())
+        );
+
+        const resolvedUser: AuthUser = liveEmp
+          ? {
+              ...matchedDemo,
+              nameKh: liveEmp.nameKh || matchedDemo.nameKh,
+              nameEn: liveEmp.nameEn || matchedDemo.nameEn,
+              avatar: liveEmp.avatar || matchedDemo.avatar,
+              branchId: liveEmp.branchId || matchedDemo.branchId,
+              roleTitle: liveEmp.role || matchedDemo.roleTitle,
+              employeeId: liveEmp.id,
+              employeeCode: liveEmp.code,
+            }
+          : matchedDemo;
+
+        onLogin(resolvedUser);
         setLoginSuccess(true);
         setTimeout(() => {
           setLoginSuccess(false);

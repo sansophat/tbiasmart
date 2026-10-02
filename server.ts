@@ -206,8 +206,21 @@ interface ConnectedPeerInfo {
 
 const connectedPeers = new Map<WebSocket, ConnectedPeerInfo>();
 
+// Process-level unhandled exception and rejection handlers to prevent Cloud Run crashes
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught exception prevented server crash:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Process] Unhandled rejection prevented server crash:', reason);
+});
+
 // WebSocket Server attached to the HTTP server
 const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('error', (err) => {
+  console.warn('[WebSocket] Warning on WebSocketServer:', err?.message || err);
+});
 
 function broadcastPresence() {
   const peersList: ConnectedPeerInfo[] = Array.from(connectedPeers.values());
@@ -543,6 +556,7 @@ app.post('/api/attendance/punch', (req, res) => {
   // Prepend to attendance records
   serverDb.attendanceRecords = [record, ...(serverDb.attendanceRecords || []).filter((r: any) => r.id !== record.id)];
   persistDatabase();
+  syncToFirestore({ attendanceRecords: serverDb.attendanceRecords });
 
   const eventPayload = {
     type: 'PUNCH_ATTENDANCE',
@@ -577,6 +591,7 @@ app.post('/api/employees/transfer', (req, res) => {
   }
 
   persistDatabase();
+  syncToFirestore({ employees: serverDb.employees, transferRecords: serverDb.transferRecords });
 
   const eventPayload = {
     type: 'TRANSFER_EMPLOYEE',
@@ -632,6 +647,7 @@ app.post('/api/leaves/submit', (req, res) => {
   const cleanRequest = sanitizeForFirestore(request);
   serverDb.leaveRequests = [cleanRequest, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== cleanRequest.id)];
   persistDatabase();
+  syncToFirestore({ leaveRequests: serverDb.leaveRequests });
 
   const eventPayload1 = {
     type: 'SUBMIT_LEAVE',
@@ -666,6 +682,7 @@ app.post('/api/employees/save', (req, res) => {
   }
 
   persistDatabase();
+  syncToFirestore({ employees: serverDb.employees });
 
   const eventPayload = {
     type: isNew ? 'ADD_EMPLOYEE' : 'UPDATE_EMPLOYEE',
@@ -686,6 +703,7 @@ app.post('/api/employees/delete', (req, res) => {
 
   serverDb.employees = (serverDb.employees || []).filter((e: any) => e.id !== employeeId);
   persistDatabase();
+  syncToFirestore({ employees: serverDb.employees });
 
   const eventPayload = {
     type: 'DELETE_EMPLOYEE',
@@ -713,6 +731,7 @@ app.post('/api/branches/save', (req, res) => {
   }
 
   persistDatabase();
+  syncToFirestore({ branches: serverDb.branches });
 
   const eventPayload = {
     type: 'UPDATE_BRANCH',
@@ -733,6 +752,7 @@ app.post('/api/branches/delete', (req, res) => {
 
   serverDb.branches = (serverDb.branches || []).filter((b: any) => b.id !== branchId);
   persistDatabase();
+  syncToFirestore({ branches: serverDb.branches });
 
   const eventPayload = {
     type: 'DELETE_BRANCH',
@@ -754,6 +774,7 @@ app.post('/api/system/branding', (req, res) => {
 
   serverDb.branding = branding;
   persistDatabase();
+  syncToFirestore({ branding: serverDb.branding });
 
   const eventPayload = {
     type: 'UPDATE_BRANDING',
@@ -774,6 +795,7 @@ app.post('/api/system/settings', (req, res) => {
 
   serverDb.systemSettings = settings;
   persistDatabase();
+  syncToFirestore({ systemSettings: serverDb.systemSettings });
 
   const eventPayload = {
     type: 'UPDATE_SYSTEM_SETTINGS',
@@ -804,9 +826,17 @@ app.post('/api/user/profile', (req, res) => {
     serverDb.employees = (serverDb.employees || []).map((e: any) =>
       e.id === employee.id ? { ...e, ...employee } : e
     );
+  } else if (user.avatar && Array.isArray(serverDb.employees)) {
+    // If employee profile was updated without explicit employee object, match by employeeId, code, or id
+    serverDb.employees = serverDb.employees.map((e: any) =>
+      e.id === user.employeeId || e.code === user.employeeCode || e.id === user.id || `user_${e.id}` === user.id
+        ? { ...e, avatar: user.avatar }
+        : e
+    );
   }
 
   persistDatabase();
+  syncToFirestore({ employees: serverDb.employees, adminProfile: serverDb.adminProfile });
 
   const eventPayload = {
     type: 'UPDATE_USER_PROFILE',
@@ -903,38 +933,61 @@ app.get(['/manifest.webmanifest', '/manifest.json'], (req, res) => {
 });
 
 // ==========================================
+// Cloud Run Health Check & Status Endpoints
+// ==========================================
+app.get(['/healthz', '/_health', '/api/health'], (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ==========================================
 // Vite Integration (Dev) & Static Assets (Prod)
 // ==========================================
 
 async function startServer() {
-  const isProduction =
-    process.env.NODE_ENV === 'production' ||
-    fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
+  const isCloudRun = Boolean(process.env.K_SERVICE || process.env.K_REVISION || (process.env.PORT && process.env.PORT !== '3000'));
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndexExists = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || isCloudRun || distIndexExists;
 
-  if (!isProduction) {
+  if (isProduction || distIndexExists) {
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(200).send(`<!DOCTYPE html><html><head><title>Smart Attendance</title><meta http-equiv="refresh" content="2"></head><body style="font-family:sans-serif;text-align:center;padding:50px;"><h3>Starting application...</h3></body></html>`);
+      }
+    });
+  } else {
     try {
       // Dynamic import to avoid requiring vite in production
       const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: { 
+          middlewareMode: true,
+          hmr: false, // HMR disabled per environment guidelines
+        },
         appType: 'spa',
       });
       app.use(vite.middlewares);
     } catch (err) {
       console.warn('Vite dev middleware not available, falling back to static:', err);
-      const distPath = path.join(process.cwd(), 'dist');
       app.use(express.static(distPath));
       app.get('*', (req, res) => {
-        res.sendFile(path.join(distPath, 'index.html'));
+        const indexPath = path.join(distPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(200).send('Application loading, please refresh...');
+        }
       });
     }
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
+
+  server.on('error', (err: any) => {
+    console.error('[Server] HTTP server error:', err);
+  });
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server and WebSocket live on http://0.0.0.0:${PORT} (ws://0.0.0.0:${PORT}/ws)`);

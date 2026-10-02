@@ -256,6 +256,14 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     if (preset.defaultWeeklyDayOff !== undefined) {
       setNewEmpWeeklyDayOff(preset.defaultWeeklyDayOff);
     }
+    // Auto-link matching branch if adding cafe/barista or gas station staff
+    if (preset.prefix === 'BAR') {
+      const cafeBranch = branches.find((b) => b.type === 'cafe' || b.nameEn.toLowerCase().includes('cafe'));
+      if (cafeBranch) setNewEmpBranchId(cafeBranch.id);
+    } else if (preset.prefix === 'GAS') {
+      const gasBranch = branches.find((b) => b.type === 'gas_station' || b.nameEn.toLowerCase().includes('gas'));
+      if (gasBranch) setNewEmpBranchId(gasBranch.id);
+    }
   };
 
   // Handle Role preset quick selection in Edit form
@@ -268,6 +276,14 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     }
     if (preset.defaultWeeklyDayOff !== undefined) {
       setEditWeeklyDayOff(preset.defaultWeeklyDayOff);
+    }
+    // Auto-link matching branch if switching to cafe or gas station
+    if (preset.prefix === 'BAR') {
+      const cafeBranch = branches.find((b) => b.type === 'cafe' || b.nameEn.toLowerCase().includes('cafe'));
+      if (cafeBranch) setEditBranchId(cafeBranch.id);
+    } else if (preset.prefix === 'GAS') {
+      const gasBranch = branches.find((b) => b.type === 'gas_station' || b.nameEn.toLowerCase().includes('gas'));
+      if (gasBranch) setEditBranchId(gasBranch.id);
     }
   };
 
@@ -298,8 +314,16 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setEditNameKh(emp.nameKh);
     setEditNameEn(emp.nameEn);
     setEditCode(emp.code);
-    setEditBranchId(emp.branchId);
-    setEditDeptKh(emp.departmentKh || DEPARTMENT_OPTIONS[0].nameKh);
+
+    // Resolve proper branch matching by ID, or by department name if branch is missing or defaulted to main HQ
+    const initialBranch = branches.find((b) => b.id === emp.branchId) ||
+      branches.find((b) => (emp.department && b.nameEn.toLowerCase() === emp.department.toLowerCase()) || (emp.departmentKh && b.nameKh === emp.departmentKh)) ||
+      branches.find((b) => emp.department && (b.nameEn.toLowerCase().includes(emp.department.toLowerCase()) || emp.department.toLowerCase().includes(b.nameEn.toLowerCase()))) ||
+      branches.find((b) => emp.departmentKh && (b.nameKh.includes(emp.departmentKh) || emp.departmentKh.includes(b.nameKh))) ||
+      branches[0];
+
+    setEditBranchId(initialBranch ? initialBranch.id : (emp.branchId || branches[0]?.id || 'br_main_hq'));
+    setEditDeptKh(emp.departmentKh || initialBranch?.nameKh || emp.department || DEPARTMENT_OPTIONS[0].nameKh);
     setEditRoleKh(emp.role);
     setEditRoleType(
       emp.roleType ||
@@ -437,7 +461,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     e.preventDefault();
     if (!editingEmp || !onUpdateEmployee) return;
 
-    const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === editDeptKh);
+    const selectedBranch = branches.find((b) => b.id === editBranchId);
+    const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === editDeptKh || d.nameEn === editDeptKh);
 
     const updated: Employee = {
       ...editingEmp,
@@ -445,8 +470,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       nameEn: editNameEn,
       code: editCode,
       branchId: editBranchId,
-      department: matchedDept?.nameEn || editingEmp.department,
-      departmentKh: editDeptKh,
+      department: selectedBranch ? selectedBranch.nameEn : (matchedDept?.nameEn || editDeptKh || editingEmp.department),
+      departmentKh: selectedBranch ? selectedBranch.nameKh : (matchedDept?.nameKh || editDeptKh),
       role: editRoleKh,
       roleKh: editRoleKh,
       roleType: editRoleType,
@@ -988,7 +1013,14 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 </label>
                 <select
                   value={editBranchId}
-                  onChange={(e) => setEditBranchId(e.target.value)}
+                  onChange={(e) => {
+                    const newBranchId = e.target.value;
+                    setEditBranchId(newBranchId);
+                    const b = branches.find((br) => br.id === newBranchId);
+                    if (b) {
+                      setEditDeptKh(b.nameKh);
+                    }
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                 >
                   {branches.map((b) => (
@@ -1006,14 +1038,40 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   </label>
                   <select
                     value={editDeptKh}
-                    onChange={(e) => setEditDeptKh(e.target.value)}
+                    onChange={(e) => {
+                      const selectedVal = e.target.value;
+                      setEditDeptKh(selectedVal);
+                      // Auto-link to matching branch if department matches or contains a branch name
+                      const matchingBranch = branches.find((b) => 
+                        b.nameKh === selectedVal ||
+                        b.nameEn.toLowerCase() === selectedVal.toLowerCase() ||
+                        selectedVal.toLowerCase().includes(b.nameEn.toLowerCase()) ||
+                        b.nameEn.toLowerCase().includes(selectedVal.toLowerCase()) ||
+                        (selectedVal.includes('កាហ្វេ') && b.type === 'cafe') ||
+                        (selectedVal.toLowerCase().includes('cafe') && b.type === 'cafe') ||
+                        (selectedVal.includes('ប្រេង') && b.type === 'gas_station') ||
+                        (selectedVal.toLowerCase().includes('gas') && b.type === 'gas_station')
+                      );
+                      if (matchingBranch) {
+                        setEditBranchId(matchingBranch.id);
+                      }
+                    }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                   >
-                    {DEPARTMENT_OPTIONS.map((dept) => (
-                      <option key={dept.id} value={dept.nameKh}>
-                        {lang === 'km' ? dept.nameKh : dept.nameEn}
-                      </option>
-                    ))}
+                    <optgroup label={lang === 'km' ? '🏢 សាខា / កន្លែងការងារ (Branches)' : '🏢 Branches / Venues'}>
+                      {branches.map((b) => (
+                        <option key={`branch_dept_${b.id}`} value={b.nameKh}>
+                          📍 {lang === 'km' ? b.nameKh : b.nameEn}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label={lang === 'km' ? '📋 ដេប៉ាតឺម៉ង់មុខងារ (Departments)' : '📋 Functional Departments'}>
+                      {DEPARTMENT_OPTIONS.map((dept) => (
+                        <option key={dept.id} value={dept.nameKh}>
+                          {lang === 'km' ? dept.nameKh : dept.nameEn}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
                 <div>

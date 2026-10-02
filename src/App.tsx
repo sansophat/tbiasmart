@@ -552,17 +552,69 @@ export default function App() {
             return curr;
           });
         }
-        if (employee && employee.id) {
-          setEmployees((prev) => prev.map((e) => (e.id === employee.id ? { ...e, ...employee } : e)));
+
+        const effectiveEmp = employee || (user ? employees.find((e) =>
+          e.id === user.employeeId ||
+          (user.employeeId && e.id === user.employeeId.replace('user_', '')) ||
+          e.code === user.employeeCode ||
+          e.id === user.id ||
+          `user_${e.id}` === user.id ||
+          (user.username && e.code.toLowerCase() === user.username.toLowerCase()) ||
+          (user.email && e.email && e.email.toLowerCase() === user.email.toLowerCase())
+        ) : null);
+
+        if (effectiveEmp && (employee?.id || user?.avatar)) {
+          const empId = effectiveEmp.id;
+          const newAvatar = employee?.avatar || user?.avatar;
+          setEmployees((prev) => {
+            const next = prev.map((e) =>
+              e.id === empId
+                ? {
+                    ...e,
+                    ...effectiveEmp,
+                    ...(newAvatar ? { avatar: newAvatar } : {}),
+                    ...(user?.nameKh ? { nameKh: user.nameKh } : {}),
+                    ...(user?.nameEn ? { nameEn: user.nameEn } : {}),
+                    ...(user?.pinCode ? { pinCode: user.pinCode } : {}),
+                  }
+                : e
+            );
+            localStorage.setItem('attend_employees', JSON.stringify(next));
+            return next;
+          });
+
+          if (newAvatar) {
+            setAttendanceRecords((prev) => {
+              const next = prev.map((r) =>
+                r.employeeId === empId
+                  ? {
+                      ...r,
+                      employeeAvatar: newAvatar,
+                      employeeNameKh: user?.nameKh || effectiveEmp.nameKh || r.employeeNameKh,
+                      employeeNameEn: user?.nameEn || effectiveEmp.nameEn || r.employeeNameEn,
+                    }
+                  : r
+              );
+              localStorage.setItem('attend_records', JSON.stringify(next));
+              return next;
+            });
+          }
+
           setCurrentUser((curr) => {
-            if (curr && curr.employeeId === employee.id) {
+            if (
+              curr &&
+              (curr.employeeId === empId ||
+                curr.id === empId ||
+                curr.id === `user_${empId}` ||
+                curr.employeeCode === effectiveEmp.code)
+            ) {
               const updated = {
                 ...curr,
-                avatar: employee.avatar || curr.avatar,
-                nameKh: employee.nameKh || curr.nameKh,
-                nameEn: employee.nameEn || curr.nameEn,
-                pinCode: employee.pinCode,
-                password: employee.password,
+                avatar: newAvatar || curr.avatar,
+                nameKh: user?.nameKh || effectiveEmp.nameKh || curr.nameKh,
+                nameEn: user?.nameEn || effectiveEmp.nameEn || curr.nameEn,
+                pinCode: user?.pinCode || effectiveEmp.pinCode || curr.pinCode,
+                branchId: effectiveEmp.branchId || curr.branchId,
               };
               localStorage.setItem('attend_auth_user', JSON.stringify(updated));
               return updated;
@@ -702,7 +754,48 @@ export default function App() {
           return [payload, ...prev];
         });
       } else if (type === 'UPDATE_EMPLOYEE' && payload) {
-        setEmployees((prev) => prev.map((e) => (e.id === payload.id ? payload : e)));
+        setEmployees((prev) => {
+          const next = prev.map((e) => (e.id === payload.id ? { ...e, ...payload } : e));
+          localStorage.setItem('attend_employees', JSON.stringify(next));
+          return next;
+        });
+        if (payload.avatar) {
+          setAttendanceRecords((prev) => {
+            const next = prev.map((r) =>
+              r.employeeId === payload.id
+                ? {
+                    ...r,
+                    employeeAvatar: payload.avatar,
+                    employeeNameKh: payload.nameKh || r.employeeNameKh,
+                    employeeNameEn: payload.nameEn || r.employeeNameEn,
+                  }
+                : r
+            );
+            localStorage.setItem('attend_records', JSON.stringify(next));
+            return next;
+          });
+        }
+        setCurrentUser((curr) => {
+          if (
+            curr &&
+            (curr.employeeId === payload.id ||
+              curr.id === payload.id ||
+              curr.id === `user_${payload.id}` ||
+              curr.employeeCode === payload.code)
+          ) {
+            const updated = {
+              ...curr,
+              nameKh: payload.nameKh || curr.nameKh,
+              nameEn: payload.nameEn || curr.nameEn,
+              avatar: payload.avatar || curr.avatar,
+              branchId: payload.branchId || curr.branchId,
+              roleTitle: payload.role || curr.roleTitle,
+            };
+            localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+            return updated;
+          }
+          return curr;
+        });
       } else if (type === 'DELETE_EMPLOYEE' && payload) {
         const idToDelete = payload.id || payload.employeeId;
         setEmployees((prev) => prev.filter((e) => e.id !== idToDelete));
@@ -808,6 +901,31 @@ export default function App() {
         if (Array.isArray(cloudData.employees)) {
           setEmployees(cloudData.employees);
           localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
+          setCurrentUser((curr) => {
+            if (curr) {
+              const liveEmp = cloudData.employees!.find(
+                (e) =>
+                  e.id === curr.employeeId ||
+                  e.code === curr.employeeCode ||
+                  e.id === curr.id ||
+                  `user_${e.id}` === curr.id ||
+                  (curr.email && e.email && e.email.toLowerCase() === curr.email.toLowerCase())
+              );
+              if (liveEmp) {
+                const updated = {
+                  ...curr,
+                  avatar: liveEmp.avatar || curr.avatar,
+                  branchId: liveEmp.branchId || curr.branchId,
+                  nameKh: liveEmp.nameKh || curr.nameKh,
+                  nameEn: liveEmp.nameEn || curr.nameEn,
+                  roleTitle: liveEmp.role || curr.roleTitle,
+                };
+                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                return updated;
+              }
+            }
+            return curr;
+          });
         }
         if (Array.isArray(cloudData.attendanceRecords)) {
           setAttendanceRecords(cloudData.attendanceRecords);
@@ -1059,8 +1177,14 @@ export default function App() {
       sickLeaveQuota: newEmp.sickLeaveQuota !== undefined ? newEmp.sickLeaveQuota : 7,
       sickLeaveUsed: newEmp.sickLeaveUsed !== undefined ? newEmp.sickLeaveUsed : 0,
     };
-    setEmployees((prev) => [preparedEmp, ...prev]);
+    let nextEmployees: Employee[] = [];
+    setEmployees((prev) => {
+      nextEmployees = [preparedEmp, ...prev];
+      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      return nextEmployees;
+    });
     realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
+    syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1069,9 +1193,15 @@ export default function App() {
   };
 
   const handleUpdateEmployee = (updatedEmp: Employee) => {
-    setEmployees((prev) => prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e)));
-    setAttendanceRecords((prev) =>
-      prev.map((r) =>
+    let nextEmployees: Employee[] = [];
+    setEmployees((prev) => {
+      nextEmployees = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
+      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      return nextEmployees;
+    });
+    let nextRecords: AttendanceRecord[] = [];
+    setAttendanceRecords((prev) => {
+      nextRecords = prev.map((r) =>
         r.employeeId === updatedEmp.id
           ? {
               ...r,
@@ -1080,9 +1210,39 @@ export default function App() {
               employeeAvatar: updatedEmp.avatar,
             }
           : r
-      )
-    );
+      );
+      localStorage.setItem('attend_records', JSON.stringify(nextRecords));
+      return nextRecords;
+    });
+
+    // Also sync currentUser if current session belongs to this employee
+    setCurrentUser((curr) => {
+      if (
+        curr &&
+        (curr.employeeId === updatedEmp.id ||
+          curr.employeeCode === updatedEmp.code ||
+          curr.id === updatedEmp.id ||
+          curr.id === `user_${updatedEmp.id}`)
+      ) {
+        const syncedUser: AuthUser = {
+          ...curr,
+          nameKh: updatedEmp.nameKh,
+          nameEn: updatedEmp.nameEn,
+          avatar: updatedEmp.avatar,
+          branchId: updatedEmp.branchId,
+          roleTitle: updatedEmp.role,
+        };
+        localStorage.setItem('attend_auth_user', JSON.stringify(syncedUser));
+        return syncedUser;
+      }
+      return curr;
+    });
+
     realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
+    syncStateToCloudImmediate({
+      employees: sanitizeForFirestore(nextEmployees),
+      attendanceRecords: sanitizeForFirestore(nextRecords),
+    });
     fetch('/api/employees/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1091,8 +1251,14 @@ export default function App() {
   };
 
   const handleDeleteEmployee = (id: string) => {
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
+    let nextEmployees: Employee[] = [];
+    setEmployees((prev) => {
+      nextEmployees = prev.filter((e) => e.id !== id);
+      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      return nextEmployees;
+    });
     realtimeService.emit('DELETE_EMPLOYEE', { id });
+    syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1101,8 +1267,14 @@ export default function App() {
   };
 
   const handleUpdateBranch = (updatedBranch: Branch) => {
-    setBranches((prev) => prev.map((b) => (b.id === updatedBranch.id ? updatedBranch : b)));
+    let nextBranches: Branch[] = [];
+    setBranches((prev) => {
+      nextBranches = prev.map((b) => (b.id === updatedBranch.id ? updatedBranch : b));
+      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      return nextBranches;
+    });
     realtimeService.emit('UPDATE_BRANCH', updatedBranch);
+    syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1224,8 +1396,14 @@ export default function App() {
   };
 
   const handleAddBranch = (newBranch: Branch) => {
-    setBranches((prev) => [...prev, newBranch]);
+    let nextBranches: Branch[] = [];
+    setBranches((prev) => {
+      nextBranches = [...prev, newBranch];
+      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      return nextBranches;
+    });
     realtimeService.emit('UPDATE_BRANCH', newBranch);
+    syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1234,8 +1412,14 @@ export default function App() {
   };
 
   const handleDeleteBranch = (branchId: string) => {
-    setBranches((prev) => prev.filter((b) => b.id !== branchId));
+    let nextBranches: Branch[] = [];
+    setBranches((prev) => {
+      nextBranches = prev.filter((b) => b.id !== branchId);
+      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      return nextBranches;
+    });
     realtimeService.emit('DELETE_BRANCH', { id: branchId });
+    syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1535,10 +1719,16 @@ export default function App() {
       timestamp: new Date().toLocaleString(),
     };
 
-    setTransferRecords((prev) => [record, ...prev]);
+    let nextTransfers: BranchTransferRecord[] = [];
+    setTransferRecords((prev) => {
+      nextTransfers = [record, ...prev];
+      localStorage.setItem('attend_transfers', JSON.stringify(nextTransfers));
+      return nextTransfers;
+    });
 
-    setEmployees((prev) =>
-      prev.map((e) => {
+    let nextEmployees: Employee[] = [];
+    setEmployees((prev) => {
+      nextEmployees = prev.map((e) => {
         if (e.id === employeeId) {
           return {
             ...e,
@@ -1548,14 +1738,30 @@ export default function App() {
           };
         }
         return e;
-      })
-    );
+      });
+      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      return nextEmployees;
+    });
 
-    if (currentUser?.employeeId === employeeId || currentUser?.employeeCode === emp?.code) {
-      setCurrentUser((prev) => (prev ? { ...prev, branchId: toBranchId } : null));
+    if (
+      currentUser?.employeeId === employeeId ||
+      currentUser?.employeeCode === emp?.code ||
+      currentUser?.id === employeeId ||
+      currentUser?.id === `user_${employeeId}`
+    ) {
+      setCurrentUser((prev) => {
+        if (!prev) return null;
+        const updated = { ...prev, branchId: toBranchId };
+        localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+        return updated;
+      });
     }
 
     realtimeService.emit('TRANSFER_EMPLOYEE', record);
+    syncStateToCloudImmediate({
+      employees: sanitizeForFirestore(nextEmployees),
+      transferRecords: sanitizeForFirestore(nextTransfers),
+    });
     fetch('/api/employees/transfer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1755,18 +1961,38 @@ export default function App() {
       syncStateToCloudImmediate({ adminProfile: updatedUser });
     }
 
-    if (updatedEmp) {
-      handleUpdateEmployee(updatedEmp);
+    // Flexible employee matching so staff profile change ALWAYS updates their directory avatar & info
+    const matchedEmployee = updatedEmp || employees.find((e) =>
+      e.id === updatedUser.employeeId ||
+      (updatedUser.employeeId && e.id === updatedUser.employeeId.replace('user_', '')) ||
+      e.code === updatedUser.employeeCode ||
+      e.id === updatedUser.id ||
+      (`user_${e.id}` === updatedUser.id) ||
+      (updatedUser.username && e.code.toLowerCase() === updatedUser.username.toLowerCase()) ||
+      (updatedUser.email && e.email && e.email.toLowerCase() === updatedUser.email.toLowerCase()) ||
+      (updatedUser.nameEn && e.nameEn.toLowerCase() === updatedUser.nameEn.toLowerCase())
+    );
+
+    if (matchedEmployee) {
+      const mergedEmp: Employee = {
+        ...matchedEmployee,
+        avatar: updatedUser.avatar || matchedEmployee.avatar,
+        nameKh: updatedUser.nameKh || matchedEmployee.nameKh,
+        nameEn: updatedUser.nameEn || matchedEmployee.nameEn,
+        pinCode: updatedUser.pinCode || matchedEmployee.pinCode,
+        phone: (updatedEmp && updatedEmp.phone) || matchedEmployee.phone,
+      };
+      handleUpdateEmployee(mergedEmp);
     }
 
-    realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: updatedEmp });
+    realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: matchedEmployee });
 
     fetch('/api/user/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: updatedUser,
-        employee: updatedEmp,
+        employee: matchedEmployee,
         senderId: realtimeService.getClientId(),
       }),
     }).catch(() => {});

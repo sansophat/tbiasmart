@@ -87,27 +87,80 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 }) => {
   // Find employee profile if logged in
   const loggedInEmp = employees.find(
-    (e) => e.id === currentUser?.employeeId || e.code === currentUser?.employeeCode
+    (e) =>
+      e.id === currentUser?.employeeId ||
+      (currentUser?.employeeId && e.id === currentUser.employeeId.replace('user_', '')) ||
+      e.code === currentUser?.employeeCode ||
+      e.id === currentUser?.id ||
+      (`user_${e.id}` === currentUser?.id) ||
+      (currentUser?.username && e.code.toLowerCase() === currentUser.username.toLowerCase()) ||
+      (currentUser?.email && e.email && e.email.toLowerCase() === currentUser.email.toLowerCase())
   );
   const isEmployee = currentUser?.role === 'employee';
 
-  const defaultBranchId = (isEmployee && (currentUser?.branchId || loggedInEmp?.branchId))
-    ? (currentUser?.branchId || loggedInEmp?.branchId)!
-    : branches[0]?.id || 'br_club_1';
-
   const defaultEmpId = loggedInEmp?.id || employees[0]?.id || 'emp_off_1';
+  const defaultEmp = employees.find((e) => e.id === defaultEmpId);
+  const defaultBranchId = (loggedInEmp?.branchId || defaultEmp?.branchId || currentUser?.branchId)
+    ? (loggedInEmp?.branchId || defaultEmp?.branchId || currentUser?.branchId)!
+    : branches[0]?.id || 'br_club_1';
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>(defaultBranchId);
   const [selectedEmpId, setSelectedEmpId] = useState<string>(defaultEmpId);
 
+  // Auto-sync branch to employee's assigned branch whenever employee changes or loads
   useEffect(() => {
-    if (isEmployee && (currentUser?.branchId || loggedInEmp?.branchId)) {
-      setSelectedBranchId(currentUser?.branchId || loggedInEmp?.branchId || branches[0].id);
+    if (selectedEmpId) {
+      const targetEmp = employees.find((e) => e.id === selectedEmpId);
+      if (targetEmp) {
+        let b = branches.find((br) => br.id === targetEmp.branchId);
+        if (!b || b.id === 'br_main_hq' || b.id === 'br_office') {
+          const deptB = branches.find(
+            (br) =>
+              (targetEmp.department &&
+                (br.nameEn.toLowerCase() === targetEmp.department.toLowerCase() ||
+                  br.nameEn.toLowerCase().includes(targetEmp.department.toLowerCase()) ||
+                  targetEmp.department.toLowerCase().includes(br.nameEn.toLowerCase()))) ||
+              (targetEmp.departmentKh &&
+                (br.nameKh === targetEmp.departmentKh ||
+                  br.nameKh.includes(targetEmp.departmentKh) ||
+                  targetEmp.departmentKh.includes(br.nameKh)))
+          );
+          if (deptB) b = deptB;
+        }
+        if (b) {
+          setSelectedBranchId(b.id);
+        }
+      }
     }
-    if (loggedInEmp) {
-      setSelectedEmpId(loggedInEmp.id);
+  }, [selectedEmpId, employees, branches]);
+
+  const userInitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentUser?.id && userInitRef.current !== currentUser.id) {
+      userInitRef.current = currentUser.id;
+      if (loggedInEmp) {
+        setSelectedEmpId(loggedInEmp.id);
+        let b = branches.find((br) => br.id === loggedInEmp.branchId);
+        if (!b || b.id === 'br_main_hq' || b.id === 'br_office') {
+          const deptB = branches.find(
+            (br) =>
+              (loggedInEmp.department &&
+                (br.nameEn.toLowerCase() === loggedInEmp.department.toLowerCase() ||
+                  br.nameEn.toLowerCase().includes(loggedInEmp.department.toLowerCase()) ||
+                  loggedInEmp.department.toLowerCase().includes(br.nameEn.toLowerCase()))) ||
+              (loggedInEmp.departmentKh &&
+                (br.nameKh === loggedInEmp.departmentKh ||
+                  br.nameKh.includes(loggedInEmp.departmentKh) ||
+                  loggedInEmp.departmentKh.includes(br.nameKh)))
+          );
+          if (deptB) b = deptB;
+        }
+        if (b) {
+          setSelectedBranchId(b.id);
+        }
+      }
     }
-  }, [currentUser, loggedInEmp, isEmployee]);
+  }, [currentUser?.id, loggedInEmp, branches]);
 
   const [attendanceType, setAttendanceType] = useState<'check_in' | 'check_out'>('check_in');
   
@@ -491,13 +544,17 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
     setTimeout(() => {
       const now = new Date();
+      // Ensure punch is credited to the employee's assigned branch
+      const assignedBranch = emp.branchId ? branches.find((b) => b.id === emp.branchId) : undefined;
+      const effectiveBranch = (method !== 'qr_kiosk' && assignedBranch) ? assignedBranch : branch;
+
       const currentDistance = calculateDistanceMeters(
         currentGeo.lat,
         currentGeo.lng,
-        branch.lat,
-        branch.lng
+        effectiveBranch.lat,
+        effectiveBranch.lng
       );
-      const withinRadius = currentDistance <= branch.radiusMeters;
+      const withinRadius = currentDistance <= effectiveBranch.radiusMeters;
 
       // Determine Status (On-Time / Late / Geofence violation)
       let status: 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' = 'on_time';
@@ -510,9 +567,9 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         const currentMins = hour * 60 + mins;
 
         // Office starts at 08:00 (480 mins) with 15 mins grace period
-        if (branch.type === 'office' && currentMins > 8 * 60 + 15 && attendanceType === 'check_in') {
+        if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && attendanceType === 'check_in') {
           status = 'late';
-        } else if (branch.type === 'cafe' && currentMins > 7 * 60 && attendanceType === 'check_in') {
+        } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && attendanceType === 'check_in') {
           status = 'late';
         } else if (attendanceType === 'check_out' && hour >= 18) {
           status = 'overtime';
@@ -526,9 +583,9 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         employeeNameEn: emp.nameEn,
         employeeCode: emp.code,
         employeeAvatar: emp.avatar,
-        branchId: branch.id,
-        branchNameKh: branch.nameKh,
-        branchNameEn: branch.nameEn,
+        branchId: effectiveBranch.id,
+        branchNameKh: effectiveBranch.nameKh,
+        branchNameEn: effectiveBranch.nameEn,
         type: attendanceType,
         timestamp: now.toISOString(),
         lat: currentGeo.lat,
@@ -544,7 +601,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         deviceVerified: true,
         notes: withinRadius
           ? `${attendanceType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${currentGeo.accuracy || 5}m)`
-          : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${branch.radiusMeters}m`,
+          : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${effectiveBranch.radiusMeters}m`,
       };
 
       onAddAttendanceRecord(newRecord);

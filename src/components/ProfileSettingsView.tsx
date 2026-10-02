@@ -52,7 +52,15 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
   const isEmployee = currentUser.role === 'employee';
 
   const currentEmp = employees.find(
-    (e) => e.id === currentUser.employeeId || e.code === currentUser.employeeCode
+    (e) =>
+      e.id === currentUser.employeeId ||
+      (currentUser.employeeId && e.id === currentUser.employeeId.replace('user_', '')) ||
+      e.code === currentUser.employeeCode ||
+      e.id === currentUser.id ||
+      (`user_${e.id}` === currentUser.id) ||
+      (currentUser.username && e.code.toLowerCase() === currentUser.username.toLowerCase()) ||
+      (currentUser.email && e.email && e.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+      (currentUser.nameEn && e.nameEn.toLowerCase() === currentUser.nameEn.toLowerCase())
   );
 
   const assignedBranch = branches.find(
@@ -74,18 +82,48 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  // Handle local file upload
+  // Handle local file upload with canvas compression
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 3 * 1024 * 1024) {
-        setErrorMsg(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 3MB ឡើយ' : 'Image size must be under 3MB');
+      if (!file.type.startsWith('image/')) {
+        setErrorMsg(lang === 'km' ? 'សូមជ្រើសរើសឯកសារជារូបភាព (PNG, JPG, WebP)!' : 'Please select an image file (PNG, JPG, WebP)!');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setErrorMsg(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 10MB ឡើយ' : 'Image size must be under 10MB');
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setAvatar(reader.result as string);
-        setErrorMsg('');
+      reader.onload = (uploadEvt) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_DIM = 280;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > MAX_DIM) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            }
+          } else {
+            if (height > MAX_DIM) {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressed = canvas.toDataURL('image/jpeg', 0.85);
+            setAvatar(compressed);
+            setErrorMsg('');
+          }
+        };
+        img.src = uploadEvt.target?.result as string;
       };
       reader.readAsDataURL(file);
     }
