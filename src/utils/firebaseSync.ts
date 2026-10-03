@@ -138,6 +138,7 @@ export interface CloudSystemState {
   systemSettings?: any;
   adminProfile?: any;
   auditLogs?: any[];
+  staffAlerts?: any[];
   lastUpdated?: string;
   updatedBy?: string;
 }

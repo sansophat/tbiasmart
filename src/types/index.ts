@@ -307,6 +307,7 @@ export interface SystemBackupData {
   adminProfile?: AuthUser;
   auditLogs?: AuditLogEntry[];
   shifts?: Shift[];
+  staffAlerts?: any[];
 }
 
 export type SyncEventType =
@@ -317,6 +318,8 @@ export type SyncEventType =
   | 'CANONICAL_STATE_RESPONSE'
   | 'UPDATE_SHIFTS'
   | 'PUNCH_ATTENDANCE'
+  | 'STAFF_LOGIN'
+  | 'ACTION_ALERT'
   | 'SUBMIT_LEAVE'
   | 'SUBMIT_LEAVE_REQUEST'
   | 'UPDATE_LEAVE_STATUS'

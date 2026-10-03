@@ -28,9 +28,10 @@ import {
   IdCard,
   Lock
 } from 'lucide-react';
-import { AuthUser, Employee, Branch, LeaveRequest, AttendanceRecord, Language, CompanyBranding, UserGeoLocation } from '../types';
-import { INITIAL_BRANDING } from '../data/initialData';
+import { AuthUser, Employee, Branch, LeaveRequest, AttendanceRecord, Language, CompanyBranding, UserGeoLocation, Shift } from '../types';
+import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
+import { StaffRosterTable } from './StaffRosterTable';
 
 interface EmployeePortalViewProps {
   currentUser: AuthUser;
@@ -38,6 +39,7 @@ interface EmployeePortalViewProps {
   branches: Branch[];
   leaveRequests: LeaveRequest[];
   attendanceRecords: AttendanceRecord[];
+  shifts?: Shift[];
   onSubmitLeaveRequest: (req: LeaveRequest) => void;
   onOpenScan: () => void;
   lang: Language;
@@ -57,6 +59,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   branches,
   leaveRequests,
   attendanceRecords,
+  shifts = INITIAL_SHIFTS,
   onSubmitLeaveRequest,
   onOpenScan,
   lang,
@@ -452,6 +455,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Staff Roster & Scan Tracking Table Component */}
+      <StaffRosterTable
+        currentEmployee={currentEmp as Employee}
+        employees={employees}
+        shifts={shifts}
+        branches={branches}
+        attendanceRecords={attendanceRecords}
+        leaveRequests={leaveRequests}
+        onOpenScan={onOpenScan}
+        lang={lang}
+      />
 
       {/* Main Grid: My Requests History & Recent Attendance Logs */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

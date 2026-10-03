@@ -139,6 +139,7 @@ function getCleanBlankState() {
     systemSettings: current?.systemSettings || {},
     adminProfile: DEFAULT_ADMIN_PROFILE,
     auditLogs: [],
+    staffAlerts: [],
     lastUpdated: new Date().toISOString(),
     isReset: true,
   };
@@ -146,7 +147,12 @@ function getCleanBlankState() {
 
 function getDemoSeedState() {
   const diskState = readDbFileFromDisk();
-  if (diskState) return diskState;
+  if (diskState) {
+    if (!Array.isArray(diskState.staffAlerts)) {
+      diskState.staffAlerts = [];
+    }
+    return diskState;
+  }
   return {
     branches: [DEFAULT_STARTER_BRANCH],
     branchTypes: [],
@@ -159,6 +165,7 @@ function getDemoSeedState() {
     systemSettings: {},
     adminProfile: DEFAULT_ADMIN_PROFILE,
     auditLogs: [],
+    staffAlerts: [],
     lastUpdated: new Date().toISOString(),
     isReset: false,
   };
@@ -166,6 +173,9 @@ function getDemoSeedState() {
 
 // In-Memory Database initialized from file if exists, or demo seed
 let serverDb: any = getDemoSeedState();
+if (!Array.isArray(serverDb.staffAlerts)) {
+  serverDb.staffAlerts = [];
+}
 
 try {
   if (!fs.existsSync(DATA_DIR)) {
@@ -357,8 +367,56 @@ wss.on('connection', (ws: WebSocket, req) => {
         const record = payload.record || payload;
         if (record && record.id) {
           serverDb.attendanceRecords = [record, ...(serverDb.attendanceRecords || []).filter((r: any) => r.id !== record.id).slice(0, 499)];
+          const empName = record.employeeNameKh || record.employeeNameEn || 'Staff';
+          const actionType = record.type === 'check_in' ? 'Check-In' : 'Check-Out';
+          const punchAlert = {
+            id: `alert_att_${record.id}`,
+            type: 'punch',
+            titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
+            titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
+            detailKh: `${empName} ${record.type === 'check_in' ? 'បានចូលធ្វើការ (Check-In)' : 'បានចេញពីការងារ (Check-Out)'} - ${record.branchNameKh || record.branchNameEn || ''} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
+            detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
+            timestamp: new Date().toLocaleTimeString('km-KH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            rawTimestamp: record.timestamp ? new Date(record.timestamp).getTime() : Date.now(),
+            actorName: empName,
+            actorAvatar: record.employeeAvatar,
+            branchId: record.branchId,
+            branchName: record.branchNameKh || record.branchNameEn,
+            isUnread: true,
+          };
+          if (!Array.isArray(serverDb.staffAlerts)) serverDb.staffAlerts = [];
+          serverDb.staffAlerts = [punchAlert, ...serverDb.staffAlerts.filter((a: any) => a.id !== punchAlert.id).slice(0, 99)];
           persistDatabase();
         }
+      }
+
+      // If client sends staff login over WebSocket
+      if (type === 'STAFF_LOGIN' && payload) {
+        const { user, employee, branch, alert, auditLog } = payload;
+        const empName = user?.nameKh || employee?.nameKh || user?.nameEn || user?.username || 'Staff';
+        const empCode = user?.employeeCode || employee?.code || user?.username || '';
+        const branchName = branch ? (branch.nameKh || branch.nameEn) : '';
+        const loginAlert = alert || {
+          id: `alert_login_${user?.id || Date.now()}_${Date.now()}`,
+          type: 'login',
+          titleKh: 'បុគ្គលិកបានចូលប្រើប្រព័ន្ធ',
+          titleEn: 'Staff Logged In',
+          detailKh: `${empName} (${empCode}) បានចូលប្រើប្រព័ន្ធជោគជ័យ${branchName ? ` - ${branchName}` : ''}`,
+          detailEn: `${empName} (${empCode}) logged in successfully${branchName ? ` - ${branchName}` : ''}`,
+          timestamp: new Date().toLocaleTimeString('km-KH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          rawTimestamp: Date.now(),
+          actorName: empName,
+          actorAvatar: user?.avatar || employee?.avatar,
+          branchId: branch?.id,
+          branchName: branchName,
+          isUnread: true,
+        };
+        if (!Array.isArray(serverDb.staffAlerts)) serverDb.staffAlerts = [];
+        serverDb.staffAlerts = [loginAlert, ...serverDb.staffAlerts.filter((a: any) => a.id !== loginAlert.id).slice(0, 99)];
+        if (auditLog && auditLog.id) {
+          serverDb.auditLogs = [auditLog, ...(serverDb.auditLogs || []).slice(0, 199)];
+        }
+        persistDatabase();
       }
 
       // Ensure timestamp and forward to all other clients
@@ -555,8 +613,33 @@ app.post('/api/attendance/punch', (req, res) => {
 
   // Prepend to attendance records
   serverDb.attendanceRecords = [record, ...(serverDb.attendanceRecords || []).filter((r: any) => r.id !== record.id)];
+
+  const empName = record.employeeNameKh || record.employeeNameEn || employee?.nameKh || employee?.nameEn || 'Staff';
+  const actionType = record.type === 'check_in' ? 'Check-In' : 'Check-Out';
+  const actionTypeKh = record.type === 'check_in' ? 'បានចូលធ្វើការ (Check-In)' : 'បានចេញពីការងារ (Check-Out)';
+  const branchName = record.branchNameKh || record.branchNameEn || branch?.nameKh || branch?.nameEn || '';
+
+  const punchAlert = {
+    id: `alert_att_${record.id}`,
+    type: 'punch',
+    titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
+    titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
+    detailKh: `${empName} ${actionTypeKh} - ${branchName} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
+    detailEn: `${empName} ${actionType} - ${record.branchNameEn || branch?.nameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
+    timestamp: new Date().toLocaleTimeString('km-KH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    rawTimestamp: record.timestamp ? new Date(record.timestamp).getTime() : Date.now(),
+    actorName: empName,
+    actorAvatar: record.employeeAvatar || employee?.avatar,
+    branchId: record.branchId,
+    branchName: branchName,
+    isUnread: true,
+  };
+
+  if (!Array.isArray(serverDb.staffAlerts)) serverDb.staffAlerts = [];
+  serverDb.staffAlerts = [punchAlert, ...serverDb.staffAlerts.filter((a: any) => a.id !== punchAlert.id).slice(0, 99)];
+
   persistDatabase();
-  syncToFirestore({ attendanceRecords: serverDb.attendanceRecords });
+  syncToFirestore({ attendanceRecords: serverDb.attendanceRecords, staffAlerts: serverDb.staffAlerts });
 
   const eventPayload = {
     type: 'PUNCH_ATTENDANCE',
@@ -564,6 +647,7 @@ app.post('/api/attendance/punch', (req, res) => {
       record,
       employee,
       branch,
+      alert: punchAlert,
     },
     senderId: senderId || 'api_client',
     senderName: record.employeeNameKh || record.employeeNameEn || 'Staff',
@@ -571,7 +655,77 @@ app.post('/api/attendance/punch', (req, res) => {
   };
 
   broadcastToClients(eventPayload);
-  res.json({ success: true, record, totalRecords: serverDb.attendanceRecords.length });
+  res.json({ success: true, record, alert: punchAlert, totalRecords: serverDb.attendanceRecords.length });
+});
+
+// 5.1 STAFF LOGIN
+app.post('/api/staff/login', (req, res) => {
+  const { user, employee, branch, alert, auditLog, senderId } = req.body;
+  if (!user) {
+    return res.status(400).json({ error: 'Missing user payload' });
+  }
+
+  const empName = user.nameKh || employee?.nameKh || user.nameEn || user.username || 'Staff';
+  const empCode = user.employeeCode || employee?.code || user.username || '';
+  const branchName = branch ? (branch.nameKh || branch.nameEn) : '';
+
+  const loginAlert = alert || {
+    id: `alert_login_${user.id || Date.now()}_${Date.now()}`,
+    type: 'login',
+    titleKh: 'បុគ្គលិកបានចូលប្រើប្រព័ន្ធ',
+    titleEn: 'Staff Logged In',
+    detailKh: `${empName} (${empCode}) បានចូលប្រើប្រព័ន្ធជោគជ័យ${branchName ? ` - ${branchName}` : ''}`,
+    detailEn: `${empName} (${empCode}) logged in successfully${branchName ? ` - ${branchName}` : ''}`,
+    timestamp: new Date().toLocaleTimeString('km-KH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    rawTimestamp: Date.now(),
+    actorName: empName,
+    actorAvatar: user.avatar || employee?.avatar,
+    branchId: branch?.id,
+    branchName: branchName,
+    isUnread: true,
+  };
+
+  if (!Array.isArray(serverDb.staffAlerts)) serverDb.staffAlerts = [];
+  serverDb.staffAlerts = [loginAlert, ...serverDb.staffAlerts.filter((a: any) => a.id !== loginAlert.id).slice(0, 99)];
+
+  if (auditLog && auditLog.id) {
+    serverDb.auditLogs = [auditLog, ...(serverDb.auditLogs || []).slice(0, 199)];
+  }
+
+  persistDatabase();
+  syncToFirestore({ staffAlerts: serverDb.staffAlerts, auditLogs: serverDb.auditLogs });
+
+  const eventPayload = {
+    type: 'STAFF_LOGIN',
+    payload: { user, employee, branch, alert: loginAlert },
+    senderId: senderId || 'api_client',
+    senderName: empName,
+    timestamp: new Date().toISOString(),
+  };
+
+  broadcastToClients(eventPayload);
+  res.json({ success: true, alert: loginAlert });
+});
+
+// 5.2 STAFF ALERTS GET & CLEAR
+app.get('/api/staff/alerts', (req, res) => {
+  res.json({
+    success: true,
+    alerts: Array.isArray(serverDb.staffAlerts) ? serverDb.staffAlerts : [],
+  });
+});
+
+app.delete('/api/staff/alerts', (req, res) => {
+  serverDb.staffAlerts = [];
+  persistDatabase();
+  syncToFirestore({ staffAlerts: [] });
+  broadcastToClients({
+    type: 'ACTION_ALERT',
+    payload: { action: 'CLEAR_ALL' },
+    senderId: req.body?.senderId || 'admin_client',
+    timestamp: new Date().toISOString(),
+  });
+  res.json({ success: true });
 });
 
 // 6. STAFF TRANSFER

@@ -25,7 +25,8 @@ import {
   Flame,
   Clock,
   Compass,
-  Download
+  Download,
+  CalendarDays
 } from 'lucide-react';
 import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
@@ -97,9 +98,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           items: [
             {
               id: 'portal',
-              labelKh: 'ផតថលរបស់ខ្ញុំ',
-              labelEn: 'My Portal (Leaves & OT)',
-              icon: UserCheck,
+              labelKh: 'កាលវិភាគ & ផតថល (Roster)',
+              labelEn: 'My Roster & Portal',
+              icon: CalendarDays,
               badge: pendingLeavesCount > 0 ? pendingLeavesCount : undefined,
               badgeColor: 'bg-amber-500 text-white',
             },

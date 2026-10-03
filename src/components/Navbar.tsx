@@ -30,6 +30,7 @@ import {
 import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation, Employee } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
 import { AdminQuickVisualWidget } from './AdminQuickVisualWidget';
+import { ActionAlertItem } from './RealtimeActionAlertCenter';
 
 interface NavbarProps {
   activeTab: string;
@@ -46,6 +47,8 @@ interface NavbarProps {
   onLogout?: () => void;
   employees?: Employee[];
   pendingLeavesCount?: number;
+  actionAlerts?: ActionAlertItem[];
+  onClearAlerts?: () => void;
   branding?: CompanyBranding;
   onUpdateBranding?: (branding: Partial<CompanyBranding>) => void;
   onNavigateToSettingsTypography?: () => void;
@@ -75,6 +78,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   employees = [],
   pendingLeavesCount = 0,
+  actionAlerts = [],
+  onClearAlerts,
   branding,
   onUpdateBranding,
   onNavigateToSettingsTypography,
@@ -90,21 +95,26 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [time, setTime] = useState(new Date());
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isAlertsOpen, setIsAlertsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [isTickerPaused, setIsTickerPaused] = useState(false);
   const [isReminderDismissed, setIsReminderDismissed] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const alertsMenuRef = useRef<HTMLDivElement>(null);
 
   // Sync / reset error if user or avatar changes
   useEffect(() => {
     setImgError(false);
   }, [currentUser?.id, currentUser?.avatar]);
 
-  // Click outside to close user menu
+  // Click outside to close user menu & alerts menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
+      }
+      if (alertsMenuRef.current && !alertsMenuRef.current.contains(event.target as Node)) {
+        setIsAlertsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -170,7 +180,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 transition-all">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 transition-all shadow-xs">
       {/* Broadcast Announcement Scrolling Ticker Bar */}
       {broadcastActive && !isReminderDismissed && (broadcastNoticeKh || broadcastNoticeEn) && (
         <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white py-1.5 px-3 sm:px-4 text-xs font-medium shadow-inner border-b border-amber-600/50 overflow-hidden">
@@ -243,7 +253,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       )}
 
       {/* Main Header Content */}
-      <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4 max-w-full overflow-hidden">
+      <div className="px-3 sm:px-6 lg:px-8 py-3 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4 max-w-full overflow-visible relative">
         {/* Left Side: Mobile Menu Button & Breadcrumbs */}
         <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 sm:flex-initial">
           <button
@@ -360,6 +370,133 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
+          {/* Real-time Staff Alerts & GPS Feed Bell */}
+          <div className={`relative shrink-0 ${isAlertsOpen ? 'z-50' : 'z-20'}`} ref={alertsMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsAlertsOpen(!isAlertsOpen)}
+              className={`flex items-center space-x-1.5 px-2 sm:px-3 py-1.5 rounded-2xl text-xs font-bold border transition cursor-pointer shadow-xs ${
+                actionAlerts.some((a) => a.isUnread)
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 ring-2 ring-amber-400/40'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+              }`}
+              title={lang === 'km' ? 'ការជូនដំណឹងសកម្មភាពបុគ្គលិក & ស្កេន GPS' : 'Staff Activity & GPS Punch Alerts'}
+            >
+              <div className="relative">
+                <Bell className="w-3.5 h-3.5 text-indigo-600" />
+                {actionAlerts.some((a) => a.isUnread) && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+                )}
+              </div>
+              <span className="hidden sm:inline font-battambang">
+                {lang === 'km' ? 'ដំណឹងបុគ្គលិក' : 'Staff Alerts'}
+              </span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                actionAlerts.some((a) => a.isUnread)
+                  ? 'bg-rose-600 text-white animate-pulse'
+                  : 'bg-white text-slate-700 border border-slate-200'
+              }`}>
+                {actionAlerts.length}
+              </span>
+            </button>
+
+            {/* Quick Alerts Dropdown Popover */}
+            {isAlertsOpen && (
+              <>
+                {/* Mobile Backdrop Overlay to dismiss on outside tap */}
+                <div
+                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 sm:hidden animate-in fade-in duration-150"
+                  onClick={() => setIsAlertsOpen(false)}
+                />
+
+                <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:right-0 sm:absolute sm:top-full sm:mt-2 w-auto sm:w-96 max-w-sm sm:max-w-none mx-auto sm:mx-0 bg-white rounded-3xl shadow-2xl border border-slate-200/90 z-50 p-4 animate-in fade-in zoom-in-95 sm:zoom-in-100 sm:slide-in-from-top-2 duration-150 ring-1 ring-slate-900/10">
+                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100">
+                    <div className="flex items-center space-x-1.5">
+                      <Radio className="w-4 h-4 text-indigo-600 animate-pulse" />
+                      <span className="font-bold text-slate-800 text-xs font-battambang">
+                        {lang === 'km' ? 'សកម្មភាពបុគ្គលិកផ្ទាល់ (Live Staff Alerts)' : 'Live Staff Activity Alerts'}
+                      </span>
+                    </div>
+                    {onClearAlerts && actionAlerts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClearAlerts();
+                          setIsAlertsOpen(false);
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-rose-600 font-semibold cursor-pointer"
+                      >
+                        {lang === 'km' ? 'សម្អាត' : 'Clear'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Alert Items List */}
+                  <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    {actionAlerts.length === 0 ? (
+                      <div className="text-center py-6 text-xs text-slate-400">
+                        {lang === 'km' ? 'មិនទាន់មានសកម្មភាពថ្មីទេ' : 'No staff activity recorded yet'}
+                      </div>
+                    ) : (
+                      actionAlerts.slice(0, 15).map((a) => (
+                        <div
+                          key={a.id}
+                          className={`p-2.5 rounded-2xl border text-xs flex items-center space-x-2.5 shadow-2xs ${
+                            a.isUnread ? 'bg-indigo-50/70 border-indigo-200' : 'bg-slate-50/70 border-slate-100'
+                          }`}
+                        >
+                          {a.actorAvatar ? (
+                            <img
+                              src={a.actorAvatar}
+                              alt=""
+                              className="w-8 h-8 rounded-xl object-cover border border-slate-200 shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-white font-bold text-xs ${
+                              a.type === 'punch' ? 'bg-emerald-600' :
+                              a.type === 'login' ? 'bg-blue-600' :
+                              a.type === 'leave_submit' ? 'bg-amber-600' : 'bg-indigo-600'
+                            }`}>
+                              {a.type === 'punch' ? 'GPS' : a.type === 'login' ? 'IN' : 'REQ'}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-800 text-[11px] truncate">
+                                {lang === 'km' ? a.titleKh : a.titleEn}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-mono shrink-0 ml-1">{a.timestamp}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-600 truncate mt-0.5">
+                              {lang === 'km' ? a.detailKh : a.detailEn}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Footer link to Dashboard */}
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAlertsOpen(false);
+                        setActiveTab('dashboard');
+                      }}
+                      className="text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1 cursor-pointer"
+                    >
+                      <span>{lang === 'km' ? 'មើលទាំងអស់លើ Dashboard' : 'View Full Feed on Dashboard'}</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-slate-400 text-[10px]">{actionAlerts.length} {lang === 'km' ? 'កំណត់ត្រា' : 'total'}</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Language Switcher */}
           <button
             type="button"
@@ -394,7 +531,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
 
           {/* User Account Capsule with Dropdown Menu */}
-          <div className="relative shrink-0" ref={userMenuRef}>
+          <div className={`relative shrink-0 ${isUserMenuOpen ? 'z-50' : 'z-20'}`} ref={userMenuRef}>
             <button
               type="button"
               onClick={() => {

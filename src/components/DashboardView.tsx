@@ -41,6 +41,7 @@ interface DashboardViewProps {
   leaveRequests?: LeaveRequest[];
   onUpdateLeaveStatus?: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
   actionAlerts?: ActionAlertItem[];
+  onClearAlerts?: () => void;
   currentUser?: AuthUser | null;
   selectedBranchId: string;
   setSelectedBranchId: (id: string) => void;
@@ -57,6 +58,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   leaveRequests = [],
   onUpdateLeaveStatus,
   actionAlerts = [],
+  onClearAlerts,
   currentUser,
   selectedBranchId,
   setSelectedBranchId,
@@ -536,6 +538,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <RealtimeActionAlertCenter
         alerts={actionAlerts}
         pendingLeavesCount={leaveRequests.filter((r) => r.status === 'pending').length}
+        onClearAlerts={onClearAlerts}
         onApproveLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'approved') : undefined}
         onRejectLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'rejected') : undefined}
         onNavigateToLeaves={() => {
