@@ -67,32 +67,46 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   currentGeo,
   onUpdateBranchLocation,
 }) => {
-  // Find full employee object for current user
-  const currentEmp = employees.find(
-    (e) => e.id === currentUser.employeeId || e.code === currentUser.employeeCode
+  // Find full employee object for current user safely
+  const safeEmployees = Array.isArray(employees) ? employees : [];
+  const safeBranches = Array.isArray(branches) ? branches : [];
+  const safeLeaveRequests = Array.isArray(leaveRequests) ? leaveRequests : [];
+  const safeAttendanceRecords = Array.isArray(attendanceRecords) ? attendanceRecords : [];
+
+  const currentEmp = safeEmployees.find(
+    (e) =>
+      e &&
+      (e.id === currentUser?.employeeId ||
+        (currentUser?.employeeCode && e.code === currentUser.employeeCode) ||
+        e.id === currentUser?.id ||
+        (currentUser?.username && e.code?.toLowerCase() === currentUser.username.toLowerCase()))
   ) || {
-    id: currentUser.employeeId || 'emp_temp',
-    code: currentUser.employeeCode || 'EMP-USER',
-    nameKh: currentUser.nameKh,
-    nameEn: currentUser.nameEn,
-    branchId: currentUser.branchId || branches[0]?.id || 'br_office',
+    id: currentUser?.employeeId || currentUser?.id || 'emp_temp',
+    code: currentUser?.employeeCode || currentUser?.username || 'EMP-USER',
+    nameKh: currentUser?.nameKh || 'បុគ្គលិក',
+    nameEn: currentUser?.nameEn || 'Staff Member',
+    branchId: currentUser?.branchId || safeBranches[0]?.id || 'br_office',
     department: 'Operations',
     departmentKh: 'ប្រតិបត្តិការ',
-    role: currentUser.roleTitle || 'Staff Member',
+    role: currentUser?.roleTitle || 'Staff Member',
     roleKh: 'បុគ្គលិក',
     shiftId: 'shift_office',
-    avatar: currentUser.avatar,
+    avatar: currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
     phone: '012 345 678',
-    email: currentUser.email || 'user@enterprise.com.kh',
+    email: currentUser?.email || 'user@enterprise.com.kh',
     status: 'active' as const,
     pinCode: '1234',
     annualLeaveQuota: 18,
     annualLeaveUsed: 0,
     sickLeaveQuota: 7,
     sickLeaveUsed: 0,
+    weeklyDayOff: 0,
+    hasSundayRest: true,
+    shiftStartTime: '08:00',
+    shiftEndTime: '17:00',
   };
 
-  const branch = branches.find((b) => b.id === currentEmp.branchId);
+  const branch = safeBranches.find((b) => b && b.id === currentEmp.branchId) || safeBranches[0];
 
   // Modals state
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -111,14 +125,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [attachmentNote, setAttachmentNote] = useState('');
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Filter requests for current employee
-  const myRequests = leaveRequests.filter(
-    (req) => req.employeeId === currentEmp.id || req.employeeNameEn === currentEmp.nameEn
+  // Filter requests for current employee safely
+  const myRequests = safeLeaveRequests.filter(
+    (req) => req && (req.employeeId === currentEmp.id || (currentEmp.nameEn && req.employeeNameEn === currentEmp.nameEn))
   );
 
-  // Filter attendance records for current employee
-  const myAttendance = attendanceRecords.filter(
-    (r) => r.employeeId === currentEmp.id || r.employeeCode === currentEmp.code
+  // Filter attendance records for current employee safely
+  const myAttendance = safeAttendanceRecords.filter(
+    (r) => r && (r.employeeId === currentEmp.id || (currentEmp.code && r.employeeCode === currentEmp.code))
   );
 
   // Generate Digital Badge QR
@@ -629,7 +643,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </div>
 
                   <div className="text-[11px] font-mono font-medium text-slate-700">
-                    🕒 {new Date(record.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(record.timestamp).toLocaleDateString()}
+                    🕒 {(() => {
+                      try {
+                        const d = record.timestamp ? new Date(record.timestamp) : null;
+                        if (!d || isNaN(d.getTime())) return record.timestamp || '-';
+                        return `${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • ${d.toLocaleDateString()}`;
+                      } catch {
+                        return record.timestamp || '-';
+                      }
+                    })()}
                   </div>
 
                   <div className="text-[11px] text-slate-500 truncate flex items-center space-x-1">

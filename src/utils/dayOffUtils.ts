@@ -25,10 +25,11 @@ export const DAY_OF_WEEK_NAMES_KH = [
  * who do not follow standard Sunday-only office rest.
  */
 export function isShiftBasedWorker(emp: Employee): boolean {
+  if (!emp) return false;
   if (emp.hasSundayRest === false) return true;
   if (emp.weeklyDayOff !== undefined && emp.weeklyDayOff !== 0) return true;
   
-  const text = `${emp.branchId} ${emp.department} ${emp.departmentKh} ${emp.role} ${emp.roleKh} ${emp.shiftId}`.toLowerCase();
+  const text = `${emp.branchId || ''} ${emp.department || ''} ${emp.departmentKh || ''} ${emp.role || ''} ${emp.roleKh || ''} ${emp.shiftId || ''}`.toLowerCase();
   return (
     text.includes('cafe') ||
     text.includes('barista') ||
@@ -51,9 +52,10 @@ export function isShiftBasedWorker(emp: Employee): boolean {
  * - For Standard office staff: Default day off is Sunday (0).
  */
 export function isEmployeeDayOff(emp: Employee, dateInput: Date | string): boolean {
+  if (!emp) return false;
   const d = typeof dateInput === 'string'
     ? new Date(dateInput.includes('T') ? dateInput : `${dateInput}T12:00:00`)
-    : dateInput;
+    : (dateInput instanceof Date && !isNaN(dateInput.getTime()) ? dateInput : new Date());
   const dayIndex = d.getDay(); // 0 is Sunday, 1 is Monday, ...
 
   // -1 means rotating or no fixed day off
@@ -81,6 +83,7 @@ export function isEmployeeDayOff(emp: Employee, dateInput: Date | string): boole
  * Returns false for Cafe shop / Gas station / shift staff who work on Sunday.
  */
 export function isEmployeeSundayRest(emp: Employee): boolean {
+  if (!emp) return false;
   if (emp.hasSundayRest === false) {
     return false;
   }
@@ -94,6 +97,7 @@ export function isEmployeeSundayRest(emp: Employee): boolean {
  * Returns formatted Day Off name for display.
  */
 export function getEmployeeDayOffName(emp: Employee, lang: Language = 'km'): string {
+  if (!emp) return lang === 'km' ? 'ថ្ងៃសម្រាក' : 'Day Off';
   if (emp.weeklyDayOff === -1) {
     return lang === 'km' ? '🔄 វេនវិលជុំ (Rotating)' : '🔄 Rotating';
   }
@@ -107,7 +111,7 @@ export function getEmployeeDayOffName(emp: Employee, lang: Language = 'km'): str
     dayIdx = 0; // Sunday
   }
 
-  const name = lang === 'km' ? `ថ្ងៃ${DAY_OF_WEEK_NAMES_KH[dayIdx]}` : DAY_OF_WEEK_NAMES_EN[dayIdx];
+  const name = lang === 'km' ? `ថ្ងៃ${DAY_OF_WEEK_NAMES_KH[dayIdx] || 'សម្រាក'}` : (DAY_OF_WEEK_NAMES_EN[dayIdx] || 'Day Off');
   return name;
 }
 
@@ -193,10 +197,13 @@ export function getEmployeeLeaveOnDate(
   dateStr: string,
   leaveRequests: LeaveRequest[]
 ): LeaveRequest | undefined {
-  if (!leaveRequests || leaveRequests.length === 0) return undefined;
+  if (!emp || !leaveRequests || leaveRequests.length === 0) return undefined;
 
   return leaveRequests.find((lr) => {
-    const isSameEmp = lr.employeeId === emp.id || lr.employeeCode === emp.code;
+    if (!lr || !lr.startDate || !lr.endDate) return false;
+    const isSameEmp = 
+      (emp.id && lr.employeeId === emp.id) || 
+      (emp.code && lr.employeeCode === emp.code);
     if (!isSameEmp) return false;
     // Consider approved or pending/submitted leaves
     if (lr.status !== 'approved' && lr.status !== 'pending') return false;
@@ -226,10 +233,12 @@ export function validatePunchAllowance(
   leaveRequests: LeaveRequest[] = [],
   dateInput: Date = new Date()
 ): PunchAllowanceResult {
-  const dayIndex = dateInput.getDay();
-  const year = dateInput.getFullYear();
-  const month = String(dateInput.getMonth() + 1).padStart(2, '0');
-  const day = String(dateInput.getDate()).padStart(2, '0');
+  if (!emp) return { allowed: true };
+  const d = dateInput instanceof Date && !isNaN(dateInput.getTime()) ? dateInput : new Date();
+  const dayIndex = d.getDay();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   const todayStr = `${year}-${month}-${day}`;
 
   // 1. Check for Active / Approved Leave

@@ -16,10 +16,12 @@ class RealtimeSyncManager {
   private connectionListeners = new Set<ConnectionStateCallback>();
   private currentUser: AuthUser | null = null;
   private reconnectAttempts = 0;
+  private outgoingQueue: SyncMessage[] = [];
 
   constructor() {
     this.clientId = `client_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     this.initBroadcastChannel();
+    this.initWindowLifecycleListeners();
     this.connect();
   }
 
@@ -36,6 +38,32 @@ class RealtimeSyncManager {
     } catch (err) {
       console.warn('BroadcastChannel not supported in this browser context:', err);
     }
+  }
+
+  private initWindowLifecycleListeners() {
+    if (typeof window === 'undefined') return;
+
+    // Instantly reconnect when device comes online or tab becomes visible again
+    window.addEventListener('online', () => {
+      this.reconnectAttempts = 0;
+      this.connect();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.connect();
+        } else {
+          this.sendPing();
+        }
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.connect();
+      }
+    });
   }
 
   public setUserContext(user: AuthUser | null) {
@@ -63,6 +91,7 @@ class RealtimeSyncManager {
         this.notifyConnectionListeners(true);
         this.sendPing();
         this.startPingHeartbeat();
+        this.flushQueue();
       };
 
       this.ws.onmessage = (event) => {
@@ -83,8 +112,7 @@ class RealtimeSyncManager {
         this.handleDisconnect();
       };
 
-      this.ws.onerror = (err) => {
-        console.warn('WebSocket connection error:', err);
+      this.ws.onerror = () => {
         this.handleDisconnect();
       };
     } catch (err) {
@@ -101,20 +129,11 @@ class RealtimeSyncManager {
     }
 
     this.reconnectAttempts++;
-
-    // In a serverless/static environment (e.g. Vercel) where /ws doesn't exist,
-    // gracefully fall back to BroadcastChannel + Cloud Firestore rather than staying stuck in "Connecting"
-    if (this.reconnectAttempts >= 2) {
-      this.isConnected = true; // Local broadcast mesh active
-      this.notifyConnectionListeners(true);
-      return;
-    }
-
     this.isConnected = false;
     this.notifyConnectionListeners(false);
 
-    // Exponential backoff reconnect attempt
-    const delay = 2000;
+    // Continuous reconnection with fast initial attempts (500ms, 1000ms, max 3000ms)
+    const delay = Math.min(3000, Math.max(500, this.reconnectAttempts * 800));
     this.reconnectTimeout = setTimeout(() => {
       this.connect();
     }, delay);
@@ -124,7 +143,7 @@ class RealtimeSyncManager {
     this.stopPingHeartbeat();
     this.pingInterval = setInterval(() => {
       this.sendPing();
-    }, 20000);
+    }, 10000); // 10s heartbeat
   }
 
   private stopPingHeartbeat() {
@@ -141,22 +160,33 @@ class RealtimeSyncManager {
     const pingMessage = {
       type: 'PRESENCE_PING',
       senderId: this.clientId,
-      senderName: user ? (user.nameKh || user.nameEn || user.username) : 'Guest Terminal',
-      senderRole: user?.role || 'guest',
+      senderName: user ? (user.nameKh || user.nameEn || user.username) : 'Terminal Node',
+      senderRole: user?.role || 'employee',
       senderBranchId: user?.branchId || '',
       timestamp: new Date().toISOString(),
     };
 
     try {
       this.ws.send(JSON.stringify(pingMessage));
-    } catch (err) {
-      console.warn('Failed to send presence ping:', err);
+    } catch (_) {
+      // ignore
     }
   }
 
-  /**
-   * Broadcast an action/event to WebSocket server and cross-tab BroadcastChannel
-   */
+  private flushQueue() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    while (this.outgoingQueue.length > 0) {
+      const msg = this.outgoingQueue.shift();
+      if (msg) {
+        try {
+          this.ws.send(JSON.stringify(msg));
+        } catch (_) {
+          break;
+        }
+      }
+    }
+  }
+
   public emit<T = any>(type: SyncEventType, payload: T) {
     const user = this.currentUser;
     const message: SyncMessage<T> = {
@@ -169,7 +199,7 @@ class RealtimeSyncManager {
       timestamp: new Date().toISOString(),
     };
 
-    // 1. Send via WebSocket if open
+    // 1. Send via WebSocket if open, or queue if connecting
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(message));
@@ -177,15 +207,22 @@ class RealtimeSyncManager {
         console.warn('Failed to send over WebSocket:', err);
       }
     } else {
-      // Fallback: send via REST endpoint so server knows and can forward
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        this.outgoingQueue.push(message);
+      }
+    }
+
+    // 2. ALWAYS dispatch over REST to ensure server database persists immediately and forwards
+    try {
       fetch('/api/sync/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(message),
+        keepalive: true,
       }).catch(() => {});
-    }
+    } catch (_) {}
 
-    // 2. Also broadcast to other local tabs via BroadcastChannel
+    // 3. Instant local broadcast to all other open tabs on this device (0ms delay)
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage(message);
@@ -220,7 +257,7 @@ class RealtimeSyncManager {
       try {
         cb(message);
       } catch (err) {
-        console.error('Error in sync subscriber:', err);
+        console.error('Error in realtime listener callback:', err);
       }
     });
   }
@@ -230,7 +267,7 @@ class RealtimeSyncManager {
       try {
         cb(peers, onlineCount);
       } catch (err) {
-        console.error('Error in presence subscriber:', err);
+        console.error('Error in presence listener callback:', err);
       }
     });
   }
@@ -240,7 +277,7 @@ class RealtimeSyncManager {
       try {
         cb(connected);
       } catch (err) {
-        console.error('Error in connection subscriber:', err);
+        console.error('Error in connection listener callback:', err);
       }
     });
   }
@@ -249,13 +286,9 @@ class RealtimeSyncManager {
     return this.clientId;
   }
 
-  public getStatus() {
-    return {
-      connected: this.isConnected,
-      clientId: this.clientId,
-    };
+  public isSocketConnected(): boolean {
+    return this.isConnected && Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
   }
 }
 
-// Global instance
 export const realtimeService = new RealtimeSyncManager();

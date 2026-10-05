@@ -53,6 +53,7 @@ import { BranchTransferModal } from './components/BranchTransferModal';
 import { LoginModal } from './components/LoginModal';
 import { InstallAppModal } from './components/InstallAppModal';
 import { DigitalIdCardModal } from './components/DigitalIdCardModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
@@ -91,27 +92,49 @@ const DEFAULT_STARTER_BRANCH: Branch = {
   activeStaffCount: 0,
 };
 
+function safeGetJson<T>(key: string, fallback: T): T {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved || saved === 'undefined' || saved === 'null') return fallback;
+    const parsed = JSON.parse(saved);
+    if (parsed === null || parsed === undefined) return fallback;
+    return parsed;
+  } catch (err) {
+    console.warn(`SafeStorage: reset corrupted key "${key}" to initial fallback.`, err);
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {}
+    return fallback;
+  }
+}
+
 export default function App() {
   // Language State
   const [lang, setLang] = useState<Language>(() => {
-    return (localStorage.getItem('attend_lang') as Language) || 'km';
+    try {
+      return (localStorage.getItem('attend_lang') as Language) || 'km';
+    } catch {
+      return 'km';
+    }
   });
 
   // Persistent Admin Profile (Synced from server & localStorage)
   const [adminProfile, setAdminProfile] = useState<AuthUser>(() => {
-    const saved = localStorage.getItem('attend_admin_profile');
-    return saved ? JSON.parse(saved) : DEFAULT_AUTH_USER;
+    return safeGetJson('attend_admin_profile', DEFAULT_AUTH_USER);
   });
 
   // Current Logged-in User State (Requires Login on initial open if not already signed in)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
-    const saved = localStorage.getItem('attend_auth_user');
-    return saved ? JSON.parse(saved) : null;
+    return safeGetJson<AuthUser | null>('attend_auth_user', null);
   });
 
   const [showLoginModal, setShowLoginModal] = useState<boolean>(() => {
-    const saved = localStorage.getItem('attend_auth_user');
-    return !saved;
+    try {
+      const saved = localStorage.getItem('attend_auth_user');
+      return !saved || saved === 'null' || saved === 'undefined';
+    } catch {
+      return true;
+    }
   });
 
   // Layout Sidebar Collapse & Mobile State
@@ -131,75 +154,68 @@ export default function App() {
   const isCloudInitializedRef = useRef<boolean>(hasLocalCache);
   const initialMountSkipped = useRef<boolean>(false);
 
+  // Failsafe: Never let loading overlay block the user for more than 1.2s under any network condition
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsCloudSyncLoading(false);
+      isCloudInitializedRef.current = true;
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Persistent Core Data
   const [branches, setBranches] = useState<Branch[]>(() => {
-    const saved = localStorage.getItem('attend_branches');
-    return saved ? JSON.parse(saved) : INITIAL_BRANCHES;
+    return safeGetJson('attend_branches', INITIAL_BRANCHES);
   });
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
-    const saved = localStorage.getItem('attend_employees');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
+    return safeGetJson('attend_employees', INITIAL_EMPLOYEES);
   });
 
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
-    const saved = localStorage.getItem('attend_records');
-    return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE_RECORDS;
+    return safeGetJson('attend_records', INITIAL_ATTENDANCE_RECORDS);
   });
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
-    const saved = localStorage.getItem('attend_leaves');
-    return saved ? JSON.parse(saved) : INITIAL_LEAVE_REQUESTS;
+    return safeGetJson('attend_leaves', INITIAL_LEAVE_REQUESTS);
   });
 
   const [transferRecords, setTransferRecords] = useState<BranchTransferRecord[]>(() => {
-    const saved = localStorage.getItem('attend_transfers');
-    return saved ? JSON.parse(saved) : INITIAL_TRANSFER_RECORDS;
+    return safeGetJson('attend_transfers', INITIAL_TRANSFER_RECORDS);
   });
 
   const [branchTypes, setBranchTypes] = useState<BranchTypeConfig[]>(() => {
-    const saved = localStorage.getItem('attend_branch_types');
-    return saved ? JSON.parse(saved) : INITIAL_BRANCH_TYPES;
+    return safeGetJson('attend_branch_types', INITIAL_BRANCH_TYPES);
   });
 
   // Company Branding State
   const [branding, setBranding] = useState<CompanyBranding>(() => {
-    const saved = localStorage.getItem('attend_branding');
-    return saved ? JSON.parse(saved) : INITIAL_BRANDING;
+    return safeGetJson('attend_branding', INITIAL_BRANDING);
   });
 
   // Role Permissions (RBAC) State
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>(() => {
-    const saved = localStorage.getItem('attend_role_permissions');
-    return saved ? JSON.parse(saved) : INITIAL_ROLE_PERMISSIONS;
+    return safeGetJson('attend_role_permissions', INITIAL_ROLE_PERMISSIONS);
   });
 
   // System Settings & Broadcast State
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
-    const saved = localStorage.getItem('attend_system_settings');
-    return saved ? JSON.parse(saved) : INITIAL_SYSTEM_SETTINGS;
+    return safeGetJson('attend_system_settings', INITIAL_SYSTEM_SETTINGS);
   });
 
   // Working Shifts State (Barista, Gas Station, Office, Warehouse)
   const [shifts, setShifts] = useState<Shift[]>(() => {
-    const saved = localStorage.getItem('attend_shifts');
-    return saved ? JSON.parse(saved) : INITIAL_SHIFTS;
+    return safeGetJson('attend_shifts', INITIAL_SHIFTS);
   });
 
   // Administrative Audit Logs
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
-    const saved = localStorage.getItem('attend_audit_logs');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+    return safeGetJson('attend_audit_logs', INITIAL_AUDIT_LOGS);
   });
 
   // Real-time Action Alerts State (instant feedback for all staff activities)
   const [actionAlerts, setActionAlerts] = useState<ActionAlertItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('attend_staff_alerts');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+    return safeGetJson('attend_staff_alerts', []);
   });
 
   const addActionAlert = (alert: Omit<ActionAlertItem, 'id' | 'timestamp'> & { id?: string; timestamp?: string; rawTimestamp?: number }) => {
@@ -391,8 +407,13 @@ export default function App() {
             localStorage.setItem('attend_employees', JSON.stringify(cloudState.employees));
           }
           if (Array.isArray(cloudState.attendanceRecords)) {
-            setAttendanceRecords(cloudState.attendanceRecords);
-            localStorage.setItem('attend_records', JSON.stringify(cloudState.attendanceRecords));
+            setAttendanceRecords((prev) => {
+              const merged = mergeDatasets(prev, cloudState.attendanceRecords!);
+              try {
+                localStorage.setItem('attend_records', JSON.stringify(merged));
+              } catch (_) {}
+              return merged;
+            });
           }
           if (Array.isArray(cloudState.leaveRequests)) {
             setLeaveRequests(cloudState.leaveRequests);
@@ -433,6 +454,10 @@ export default function App() {
           if (Array.isArray(cloudState.auditLogs)) {
             setAuditLogs(cloudState.auditLogs);
             localStorage.setItem('attend_audit_logs', JSON.stringify(cloudState.auditLogs));
+          }
+          if (Array.isArray(cloudState.shifts) && cloudState.shifts.length > 0) {
+            setShifts(cloudState.shifts);
+            localStorage.setItem('attend_shifts', JSON.stringify(cloudState.shifts));
           }
           const cloudAlerts = cloudState.staffAlerts;
           if (Array.isArray(cloudAlerts) && cloudAlerts.length > 0) {
@@ -526,6 +551,10 @@ export default function App() {
               if (Array.isArray(s.auditLogs)) {
                 setAuditLogs(s.auditLogs);
                 localStorage.setItem('attend_audit_logs', JSON.stringify(s.auditLogs));
+              }
+              if (Array.isArray(s.shifts) && s.shifts.length > 0) {
+                setShifts(s.shifts);
+                localStorage.setItem('attend_shifts', JSON.stringify(s.shifts));
               }
             }
           }
@@ -716,7 +745,11 @@ export default function App() {
 
         setAttendanceRecords((prev) => {
           if (prev.some((r) => r.id === record.id)) return prev;
-          return [record, ...prev];
+          const next = [record, ...prev];
+          try {
+            localStorage.setItem('attend_records', JSON.stringify(next));
+          } catch (_) {}
+          return next;
         });
 
         const empName = lang === 'km' ? (record.employeeNameKh || record.employeeNameEn) : (record.employeeNameEn || record.employeeNameKh);
@@ -1157,6 +1190,10 @@ export default function App() {
           setAuditLogs(cloudData.auditLogs);
           localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
         }
+        if (Array.isArray(cloudData.shifts) && cloudData.shifts.length > 0) {
+          setShifts(cloudData.shifts);
+          localStorage.setItem('attend_shifts', JSON.stringify(cloudData.shifts));
+        }
 
         if (!isInitialCloudLoad) {
           setLiveToast({
@@ -1187,6 +1224,7 @@ export default function App() {
             systemSettings,
             adminProfile,
             auditLogs,
+            shifts,
           });
         }
         isCloudInitializedRef.current = true;
@@ -2423,6 +2461,7 @@ export default function App() {
 
         {/* 3. Main Views Dynamic Router */}
         <main className="flex-1 pb-16">
+          <ErrorBoundary fallbackTitleKh="កំពុងស្ដារផ្ទាំងទិដ្ឋភាពឡើងវិញ" fallbackTitleEn="Auto-Recovering View Container">
           {activeTab === 'dashboard' && (
             <DashboardView
               branches={branches}
@@ -2590,6 +2629,44 @@ export default function App() {
               lang={lang}
             />
           )}
+
+          {/* Safe Fallback Router if unexpected tab id is provided */}
+          {!['dashboard', 'portal', 'scan', 'kiosk', 'gps_radar', 'employees', 'branches', 'leaves', 'reports', 'settings', 'profile'].includes(activeTab) && (
+            currentUser?.role === 'employee' ? (
+              <EmployeePortalView
+                currentUser={currentUser || DEFAULT_AUTH_USER}
+                employees={employees}
+                branches={branches}
+                leaveRequests={leaveRequests}
+                attendanceRecords={attendanceRecords}
+                shifts={shifts}
+                onSubmitLeaveRequest={handleSubmitLeaveRequest}
+                onOpenScan={() => setActiveTab('scan')}
+                lang={lang}
+                branding={branding}
+                currentGeo={currentGeo}
+                onUpdateBranchLocation={handleUpdateBranchLocation}
+              />
+            ) : (
+              <DashboardView
+                branches={branches}
+                employees={employees}
+                attendanceRecords={attendanceRecords}
+                transferRecords={transferRecords}
+                leaveRequests={leaveRequests}
+                onUpdateLeaveStatus={handleUpdateLeaveStatus}
+                actionAlerts={actionAlerts}
+                onClearAlerts={handleClearAlerts}
+                currentUser={currentUser}
+                selectedBranchId={selectedBranchId}
+                setSelectedBranchId={setSelectedBranchId}
+                onNavigateTab={setActiveTab}
+                onOpenTransferModal={handleOpenTransferModal}
+                lang={lang}
+              />
+            )
+          )}
+          </ErrorBoundary>
         </main>
 
         {/* 4. Bottom Footer */}

@@ -325,6 +325,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload && payload.id) {
         serverDb.leaveRequests = [payload, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== payload.id)];
         persistDatabase();
+        syncToFirestore({ leaveRequests: serverDb.leaveRequests });
 
         // Broadcast to all other clients with both event types so neither is missed
         broadcastToClients({
@@ -359,6 +360,7 @@ wss.on('connection', (ws: WebSocket, req) => {
               : l
           );
           persistDatabase();
+          syncToFirestore({ leaveRequests: serverDb.leaveRequests });
         }
       }
 
@@ -387,6 +389,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           if (!Array.isArray(serverDb.staffAlerts)) serverDb.staffAlerts = [];
           serverDb.staffAlerts = [punchAlert, ...serverDb.staffAlerts.filter((a: any) => a.id !== punchAlert.id).slice(0, 99)];
           persistDatabase();
+          syncToFirestore({ attendanceRecords: serverDb.attendanceRecords, staffAlerts: serverDb.staffAlerts });
         }
       }
 
@@ -1018,6 +1021,19 @@ app.post('/api/sync/broadcast', (req, res) => {
   const syncEvent = req.body;
   if (!syncEvent || !syncEvent.type) {
     return res.status(400).json({ error: 'Invalid sync event payload' });
+  }
+
+  if (syncEvent.type === 'PUNCH_ATTENDANCE' && syncEvent.payload) {
+    const record = syncEvent.payload.record || syncEvent.payload;
+    if (record && record.id) {
+      serverDb.attendanceRecords = [record, ...(serverDb.attendanceRecords || []).filter((r: any) => r.id !== record.id).slice(0, 499)];
+      persistDatabase();
+      syncToFirestore({ attendanceRecords: serverDb.attendanceRecords });
+    }
+  } else if ((syncEvent.type === 'SUBMIT_LEAVE' || syncEvent.type === 'SUBMIT_LEAVE_REQUEST') && syncEvent.payload && syncEvent.payload.id) {
+    serverDb.leaveRequests = [syncEvent.payload, ...(serverDb.leaveRequests || []).filter((l: any) => l.id !== syncEvent.payload.id)];
+    persistDatabase();
+    syncToFirestore({ leaveRequests: serverDb.leaveRequests });
   }
 
   const broadcastMsg = {

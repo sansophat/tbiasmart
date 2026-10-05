@@ -121,12 +121,15 @@ export function formatDurationMinutes(mins: number, lang: Language = 'km'): stri
 /**
  * Finds the assigned Shift for an employee, or falls back to first shift
  */
-export function getEmployeeAssignedShift(emp: Employee, shifts: Shift[]): Shift {
-  const matched = shifts.find((s) => s.id === emp.shiftId);
-  if (matched) return matched;
+export function getEmployeeAssignedShift(emp?: Employee, shifts: Shift[] = []): Shift {
+  const safeShifts = Array.isArray(shifts) ? shifts : [];
+  if (emp && emp.shiftId) {
+    const matched = safeShifts.find((s) => s && s.id === emp.shiftId);
+    if (matched) return matched;
+  }
 
   // Fallback default
-  return shifts[0] || {
+  return safeShifts[0] || {
     id: 'shift_default',
     nameKh: 'វេនស្តង់ដារ (08:00 - 17:00)',
     nameEn: 'Standard Shift (08:00 - 17:00)',
@@ -143,63 +146,93 @@ export function getEmployeeAssignedShift(emp: Employee, shifts: Shift[]): Shift 
  */
 export function getEmployeeRosterDay(
   emp: Employee,
-  shifts: Shift[],
-  attendanceRecords: AttendanceRecord[],
-  leaveRequests: LeaveRequest[],
-  targetDate: Date
+  shifts: Shift[] = [],
+  attendanceRecords: AttendanceRecord[] = [],
+  leaveRequests: LeaveRequest[] = [],
+  targetDate: Date = new Date()
 ): StaffRosterDay {
+  const safeEmp: Employee = emp || {
+    id: 'emp_default',
+    code: 'EMP-000',
+    nameKh: 'បុគ្គលិក',
+    nameEn: 'Staff Member',
+    branchId: 'br_office',
+    department: 'Operations',
+    departmentKh: 'ប្រតិបត្តិការ',
+    role: 'Staff',
+    roleKh: 'បុគ្គលិក',
+    shiftId: 'shift_office',
+    avatar: '',
+    phone: '',
+    email: '',
+    status: 'active',
+    pinCode: '1234',
+    weeklyDayOff: 0,
+    hasSundayRest: true,
+  };
+
+  const safeTargetDate = targetDate instanceof Date && !isNaN(targetDate.getTime()) ? targetDate : new Date();
   const now = new Date();
   const todayStr = formatDateToYMD(now);
-  const targetDateStr = formatDateToYMD(targetDate);
-  const dayIndex = targetDate.getDay();
+  const targetDateStr = formatDateToYMD(safeTargetDate);
+  const dayIndex = safeTargetDate.getDay();
 
   const isToday = targetDateStr === todayStr;
   const isPast = targetDateStr < todayStr;
   const isFuture = targetDateStr > todayStr;
 
-  const assignedShift = getEmployeeAssignedShift(emp, shifts);
-  const scheduledStart = emp.shiftStartTime || assignedShift.startTime || '08:00';
-  const scheduledEnd = emp.shiftEndTime || assignedShift.endTime || '17:00';
+  const assignedShift = getEmployeeAssignedShift(safeEmp, shifts);
+  const scheduledStart = safeEmp.shiftStartTime || assignedShift?.startTime || '08:00';
+  const scheduledEnd = safeEmp.shiftEndTime || assignedShift?.endTime || '17:00';
 
   // 1. Check Day Off
-  const isDayOff = isEmployeeDayOff(emp, targetDate);
+  const isDayOff = isEmployeeDayOff(safeEmp, safeTargetDate);
   let dayOffReasonKh: string | undefined;
   let dayOffReasonEn: string | undefined;
   if (isDayOff) {
-    if (dayIndex === 0 && isEmployeeSundayRest(emp)) {
+    if (dayIndex === 0 && isEmployeeSundayRest(safeEmp)) {
       dayOffReasonKh = 'ថ្ងៃអាទិត្យ សម្រាកប្រចាំសប្តាហ៍';
       dayOffReasonEn = 'Sunday Weekly Rest';
     } else {
-      const dayKh = DAY_OF_WEEK_NAMES_KH[dayIndex];
-      const dayEn = DAY_OF_WEEK_NAMES_EN[dayIndex];
+      const dayKh = DAY_OF_WEEK_NAMES_KH[dayIndex] || 'សម្រាក';
+      const dayEn = DAY_OF_WEEK_NAMES_EN[dayIndex] || 'Rest';
       dayOffReasonKh = `ថ្ងៃ${dayKh} សម្រាកប្រចាំសប្តាហ៍`;
       dayOffReasonEn = `${dayEn} Scheduled Day Off`;
     }
   }
 
   // 2. Check Leave
-  const leave = getEmployeeLeaveOnDate(emp, targetDateStr, leaveRequests);
+  const leave = getEmployeeLeaveOnDate(safeEmp, targetDateStr, leaveRequests);
   const isOnLeave = Boolean(leave);
 
-  // 3. Find attendance records for this employee on this date
-  const records = attendanceRecords.filter((rec) => {
-    const isSameEmp = rec.employeeId === emp.id || rec.employeeCode === emp.code;
+  // 3. Find attendance records for this employee on this date (safely guarded)
+  const safeRecords = Array.isArray(attendanceRecords) ? attendanceRecords : [];
+  const records = safeRecords.filter((rec) => {
+    if (!rec || !rec.timestamp) return false;
+    const isSameEmp = 
+      (safeEmp.id && rec.employeeId === safeEmp.id) || 
+      (safeEmp.code && rec.employeeCode === safeEmp.code) ||
+      (safeEmp.id && rec.employeeId === safeEmp.id.replace('user_', ''));
     if (!isSameEmp) return false;
-    const recDate = rec.timestamp.slice(0, 10);
+    const recDate = typeof rec.timestamp === 'string' ? rec.timestamp.slice(0, 10) : '';
     return recDate === targetDateStr;
   });
 
-  // Sort chronologically
-  records.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Sort chronologically safely
+  records.sort((a, b) => {
+    const tA = a?.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const tB = b?.timestamp ? new Date(b.timestamp).getTime() : 0;
+    return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
+  });
 
-  const checkInRecord = records.find((r) => r.type === 'check_in');
-  const checkOutRecord = records.find((r) => r.type === 'check_out');
+  const checkInRecord = records.find((r) => r && r.type === 'check_in');
+  const checkOutRecord = records.find((r) => r && r.type === 'check_out');
 
   const hasScannedIn = Boolean(checkInRecord);
   const hasScannedOut = Boolean(checkOutRecord);
   const hasScanned = hasScannedIn || hasScannedOut;
 
-  // Calculate actual times
+  // Calculate actual times safely
   let actualInTime: string | undefined;
   let actualOutTime: string | undefined;
   let durationWorkedMinutes: number | undefined;
@@ -209,48 +242,60 @@ export function getEmployeeRosterDay(
   let isLate = false;
   let lateMinutes = 0;
 
-  if (checkInRecord) {
-    const dIn = new Date(checkInRecord.timestamp);
-    actualInTime = dIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    isWithinGeofence = checkInRecord.isWithinGeofence;
-    distanceToBranch = checkInRecord.distanceToBranch;
+  if (checkInRecord && checkInRecord.timestamp) {
+    try {
+      const dIn = new Date(checkInRecord.timestamp);
+      actualInTime = isNaN(dIn.getTime()) ? undefined : dIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      isWithinGeofence = checkInRecord.isWithinGeofence;
+      distanceToBranch = checkInRecord.distanceToBranch;
 
-    // Lateness calculation
-    const [startH, startM] = scheduledStart.split(':').map(Number);
-    const scheduledStartMs = new Date(targetDate).setHours(startH || 0, startM || 0, 0, 0);
-    const graceMins = assignedShift.gracePeriodMins || 15;
-    const graceThresholdMs = scheduledStartMs + graceMins * 60 * 1000;
+      // Lateness calculation
+      const [startH, startM] = (scheduledStart || '08:00').split(':').map(Number);
+      const scheduledStartMs = new Date(targetDate).setHours(startH || 0, startM || 0, 0, 0);
+      const graceMins = assignedShift?.gracePeriodMins || 15;
+      const graceThresholdMs = scheduledStartMs + graceMins * 60 * 1000;
 
-    if (dIn.getTime() > graceThresholdMs) {
-      isLate = true;
-      lateMinutes = Math.max(1, Math.round((dIn.getTime() - scheduledStartMs) / 60000));
+      if (!isNaN(dIn.getTime()) && dIn.getTime() > graceThresholdMs) {
+        isLate = true;
+        lateMinutes = Math.max(1, Math.round((dIn.getTime() - scheduledStartMs) / 60000));
+      }
+    } catch {
+      // Safe fallback
     }
   }
 
-  if (checkOutRecord) {
-    const dOut = new Date(checkOutRecord.timestamp);
-    actualOutTime = dOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (isWithinGeofence === undefined) {
-      isWithinGeofence = checkOutRecord.isWithinGeofence;
-      distanceToBranch = checkOutRecord.distanceToBranch;
+  if (checkOutRecord && checkOutRecord.timestamp) {
+    try {
+      const dOut = new Date(checkOutRecord.timestamp);
+      actualOutTime = isNaN(dOut.getTime()) ? undefined : dOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (isWithinGeofence === undefined) {
+        isWithinGeofence = checkOutRecord.isWithinGeofence;
+        distanceToBranch = checkOutRecord.distanceToBranch;
+      }
+    } catch {
+      // Safe fallback
     }
   }
 
-  if (checkInRecord && checkOutRecord) {
-    const startMs = new Date(checkInRecord.timestamp).getTime();
-    const endMs = new Date(checkOutRecord.timestamp).getTime();
-    if (endMs > startMs) {
-      durationWorkedMinutes = Math.round((endMs - startMs) / 60000);
-      durationWorkedText = formatDurationMinutes(durationWorkedMinutes, 'km');
-    }
-  } else if (checkInRecord && isToday) {
+  if (checkInRecord?.timestamp && checkOutRecord?.timestamp) {
+    try {
+      const startMs = new Date(checkInRecord.timestamp).getTime();
+      const endMs = new Date(checkOutRecord.timestamp).getTime();
+      if (!isNaN(startMs) && !isNaN(endMs) && endMs > startMs) {
+        durationWorkedMinutes = Math.round((endMs - startMs) / 60000);
+        durationWorkedText = formatDurationMinutes(durationWorkedMinutes, 'km');
+      }
+    } catch {}
+  } else if (checkInRecord?.timestamp && isToday) {
     // Current duration ongoing
-    const startMs = new Date(checkInRecord.timestamp).getTime();
-    const nowMs = now.getTime();
-    if (nowMs > startMs) {
-      durationWorkedMinutes = Math.round((nowMs - startMs) / 60000);
-      durationWorkedText = formatDurationMinutes(durationWorkedMinutes, 'km');
-    }
+    try {
+      const startMs = new Date(checkInRecord.timestamp).getTime();
+      const nowMs = now.getTime();
+      if (!isNaN(startMs) && nowMs > startMs) {
+        durationWorkedMinutes = Math.round((nowMs - startMs) / 60000);
+        durationWorkedText = formatDurationMinutes(durationWorkedMinutes, 'km');
+      }
+    } catch {}
   }
 
   // 4. Determine overall status & badges
@@ -377,15 +422,21 @@ export function getEmployeeRosterDay(
  */
 export function getEmployeeWeekRoster(
   emp: Employee,
-  shifts: Shift[],
-  attendanceRecords: AttendanceRecord[],
-  leaveRequests: LeaveRequest[],
+  shifts: Shift[] = [],
+  attendanceRecords: AttendanceRecord[] = [],
+  leaveRequests: LeaveRequest[] = [],
   referenceDate: Date = new Date()
 ): StaffRosterDay[] {
-  const weekDates = getWeekDates(referenceDate);
-  return weekDates.map((d) =>
-    getEmployeeRosterDay(emp, shifts, attendanceRecords, leaveRequests, d)
-  );
+  try {
+    const safeRefDate = referenceDate instanceof Date && !isNaN(referenceDate.getTime()) ? referenceDate : new Date();
+    const weekDates = getWeekDates(safeRefDate);
+    return weekDates.map((d) =>
+      getEmployeeRosterDay(emp, shifts, attendanceRecords, leaveRequests, d)
+    );
+  } catch (err) {
+    console.error('getEmployeeWeekRoster error:', err);
+    return [];
+  }
 }
 
 /**
@@ -401,46 +452,53 @@ export interface BranchTeamMemberRoster {
  */
 export function getBranchTeamRoster(
   branchId: string,
-  employees: Employee[],
-  shifts: Shift[],
-  attendanceRecords: AttendanceRecord[],
-  leaveRequests: LeaveRequest[],
+  employees: Employee[] = [],
+  shifts: Shift[] = [],
+  attendanceRecords: AttendanceRecord[] = [],
+  leaveRequests: LeaveRequest[] = [],
   targetDate: Date = new Date()
 ): BranchTeamMemberRoster[] {
-  const branchEmployees = employees.filter(
-    (e) => e.branchId === branchId && e.status !== 'inactive'
-  );
-
-  const teamList = branchEmployees.map((emp) => {
-    const rosterDay = getEmployeeRosterDay(
-      emp,
-      shifts,
-      attendanceRecords,
-      leaveRequests,
-      targetDate
+  try {
+    const safeEmployees = Array.isArray(employees) ? employees : [];
+    const branchEmployees = safeEmployees.filter(
+      (e) => e && (e.branchId === branchId || !branchId || branchId === 'all') && e.status !== 'inactive'
     );
-    return {
-      employee: emp,
-      rosterDay,
-    };
-  });
 
-  // Sort order:
-  // 1. Not scanned yet (working shift today)
-  // 2. Scanned in (currently working)
-  // 3. Completed (finished shift)
-  // 4. On leave / Day off
-  teamList.sort((a, b) => {
-    const priority = (r: StaffRosterDay) => {
-      if (r.status === 'not_scanned') return 1;
-      if (r.status === 'scanned_in') return 2;
-      if (r.status === 'completed') return 3;
-      if (r.status === 'on_leave') return 4;
-      if (r.status === 'day_off') return 5;
-      return 6;
-    };
-    return priority(a.rosterDay) - priority(b.rosterDay);
-  });
+    const teamList = branchEmployees.map((emp) => {
+      const rosterDay = getEmployeeRosterDay(
+        emp,
+        shifts,
+        attendanceRecords,
+        leaveRequests,
+        targetDate
+      );
+      return {
+        employee: emp,
+        rosterDay,
+      };
+    });
 
-  return teamList;
+    // Sort order:
+    // 1. Not scanned yet (working shift today)
+    // 2. Scanned in (currently working)
+    // 3. Completed (finished shift)
+    // 4. On leave / Day off
+    teamList.sort((a, b) => {
+      const priority = (r: StaffRosterDay) => {
+        if (!r) return 7;
+        if (r.status === 'not_scanned') return 1;
+        if (r.status === 'scanned_in') return 2;
+        if (r.status === 'completed') return 3;
+        if (r.status === 'on_leave') return 4;
+        if (r.status === 'day_off') return 5;
+        return 6;
+      };
+      return priority(a.rosterDay) - priority(b.rosterDay);
+    });
+
+    return teamList;
+  } catch (err) {
+    console.error('getBranchTeamRoster error:', err);
+    return [];
+  }
 }

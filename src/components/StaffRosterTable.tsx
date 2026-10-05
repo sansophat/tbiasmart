@@ -76,52 +76,69 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
   // Record detail modal
   const [selectedDayDetail, setSelectedDayDetail] = useState<StaffRosterDay | null>(null);
 
+  const safeBranches = Array.isArray(branches) ? branches : [];
+  const safeShifts = Array.isArray(shifts) ? shifts : [];
+  const safeEmployees = Array.isArray(employees) ? employees : [];
+  const safeAttendance = Array.isArray(attendanceRecords) ? attendanceRecords : [];
+  const safeLeaves = Array.isArray(leaveRequests) ? leaveRequests : [];
+
   // Current branch
-  const currentBranch = branches.find((b) => b.id === currentEmployee.branchId);
+  const currentBranch = safeBranches.find((b) => b && b.id === currentEmployee?.branchId) || safeBranches[0];
 
   // Compute Weekly Roster for current staff
   const weekRoster: StaffRosterDay[] = useMemo(() => {
-    return getEmployeeWeekRoster(
-      currentEmployee,
-      shifts,
-      attendanceRecords,
-      leaveRequests,
-      referenceDate
-    );
-  }, [currentEmployee, shifts, attendanceRecords, leaveRequests, referenceDate]);
+    try {
+      return getEmployeeWeekRoster(
+        currentEmployee,
+        safeShifts,
+        safeAttendance,
+        safeLeaves,
+        referenceDate
+      );
+    } catch (err) {
+      console.error('Error computing week roster:', err);
+      return [];
+    }
+  }, [currentEmployee, safeShifts, safeAttendance, safeLeaves, referenceDate]);
 
   // Compute Team Roster for current branch on selected date
   const teamRoster: BranchTeamMemberRoster[] = useMemo(() => {
-    return getBranchTeamRoster(
-      currentEmployee.branchId,
-      employees,
-      shifts,
-      attendanceRecords,
-      leaveRequests,
-      selectedTeamDate
-    );
-  }, [currentEmployee.branchId, employees, shifts, attendanceRecords, leaveRequests, selectedTeamDate]);
+    try {
+      return getBranchTeamRoster(
+        currentEmployee?.branchId || '',
+        safeEmployees,
+        safeShifts,
+        safeAttendance,
+        safeLeaves,
+        selectedTeamDate
+      );
+    } catch (err) {
+      console.error('Error computing team roster:', err);
+      return [];
+    }
+  }, [currentEmployee?.branchId, safeEmployees, safeShifts, safeAttendance, safeLeaves, selectedTeamDate]);
 
   // Filtered team roster
   const filteredTeamRoster = useMemo(() => {
     return teamRoster.filter((item) => {
+      if (!item || !item.employee) return false;
       // Search filter
       const q = teamSearchQuery.toLowerCase().trim();
       if (q) {
         const matchName = 
-          item.employee.nameKh.toLowerCase().includes(q) ||
-          item.employee.nameEn.toLowerCase().includes(q) ||
-          item.employee.code.toLowerCase().includes(q) ||
-          item.employee.role.toLowerCase().includes(q);
+          (item.employee.nameKh || '').toLowerCase().includes(q) ||
+          (item.employee.nameEn || '').toLowerCase().includes(q) ||
+          (item.employee.code || '').toLowerCase().includes(q) ||
+          (item.employee.role || '').toLowerCase().includes(q);
         if (!matchName) return false;
       }
 
       // Status filter
       if (teamStatusFilter === 'scanned') {
-        return item.rosterDay.hasScannedIn;
+        return Boolean(item.rosterDay?.hasScannedIn);
       }
       if (teamStatusFilter === 'not_scanned') {
-        return !item.rosterDay.hasScannedIn && !item.rosterDay.isDayOff && !item.rosterDay.isOnLeave;
+        return !item.rosterDay?.hasScannedIn && !item.rosterDay?.isDayOff && !item.rosterDay?.isOnLeave;
       }
       return true;
     });
@@ -317,7 +334,9 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                 </div>
 
                 <h4 className="text-sm sm:text-base font-bold text-slate-900 pt-0.5">
-                  {lang === 'km' ? todayRoster.shift.nameKh : todayRoster.shift.nameEn}
+                  {lang === 'km' 
+                    ? (todayRoster.shift?.nameKh || todayRoster.shift?.nameEn || 'វេនការងារ') 
+                    : (todayRoster.shift?.nameEn || todayRoster.shift?.nameKh || 'Assigned Shift')}
                   <span className="text-indigo-600 font-mono font-medium ml-2 text-xs sm:text-sm">
                     ({todayRoster.scheduledStart} - {todayRoster.scheduledEnd})
                   </span>
@@ -473,7 +492,7 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {weekRoster.map((day) => {
-                  const catBadge = getShiftCategoryBadge(day.shift.id, lang);
+                  const catBadge = getShiftCategoryBadge(day.shift?.id || '', lang);
                   const isRowToday = day.isToday;
 
                   return (
@@ -494,17 +513,17 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                               : 'bg-slate-100 text-slate-700'
                           }`}>
                             <span className="text-[10px] uppercase leading-none">
-                              {lang === 'km' ? day.dayShortKh.slice(0, 3) : day.dayShortEn}
+                              {lang === 'km' ? (day.dayShortKh || '').slice(0, 3) : day.dayShortEn}
                             </span>
                             <span className="text-xs font-mono leading-tight">
-                              {day.date.getDate()}
+                              {day.date ? day.date.getDate() : '-'}
                             </span>
                           </div>
 
                           <div>
                             <div className="flex items-center space-x-1.5">
                               <span className="font-bold text-slate-800">
-                                {lang === 'km' ? `ថ្ងៃ${day.dayNameKh}` : day.dayNameEn}
+                                {lang === 'km' ? `ថ្ងៃ${day.dayNameKh || ''}` : day.dayNameEn}
                               </span>
                               {isRowToday && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-indigo-600 text-white shadow-2xs">
@@ -535,7 +554,9 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                           <div className="space-y-0.5">
                             <div className="flex items-center space-x-1.5">
                               <span className="font-bold text-slate-800">
-                                {lang === 'km' ? day.shift.nameKh : day.shift.nameEn}
+                                {lang === 'km' 
+                                  ? (day.shift?.nameKh || day.shift?.nameEn || 'វេនការងារ') 
+                                  : (day.shift?.nameEn || day.shift?.nameKh || 'Assigned Shift')}
                               </span>
                             </div>
                             <div className="flex items-center space-x-2 text-[11px]">
@@ -800,7 +821,11 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                   </tr>
                 ) : (
                   filteredTeamRoster.map(({ employee, rosterDay }) => {
-                    const isSelf = employee.id === currentEmployee.id || employee.code === currentEmployee.code;
+                    const isSelf = Boolean(
+                      employee &&
+                      currentEmployee &&
+                      (employee.id === currentEmployee.id || employee.code === currentEmployee.code)
+                    );
 
                     return (
                       <tr
@@ -815,14 +840,15 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                         <td className="py-3 px-4">
                           <div className="flex items-center space-x-3">
                             <img
-                              src={employee.avatar}
-                              alt={employee.nameEn}
+                              src={employee.avatar || ''}
+                              alt={employee.nameEn || ''}
                               className="w-9 h-9 rounded-xl object-cover border border-slate-200 shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
                             />
                             <div>
                               <div className="flex items-center space-x-1.5">
                                 <span className="font-bold text-slate-800">
-                                  {lang === 'km' ? employee.nameKh : employee.nameEn}
+                                  {lang === 'km' ? (employee.nameKh || employee.nameEn || 'បុគ្គលិក') : (employee.nameEn || employee.nameKh || 'Staff')}
                                 </span>
                                 {isSelf && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-600 text-white">
@@ -831,9 +857,9 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                                 )}
                               </div>
                               <div className="flex items-center space-x-2 text-[11px] text-slate-500">
-                                <span className="font-mono font-bold text-indigo-700">{employee.code}</span>
+                                <span className="font-mono font-bold text-indigo-700">{employee.code || ''}</span>
                                 <span>•</span>
-                                <span>{employee.role}</span>
+                                <span>{employee.role || employee.roleKh || ''}</span>
                               </div>
                             </div>
                           </div>
@@ -849,15 +875,17 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
                           ) : rosterDay.isOnLeave ? (
                             <span className="text-purple-700 font-medium flex items-center gap-1">
                               <Calendar className="w-3 h-3 text-purple-500" />
-                              <span>{lang === 'km' ? 'ច្បាប់ឈប់សម្រាក' : 'On Leave'}</span>
+                              <span>{rosterDay.leaveRequest?.typeKh || rosterDay.leaveRequest?.type || (lang === 'km' ? 'ច្បាប់ឈប់សម្រាក' : 'On Leave')}</span>
                             </span>
                           ) : (
                             <div className="space-y-0.5">
                               <span className="font-bold text-slate-800 block">
-                                {lang === 'km' ? rosterDay.shift.nameKh : rosterDay.shift.nameEn}
+                                {lang === 'km' 
+                                  ? (rosterDay.shift?.nameKh || rosterDay.shift?.nameEn || 'វេនការងារ') 
+                                  : (rosterDay.shift?.nameEn || rosterDay.shift?.nameKh || 'Assigned Shift')}
                               </span>
                               <span className="font-mono text-slate-500 text-[11px]">
-                                {rosterDay.scheduledStart} - {rosterDay.scheduledEnd}
+                                {rosterDay.scheduledStart || '08:00'} - {rosterDay.scheduledEnd || '17:00'}
                               </span>
                             </div>
                           )}

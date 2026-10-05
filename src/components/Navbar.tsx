@@ -371,7 +371,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
 
           {/* Real-time Staff Alerts & GPS Feed Bell */}
-          <div className={`relative shrink-0 ${isAlertsOpen ? 'z-50' : 'z-20'}`} ref={alertsMenuRef}>
+          <div className={`relative shrink-0 ${isAlertsOpen ? 'z-[60]' : 'z-20'}`} ref={alertsMenuRef}>
             <button
               type="button"
               onClick={() => setIsAlertsOpen(!isAlertsOpen)}
@@ -405,11 +405,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               <>
                 {/* Mobile Backdrop Overlay to dismiss on outside tap */}
                 <div
-                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 sm:hidden animate-in fade-in duration-150"
+                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[55] sm:hidden animate-in fade-in duration-150"
                   onClick={() => setIsAlertsOpen(false)}
                 />
 
-                <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:right-0 sm:absolute sm:top-full sm:mt-2 w-auto sm:w-96 max-w-sm sm:max-w-none mx-auto sm:mx-0 bg-white rounded-3xl shadow-2xl border border-slate-200/90 z-50 p-4 animate-in fade-in zoom-in-95 sm:zoom-in-100 sm:slide-in-from-top-2 duration-150 ring-1 ring-slate-900/10">
+                <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:right-0 sm:absolute sm:top-full sm:mt-2 w-auto sm:w-96 max-w-sm sm:max-w-none mx-auto sm:mx-0 bg-white rounded-3xl shadow-2xl border border-slate-200/90 z-[60] p-4 animate-in fade-in zoom-in-95 sm:zoom-in-100 sm:slide-in-from-top-2 duration-150 ring-1 ring-slate-900/10">
                   <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100">
                     <div className="flex items-center space-x-1.5">
                       <Radio className="w-4 h-4 text-indigo-600 animate-pulse" />

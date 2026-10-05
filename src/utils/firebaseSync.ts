@@ -139,6 +139,7 @@ export interface CloudSystemState {
   adminProfile?: any;
   auditLogs?: any[];
   staffAlerts?: any[];
+  shifts?: any[];
   lastUpdated?: string;
   updatedBy?: string;
 }
@@ -205,8 +206,11 @@ export async function testFirestoreConnection(): Promise<boolean> {
 export async function getCloudDatabaseState(): Promise<CloudSystemState | null> {
   try {
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
+    const fetchPromise = getDoc(docRef);
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+    
+    const snap = await Promise.race([fetchPromise, timeoutPromise]);
+    if (snap && 'exists' in snap && snap.exists()) {
       notifyStatus('connected');
       return snap.data() as CloudSystemState;
     }
