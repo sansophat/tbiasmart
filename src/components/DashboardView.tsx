@@ -94,14 +94,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ? employees
     : employees.filter((e) => e.branchId === selectedBranchId);
 
-  // Calculate KPIs
-  const todayRecords = relevantRecords.filter((r) => r.timestamp.startsWith(today));
+  // Calculate KPIs for Today
+  const todayRecords = relevantRecords.filter((r) => r.timestamp && r.timestamp.startsWith(today));
   const checkInRecords = todayRecords.filter((r) => r.type === 'check_in');
   
   const presentCount = new Set(checkInRecords.map((r) => r.employeeId)).size;
   const onTimeCount = checkInRecords.filter((r) => r.status === 'on_time').length;
   const lateCount = checkInRecords.filter((r) => r.status === 'late').length;
-  const overtimeCount = relevantRecords.filter((r) => r.status === 'overtime').length;
+  const overtimeCount = todayRecords.filter((r) => r.status === 'overtime').length;
+
+  // Real-Time Attendance Feed: ONLY show punches recorded TODAY
+  const todayFeedRecords = relevantRecords
+    .filter((r) => r.timestamp && r.timestamp.startsWith(today))
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   
   const geofenceValidCount = todayRecords.filter((r) => r.isWithinGeofence).length;
   const gpsComplianceRate = todayRecords.length > 0
@@ -682,14 +687,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Real-time Transfer History & Audit Stream */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Live Attendance Audit Stream (7 cols) */}
+        {/* Live Attendance Audit Stream (7 cols) - ONLY SHOWN FOR TODAY */}
         <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-            <div className="flex items-center space-x-2">
-              <Radio className="w-4 h-4 text-indigo-600 animate-pulse" />
-              <h3 className="font-bold text-slate-800 text-sm">
-                {lang === 'km' ? 'ទិន្នន័យវត្តមានចុងក្រោយ (Live GPS Timesheets)' : 'Real-Time Attendance Feed'}
-              </h3>
+            <div className="flex items-center space-x-2.5">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-bold text-slate-800 text-sm">
+                    {lang === 'km' ? 'ទិន្នន័យវត្តមានថ្ងៃនេះផ្ទាល់ (Today Real-Time GPS Feed)' : "Today's Real-Time Attendance Feed"}
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    {todayFeedRecords.length} {lang === 'km' ? 'វត្តមានថ្ងៃនេះ' : 'punches today'}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium">
+                  {lang === 'km' ? 'បង្ហាញតែទិន្នន័យវត្តមានជាក់ស្តែងសម្រាប់ថ្ងៃនេះប៉ុណ្ណោះ' : 'Only showing active GPS punches recorded today'}
+                </p>
+              </div>
             </div>
             <button
               onClick={() => onNavigateTab('reports')}
@@ -701,80 +719,98 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="p-4 space-y-2.5 max-h-[380px] overflow-y-auto">
-            {relevantRecords.slice(0, 10).map((rec) => {
-              const matchedEmp = employees.find(
-                (e) => e.id === rec.employeeId || e.code === rec.employeeCode
-              );
-              const avatarSrc =
-                rec.employeeAvatar ||
-                matchedEmp?.avatar ||
-                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-
-              return (
-                <div
-                  key={rec.id}
-                  className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition"
-                >
-                  <div className="flex items-center space-x-3">
-                    <img
-                      src={avatarSrc}
-                      alt={rec.employeeNameEn || 'Employee'}
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src =
-                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                      }}
-                      className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-200"
-                    />
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-bold text-slate-800">
-                          {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded font-semibold">
-                          {rec.employeeCode}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-                        <span className="text-indigo-600 font-semibold">{rec.branchNameEn}</span>
-                        <span>•</span>
-                        <span className="text-slate-500 font-medium">{formatDistance(rec.distanceToBranch, lang)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-right space-y-1">
-                    <div className="flex items-center justify-end space-x-1.5">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rec.type === 'check_in'
-                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}>
-                        {rec.type === 'check_in' ? 'Check-In' : 'Check-Out'}
-                      </span>
-
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                        rec.status === 'on_time'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : rec.status === 'late'
-                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                          : 'bg-purple-50 text-purple-700 border border-purple-200'
-                      }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${
-                          rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
-                        }`} />
-                        {rec.status}
-                      </span>
-                    </div>
-
-                    <div className="text-[11px] text-slate-500 font-mono font-medium">
-                      {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
+            {todayFeedRecords.length === 0 ? (
+              <div className="py-12 px-4 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-500 flex items-center justify-center mx-auto mb-3">
+                  <Radio className="w-6 h-6 animate-pulse text-indigo-600" />
                 </div>
-              );
-            })}
+                <p className="text-sm font-bold text-slate-700 font-battambang">
+                  {lang === 'km' ? 'មិនទាន់មានទិន្នន័យវត្តមានសម្រាប់ថ្ងៃនេះនៅឡើយទេ' : 'No attendance punches recorded yet today'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto font-hanuman">
+                  {lang === 'km'
+                    ? 'ទិន្នន័យវត្តមាន Real-Time ថ្ងៃនេះនឹងបង្ហាញនៅទីនេះដោយស្វ័យប្រវត្តិពេលបុគ្គលិកចុះវត្តមានតាម GPS'
+                    : "Today's live GPS punches will stream here in real time as staff check in or out"}
+                </p>
+              </div>
+            ) : (
+              todayFeedRecords.slice(0, 15).map((rec) => {
+                const matchedEmp = employees.find(
+                  (e) => e.id === rec.employeeId || e.code === rec.employeeCode
+                );
+                const avatarSrc =
+                  rec.employeeAvatar ||
+                  matchedEmp?.avatar ||
+                  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+
+                return (
+                  <div
+                    key={rec.id}
+                    className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <img
+                        src={avatarSrc}
+                        alt={rec.employeeNameEn || 'Employee'}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src =
+                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                        }}
+                        className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-200"
+                      />
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-bold text-slate-800">
+                            {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded font-semibold">
+                            {rec.employeeCode}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+                          <span className="text-indigo-600 font-semibold">{rec.branchNameEn}</span>
+                          <span>•</span>
+                          <span className="text-slate-500 font-medium">{formatDistance(rec.distanceToBranch, lang)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right space-y-1">
+                      <div className="flex items-center justify-end space-x-1.5">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          rec.type === 'check_in'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {rec.type === 'check_in' 
+                            ? (lang === 'km' ? 'ចូលធ្វើការ' : 'Check-In') 
+                            : (lang === 'km' ? 'ចេញពីធ្វើការ' : 'Check-Out')}
+                        </span>
+
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                          rec.status === 'on_time'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : rec.status === 'late'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-purple-50 text-purple-700 border border-purple-200'
+                        }`}>
+                          <div className={`w-1.5 h-1.5 rounded-full ${
+                            rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
+                          }`} />
+                          {rec.status}
+                        </span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-500 font-mono font-medium">
+                        {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 

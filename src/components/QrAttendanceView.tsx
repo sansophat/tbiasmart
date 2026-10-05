@@ -165,10 +165,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const [attendanceType, setAttendanceType] = useState<'check_in' | 'check_out'>('check_in');
   
   // Real scan modes: 'camera_scan' (Live Camera) | 'mobile_punch' (Direct GPS Punch) | 'qr_upload' (Upload QR Image)
-  const [scanMode, setScanMode] = useState<'camera_scan' | 'mobile_punch' | 'qr_upload'>('camera_scan');
+  // Staffs mostly use punch by GPS, so Direct GPS Punch is default and prioritized
+  const [scanMode, setScanMode] = useState<'camera_scan' | 'mobile_punch' | 'qr_upload'>('mobile_punch');
   
-  // Camera state
-  const [isCameraActive, setIsCameraActive] = useState<boolean>(true);
+  // Camera state - initially inactive since mobile GPS punch is the primary default mode
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scannedResult, setScannedResult] = useState<string | null>(null);
@@ -177,6 +178,25 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [enableSelfieVerification, setEnableSelfieVerification] = useState<boolean>(true);
   const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
+
+  // Anti-Double-Punch & Rapid Double-Tap Safeguard State
+  const isSubmittingRef = useRef<boolean>(false);
+  const [doublePunchModal, setDoublePunchModal] = useState<{
+    emp: Employee;
+    branch: Branch;
+    method: 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin';
+    photoUrl?: string;
+    targetType: 'check_in' | 'check_out';
+    recentPunch: AttendanceRecord;
+    elapsedSeconds: number;
+  } | null>(null);
+
+  const [duplicateAlertModal, setDuplicateAlertModal] = useState<{
+    emp: Employee;
+    type: 'check_in' | 'check_out';
+    timestamp: string;
+    branchName: string;
+  } | null>(null);
 
   // Success Modal Popup State
   const [scanSuccessModalRecord, setScanSuccessModalRecord] = useState<AttendanceRecord | null>(null);
@@ -230,20 +250,35 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const isWithinGeofence = distanceToBranch <= selectedBranch.radiusMeters;
 
   // Auto-detect check-in vs check-out recommendation based on today's logs
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const todayRecords = attendanceRecords.filter(
-      (r) => r.employeeId === selectedEmp.id && r.timestamp.startsWith(today)
-    );
-    const hasCheckedIn = todayRecords.some((r) => r.type === 'check_in');
-    const hasCheckedOut = todayRecords.some((r) => r.type === 'check_out');
+  const todayDateStr = new Date().toISOString().split('T')[0];
+  const selectedEmpTodayRecords = (attendanceRecords || [])
+    .filter(
+      (r) =>
+        (r.employeeId === selectedEmp.id || r.employeeCode === selectedEmp.code) &&
+        r.timestamp &&
+        r.timestamp.startsWith(todayDateStr)
+    )
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    if (hasCheckedIn && !hasCheckedOut) {
+  const latestPunchToday = selectedEmpTodayRecords[0];
+  const checkInRecordToday = selectedEmpTodayRecords.find((r) => r.type === 'check_in');
+  const checkOutRecordToday = selectedEmpTodayRecords.find((r) => r.type === 'check_out');
+  const hasCheckedInToday = Boolean(checkInRecordToday);
+  const hasCheckedOutToday = Boolean(checkOutRecordToday);
+
+  // Elapsed seconds since latest punch
+  const elapsedSecondsSinceLastPunch = latestPunchToday
+    ? Math.floor((Date.now() - new Date(latestPunchToday.timestamp).getTime()) / 1000)
+    : Infinity;
+  const isCooldownActive = elapsedSecondsSinceLastPunch < 300; // 5-minute guard window
+
+  useEffect(() => {
+    if (hasCheckedInToday && !hasCheckedOutToday) {
       setAttendanceType('check_out');
     } else {
       setAttendanceType('check_in');
     }
-  }, [selectedEmp.id, attendanceRecords]);
+  }, [hasCheckedInToday, hasCheckedOutToday]);
 
   // Request real device GPS automatically on view load
   useEffect(() => {
@@ -459,18 +494,73 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Execute Attendance Registration
+  // Execute Attendance Registration with Anti-Double-Punch Protection
   const processAttendance = (
     emp: Employee,
     branch: Branch,
     method: 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin' = 'qr_mobile',
-    photoUrl?: string
+    photoUrl?: string,
+    forcedType?: 'check_in' | 'check_out',
+    forceConfirm: boolean = false
   ) => {
+    // Synchronous immediate lock to prevent accidental double-tap/rapid double-click
+    if (isSubmittingRef.current || isProcessing) {
+      return;
+    }
+    isSubmittingRef.current = true;
+
+    const targetType = forcedType || attendanceType;
+
+    // Check recent punches today for this specific employee
+    const today = new Date().toISOString().split('T')[0];
+    const empTodayPunches = attendanceRecords
+      .filter((r) => (r.employeeId === emp.id || r.employeeCode === emp.code) && r.timestamp?.startsWith(today))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const recentPunch = empTodayPunches[0];
+
+    // Protection 1: Prevent duplicate punch of the EXACT SAME TYPE
+    if (recentPunch && recentPunch.type === targetType && !forceConfirm) {
+      isSubmittingRef.current = false;
+      setIsProcessing(false);
+      playAlertChime('security_alert');
+      setDuplicateAlertModal({
+        emp,
+        type: targetType,
+        timestamp: recentPunch.timestamp,
+        branchName: recentPunch.branchNameKh || recentPunch.branchNameEn,
+      });
+      return;
+    }
+
+    // Protection 2: Accidental fast double-punch toggle (e.g. employee taps twice when checking in or out)
+    // If they checked in within the last 5 minutes (300s) and now targetType is check_out (or vice versa),
+    // require an explicit confirmation modal so an accidental 2nd punch never silently checks them out/in!
+    if (recentPunch && recentPunch.type !== targetType && !forceConfirm) {
+      const elapsedSec = Math.floor((Date.now() - new Date(recentPunch.timestamp).getTime()) / 1000);
+      if (elapsedSec < 300) {
+        isSubmittingRef.current = false;
+        setIsProcessing(false);
+        playAlertChime('alert');
+        setDoublePunchModal({
+          emp,
+          branch,
+          method,
+          photoUrl,
+          targetType,
+          recentPunch,
+          elapsedSeconds: elapsedSec,
+        });
+        return;
+      }
+    }
+
     setIsProcessing(true);
 
     // 0. Sunday Rest, Weekly Day Off, and Leave Validation (Punches strictly prohibited)
     const allowance = validatePunchAllowance(emp, leaveRequests, new Date());
     if (!allowance.allowed) {
+      isSubmittingRef.current = false;
       setIsProcessing(false);
       setIsCameraActive(false);
       playAlertChime('security_alert');
@@ -499,6 +589,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       const deviceValidation = validateEmployeeDevice(emp, currentDevice, systemSettings, employees);
 
       if (!deviceValidation.allowed) {
+        isSubmittingRef.current = false;
         setIsProcessing(false);
         setIsCameraActive(false);
         playAlertChime('security_alert');
@@ -567,11 +658,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         const currentMins = hour * 60 + mins;
 
         // Office starts at 08:00 (480 mins) with 15 mins grace period
-        if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && attendanceType === 'check_in') {
+        if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && targetType === 'check_in') {
           status = 'late';
-        } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && attendanceType === 'check_in') {
+        } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && targetType === 'check_in') {
           status = 'late';
-        } else if (attendanceType === 'check_out' && hour >= 18) {
+        } else if (targetType === 'check_out' && hour >= 18) {
           status = 'overtime';
         }
       }
@@ -586,7 +677,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         branchId: effectiveBranch.id,
         branchNameKh: effectiveBranch.nameKh,
         branchNameEn: effectiveBranch.nameEn,
-        type: attendanceType,
+        type: targetType,
         timestamp: now.toISOString(),
         lat: currentGeo.lat,
         lng: currentGeo.lng,
@@ -600,7 +691,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         deviceName: currentDevice.deviceName,
         deviceVerified: true,
         notes: withinRadius
-          ? `${attendanceType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${currentGeo.accuracy || 5}m)`
+          ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${currentGeo.accuracy || 5}m)`
           : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${effectiveBranch.radiusMeters}m`,
       };
 
@@ -608,6 +699,10 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       setLastSuccessRecord(newRecord);
       setScanSuccessModalRecord(newRecord);
       setIsProcessing(false);
+
+      setTimeout(() => {
+        isSubmittingRef.current = false;
+      }, 1500);
 
       if (withinRadius) {
         try {
@@ -937,6 +1032,158 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* ACCIDENTAL DOUBLE-PUNCH CONFIRMATION MODAL */}
+      {/* ========================================================================= */}
+      {doublePunchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-200 font-hanuman">
+            <div className="flex items-center space-x-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-base font-battambang">
+                  {lang === 'km' ? '⚠️ ការពារការចុះវត្តមានស្ទួន' : '⚠️ Double-Punch Protection'}
+                </h3>
+                <p className="text-xs text-amber-700 font-medium">
+                  {lang === 'km' ? 'ប្រព័ន្ធរកឃើញការស្កេនញឹកញាប់ក្នុងពេលខ្លី' : 'Rapid sequential punch detected'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs text-slate-700">
+              <p className="leading-relaxed">
+                {lang === 'km' ? (
+                  <>
+                    អ្នកទើបតែបាន <strong className="text-slate-900">{doublePunchModal.recentPunch.type === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'}</strong> កាលពី{' '}
+                    <span className="font-bold text-indigo-600 font-mono">
+                      {doublePunchModal.elapsedSeconds < 60
+                        ? `${doublePunchModal.elapsedSeconds} វិនាទីមុន`
+                        : `${Math.floor(doublePunchModal.elapsedSeconds / 60)} នាទីមុន`}
+                    </span>{' '}
+                    (ម៉ោង {new Date(doublePunchModal.recentPunch.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}) នៅសាខា <strong className="text-slate-900">{doublePunchModal.recentPunch.branchNameKh || doublePunchModal.recentPunch.branchNameEn}</strong>។
+                  </>
+                ) : (
+                  <>
+                    You just <strong className="text-slate-900">{doublePunchModal.recentPunch.type === 'check_in' ? 'Checked In' : 'Checked Out'}</strong> only{' '}
+                    <span className="font-bold text-indigo-600 font-mono">
+                      {doublePunchModal.elapsedSeconds < 60
+                        ? `${doublePunchModal.elapsedSeconds}s ago`
+                        : `${Math.floor(doublePunchModal.elapsedSeconds / 60)}m ago`}
+                    </span>{' '}
+                    (at {new Date(doublePunchModal.recentPunch.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}) at branch <strong className="text-slate-900">{doublePunchModal.recentPunch.branchNameEn}</strong>.
+                  </>
+                )}
+              </p>
+              <p className="text-slate-500 font-medium pt-2 border-t border-slate-200">
+                {lang === 'km'
+                  ? `តើអ្នកពិតជាចង់ ${doublePunchModal.targetType === 'check_in' ? 'ចុះវត្តមានចូលធ្វើការ (Check-In)' : 'ចុះវត្តមានចេញពីធ្វើការ (Check-Out)'} ឥឡូវនេះមែនទេ? ឬចុចច្រឡំស្កេន ២ ដង?`
+                  : `Did you intend to ${doublePunchModal.targetType === 'check_in' ? 'Check In' : 'Check Out'} right now, or did you accidentally punch twice?`}
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setDoublePunchModal(null);
+                  isSubmittingRef.current = false;
+                }}
+                className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-emerald-200 transition flex items-center justify-center space-x-1.5 cursor-pointer order-1 sm:order-2"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{lang === 'km' ? 'រក្សាស្ថានភាពដដែល (បោះបង់)' : 'Keep Current (Cancel)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const modalData = doublePunchModal;
+                  setDoublePunchModal(null);
+                  processAttendance(
+                    modalData.emp,
+                    modalData.branch,
+                    modalData.method,
+                    modalData.photoUrl,
+                    modalData.targetType,
+                    true // forceConfirm
+                  );
+                }}
+                className="py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition border border-slate-300 flex items-center justify-center space-x-1.5 cursor-pointer order-2 sm:order-1"
+              >
+                <span>
+                  {lang === 'km'
+                    ? `បញ្ជាក់${doublePunchModal.targetType === 'check_in' ? 'ចូល' : 'ចេញ'}`
+                    : `Confirm ${doublePunchModal.targetType === 'check_in' ? 'Check-In' : 'Check-Out'}`}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* DUPLICATE PUNCH ALERT MODAL */}
+      {/* ========================================================================= */}
+      {duplicateAlertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-200 font-hanuman">
+            <div className="flex items-center space-x-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-200">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-base font-battambang">
+                  {lang === 'km' ? '✅ បានកត់ត្រាវត្តមានរួចហើយ' : '✅ Already Recorded Today'}
+                </h3>
+                <p className="text-xs text-emerald-700 font-medium">
+                  {lang === 'km' ? 'មិនចាំបាច់ស្កេនស្ទួនទៀតឡើយ' : 'No duplicate punch needed'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-2">
+              <p className="leading-relaxed">
+                {lang === 'km' ? (
+                  <>
+                    អ្នកបានចុះវត្តមាន <strong>{duplicateAlertModal.type === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'}</strong> រួចរាល់ហើយនៅថ្ងៃនេះ វេលាម៉ោង{' '}
+                    <span className="font-bold text-indigo-600 font-mono">
+                      {new Date(duplicateAlertModal.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>{' '}
+                    នៅសាខា <strong>{duplicateAlertModal.branchName}</strong>។
+                  </>
+                ) : (
+                  <>
+                    You have already <strong>{duplicateAlertModal.type === 'check_in' ? 'Checked In' : 'Checked Out'}</strong> today at{' '}
+                    <span className="font-bold text-indigo-600 font-mono">
+                      {new Date(duplicateAlertModal.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>{' '}
+                    at branch <strong>{duplicateAlertModal.branchName}</strong>.
+                  </>
+                )}
+              </p>
+              <p className="text-slate-500 font-medium">
+                {lang === 'km'
+                  ? 'ទិន្នន័យវត្តមានរបស់អ្នកត្រូវបានរក្សាទុកដោយជោគជ័យក្នុងប្រព័ន្ធរួចរាល់ហើយ។'
+                  : 'Your attendance record is already securely saved in the system.'}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setDuplicateAlertModal(null);
+                isSubmittingRef.current = false;
+              }}
+              className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-200 transition flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <span>{lang === 'km' ? 'យល់ព្រម (OK)' : 'Got It (OK)'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* SCAN COMPLETED & SUCCESSFUL POPUP MODAL */}
       {/* ========================================================================= */}
       {scanSuccessModalRecord && (
@@ -1190,8 +1437,22 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             </div>
           </div>
 
-          {/* Mode Switch Tabs */}
+          {/* Mode Switch Tabs - Direct GPS Punch first as staff mostly punch by GPS */}
           <div className="flex items-center bg-indigo-700/80 p-1 rounded-xl border border-indigo-500/40 self-start md:self-auto text-xs font-hanuman">
+            <button
+              onClick={() => {
+                setScanMode('mobile_punch');
+                setIsCameraActive(false);
+              }}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg font-bold transition ${
+                scanMode === 'mobile_punch'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-indigo-100 hover:text-white'
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>{lang === 'km' ? 'ស្កេនតាម GPS (ចម្បង)' : 'Direct GPS Punch'}</span>
+            </button>
             <button
               onClick={() => {
                 setScanMode('camera_scan');
@@ -1205,20 +1466,6 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             >
               <Camera className="w-3.5 h-3.5" />
               <span>{lang === 'km' ? 'ស្កេនកាមេរ៉ា' : 'Live Camera'}</span>
-            </button>
-            <button
-              onClick={() => {
-                setScanMode('mobile_punch');
-                setIsCameraActive(false);
-              }}
-              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg font-bold transition ${
-                scanMode === 'mobile_punch'
-                  ? 'bg-white text-indigo-700 shadow-sm'
-                  : 'text-indigo-100 hover:text-white'
-              }`}
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>{lang === 'km' ? 'ស្កេនតាម GPS' : 'Direct GPS Punch'}</span>
             </button>
             <button
               onClick={() => {
@@ -1247,11 +1494,13 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
               <div className="flex items-center space-x-2">
                 <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center">
-                  <Camera className="w-4 h-4" />
+                  {scanMode === 'mobile_punch' ? <Smartphone className="w-4 h-4" /> : <Camera className="w-4 h-4" />}
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800 text-sm font-battambang">
-                    {lang === 'km' ? '១. ដំណើរការស្កេនវត្តមាន' : '1. Attendance Verification'}
+                    {scanMode === 'mobile_punch'
+                      ? (lang === 'km' ? '១. ចុះវត្តមានតាម GPS ជាក់ស្តែង' : '1. Direct Real-Time GPS Punch')
+                      : (lang === 'km' ? '១. ដំណើរការស្កេនវត្តមាន' : '1. Attendance Verification')}
                   </h3>
                   <p className="text-[11px] text-slate-500 font-medium font-hanuman">
                     {scanMode === 'camera_scan'
@@ -1443,15 +1692,97 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                   </div>
                 )}
 
+                {/* Real-time Shift & Attendance State for Today */}
+                <div className="p-3.5 rounded-xl border bg-white shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>{lang === 'km' ? 'ស្ថានភាពវត្តមានថ្ងៃនេះ' : "Today's Attendance Status"}</span>
+                    </span>
+                    {hasCheckedInToday && !hasCheckedOutToday && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        {lang === 'km' ? 'កំពុងបំពេញការងារ (Checked In)' : 'Working On-Duty'}
+                      </span>
+                    )}
+                    {hasCheckedInToday && hasCheckedOutToday && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                        {lang === 'km' ? 'បានបញ្ចប់វេនថ្ងៃនេះ' : 'Shift Completed Today'}
+                      </span>
+                    )}
+                    {!hasCheckedInToday && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                        <span className="w-2 h-2 rounded-full bg-slate-400" />
+                        {lang === 'km' ? 'មិនទាន់ចូលធ្វើការ' : 'Not Checked In Yet'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Detailed Punch Timestamps for Today */}
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/70">
+                      <span className="text-[10px] text-slate-400 block font-semibold uppercase">
+                        {lang === 'km' ? 'ម៉ោងចូល (Check-In)' : 'Check-In Time'}
+                      </span>
+                      <span className="font-bold text-slate-800 font-mono text-xs sm:text-sm">
+                        {checkInRecordToday 
+                          ? new Date(checkInRecordToday.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                          : '--:--'}
+                      </span>
+                      {checkInRecordToday && (
+                        <span className="text-[10px] text-emerald-600 block mt-0.5 font-medium truncate">
+                          ✓ {checkInRecordToday.branchNameKh || checkInRecordToday.branchNameEn}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/70">
+                      <span className="text-[10px] text-slate-400 block font-semibold uppercase">
+                        {lang === 'km' ? 'ម៉ោងចេញ (Check-Out)' : 'Check-Out Time'}
+                      </span>
+                      <span className="font-bold text-slate-800 font-mono text-xs sm:text-sm">
+                        {checkOutRecordToday 
+                          ? new Date(checkOutRecordToday.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                          : '--:--'}
+                      </span>
+                      {checkOutRecordToday && (
+                        <span className="text-[10px] text-blue-600 block mt-0.5 font-medium truncate">
+                          ✓ {checkOutRecordToday.branchNameKh || checkOutRecordToday.branchNameEn}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Active Anti-Double Punch Safeguard Banner if recently checked in */}
+                  {hasCheckedInToday && !hasCheckedOutToday && isCooldownActive && (
+                    <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] flex items-start gap-2">
+                      <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">
+                          {lang === 'km' ? '🛡️ ប្រព័ន្ធការពារការចុះវត្តមានស្ទួនកំពុងសកម្ម' : '🛡️ Anti-Double Punch Active'}
+                        </p>
+                        <p className="text-amber-700 mt-0.5">
+                          {lang === 'km'
+                            ? `អ្នកទើបតែបានចូលធ្វើការ ${elapsedSecondsSinceLastPunch < 60 ? `${elapsedSecondsSinceLastPunch} វិនាទី` : `${Math.floor(elapsedSecondsSinceLastPunch / 60)} នាទី`} មុន។ ប្រព័ន្ធនឹងសួរផ្ទៀងផ្ទាត់បញ្ជាក់ដើម្បីការពារកុំឱ្យចុះវត្តមានចេញដោយច្រឡំ។`
+                            : `You checked in ${elapsedSecondsSinceLastPunch < 60 ? `${elapsedSecondsSinceLastPunch}s ago` : `${Math.floor(elapsedSecondsSinceLastPunch / 60)}m ago`}. A confirmation prompt will guard against accidental checkout.`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Instant Punch Action Button */}
                 <button
                   id="instant-punch-submit-btn"
-                  onClick={() => processAttendance(selectedEmp, selectedBranch, 'qr_mobile', selectedEmp.avatar)}
+                  onClick={() => processAttendance(selectedEmp, selectedBranch, 'qr_mobile', selectedEmp.avatar, attendanceType)}
                   disabled={isProcessing}
-                  className={`w-full py-3.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 shadow-md transition-all cursor-pointer ${
-                    isWithinGeofence
-                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200'
-                      : 'bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100'
+                  className={`w-full py-4 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 shadow-md transition-all cursor-pointer ${
+                    !isWithinGeofence
+                      ? 'bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100'
+                      : attendanceType === 'check_in'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200'
                   }`}
                 >
                   {isProcessing ? (
@@ -1465,15 +1796,32 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                       <span>
                         {isWithinGeofence
                           ? lang === 'km'
-                            ? `បញ្ជាក់វត្តមាន ${attendanceType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} តាម GPS ផ្ទាល់`
-                            : `Execute ${attendanceType === 'check_in' ? 'Check-In' : 'Check-Out'} with Live GPS`
+                            ? attendanceType === 'check_in'
+                              ? '🟢 បញ្ជាក់វត្តមានចូលធ្វើការ (Punch Check-In) តាម GPS ផ្ទាល់'
+                              : '🔴 បញ្ជាក់វត្តមានចេញពីធ្វើការ (Punch Check-Out) តាម GPS ផ្ទាល់'
+                            : attendanceType === 'check_in'
+                            ? '🟢 Execute Check-In with Live GPS'
+                            : '🔴 Execute Check-Out with Live GPS'
                           : lang === 'km'
-                            ? `⚠️ បញ្ជាក់ស្កេន (នឹងត្រូវបដិសេធដោយសារនៅឆ្ងាយ ${formatDistance(distanceToBranch, lang)})`
-                            : `⚠️ Trigger Punch (Out of range: ${formatDistance(distanceToBranch, lang)} away)`}
+                            ? `⚠️ ទីតាំងនៅឆ្ងាយ (${formatDistance(distanceToBranch, lang)}) - មិនទាន់ដល់សាខា`
+                            : `⚠️ Out of Geofence Range (${formatDistance(distanceToBranch, lang)})`}
                       </span>
                     </>
                   )}
                 </button>
+
+                {/* Quick Toggle Link for Attendance Type */}
+                <div className="text-center pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceType(attendanceType === 'check_in' ? 'check_out' : 'check_in')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline decoration-indigo-300 underline-offset-2 transition"
+                  >
+                    {lang === 'km'
+                      ? `ចង់ប្តូរទៅចុះវត្តមាន ${attendanceType === 'check_in' ? 'ចេញពីធ្វើការ (Check-Out)' : 'ចូលធ្វើការ (Check-In)'} ដោយដៃ? ចុចទីនេះ`
+                      : `Switch manually to ${attendanceType === 'check_in' ? 'Check-Out' : 'Check-In'}`}
+                  </button>
+                </div>
               </div>
             )}
 

@@ -284,8 +284,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             onClick={onOpenScan}
             className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-5 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-200 transition"
           >
-            <QrCode className="w-4 h-4" />
-            <span>{lang === 'km' ? 'ស្កេនវត្តមាន (QR & GPS)' : 'Punch In / Out'}</span>
+            <MapPin className="w-4 h-4" />
+            <span>{lang === 'km' ? 'ចុះវត្តមានតាម GPS (GPS Punch)' : 'GPS Punch In / Out'}</span>
           </button>
 
           <button

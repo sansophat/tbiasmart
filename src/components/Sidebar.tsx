@@ -26,7 +26,8 @@ import {
   Clock,
   Compass,
   Download,
-  CalendarDays
+  CalendarDays,
+  MapPin
 } from 'lucide-react';
 import { AuthUser, Branch, CompanyBranding, Language, UserGeoLocation } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
@@ -106,9 +107,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             },
             {
               id: 'scan',
-              labelKh: 'ស្កេនវត្តមាន QR & GPS',
-              labelEn: 'Mobile QR Punch',
-              icon: QrCode,
+              labelKh: 'ចុះវត្តមាន GPS & QR',
+              labelEn: 'GPS Attendance Punch',
+              icon: MapPin,
               highlight: true,
             },
             {
