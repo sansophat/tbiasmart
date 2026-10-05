@@ -85,7 +85,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     code: currentUser?.employeeCode || currentUser?.username || 'EMP-USER',
     nameKh: currentUser?.nameKh || 'បុគ្គលិក',
     nameEn: currentUser?.nameEn || 'Staff Member',
-    branchId: currentUser?.branchId || safeBranches[0]?.id || 'br_office',
+    branchId: currentUser?.branchId || safeBranches[0]?.id || '',
     department: 'Operations',
     departmentKh: 'ប្រតិបត្តិការ',
     role: currentUser?.roleTitle || 'Staff Member',

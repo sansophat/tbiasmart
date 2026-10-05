@@ -98,11 +98,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   );
   const isEmployee = currentUser?.role === 'employee';
 
-  const defaultEmpId = loggedInEmp?.id || employees[0]?.id || 'emp_off_1';
+  const defaultEmpId = loggedInEmp?.id || employees[0]?.id || '';
   const defaultEmp = employees.find((e) => e.id === defaultEmpId);
   const defaultBranchId = (loggedInEmp?.branchId || defaultEmp?.branchId || currentUser?.branchId)
     ? (loggedInEmp?.branchId || defaultEmp?.branchId || currentUser?.branchId)!
-    : branches[0]?.id || 'br_club_1';
+    : branches[0]?.id || '';
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>(defaultBranchId);
   const [selectedEmpId, setSelectedEmpId] = useState<string>(defaultEmpId);
@@ -113,7 +113,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       const targetEmp = employees.find((e) => e.id === selectedEmpId);
       if (targetEmp) {
         let b = branches.find((br) => br.id === targetEmp.branchId);
-        if (!b || b.id === 'br_main_hq' || b.id === 'br_office') {
+        if (!b) {
           const deptB = branches.find(
             (br) =>
               (targetEmp.department &&
@@ -141,7 +141,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       if (loggedInEmp) {
         setSelectedEmpId(loggedInEmp.id);
         let b = branches.find((br) => br.id === loggedInEmp.branchId);
-        if (!b || b.id === 'br_main_hq' || b.id === 'br_office') {
+        if (!b) {
           const deptB = branches.find(
             (br) =>
               (loggedInEmp.department &&

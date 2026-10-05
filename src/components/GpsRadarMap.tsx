@@ -49,7 +49,7 @@ export const GpsRadarMap: React.FC<GpsRadarMapProps> = ({
   employees = [],
   onUpdateBranchLocation,
 }) => {
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || '');
   const [activeFilter, setActiveFilter] = useState<'all' | 'club' | 'warehouse' | 'cafe' | 'office'>('all');
   const [mapType, setMapType] = useState<'osm' | 'satellite'>('osm');
   const [isLiveWatching, setIsLiveWatching] = useState<boolean>(false);

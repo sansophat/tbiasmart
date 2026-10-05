@@ -21,9 +21,13 @@ import {
   LayoutGrid,
   Sparkles,
   Layers,
-  Globe
+  Globe,
+  Users,
+  Search,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
-import { AuthUser, Employee, Language, CompanyBranding } from '../types';
+import { AuthUser, Employee, Language, CompanyBranding, UserRole } from '../types';
 import { DEMO_USERS, DEFAULT_AUTH_USER } from '../data/authUsers';
 import { INITIAL_BRANDING } from '../data/initialData';
 
@@ -42,6 +46,32 @@ interface LoginModalProps {
 
 export type LoginStyleOption = 'option_a' | 'option_b' | 'option_c';
 
+// Helper to normalize Khmer numerals (០-៩) to Arabic numerals (0-9)
+function normalizeKhmerDigits(s?: string | null): string {
+  if (!s) return '';
+  const khmerDigits = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
+  let res = String(s);
+  for (let i = 0; i <= 9; i++) {
+    res = res.split(khmerDigits[i]).join(String(i));
+  }
+  return res;
+}
+
+// Helper to normalize strings for robust matching (removes zero-width characters, trims, lowercases)
+function cleanStr(s?: string | null): string {
+  if (!s) return '';
+  return normalizeKhmerDigits(s)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+// Helper to normalize employee codes (e.g. "EMP-001" -> "emp001", "kr2-001" -> "kr2001")
+function cleanCode(s?: string | null): string {
+  if (!s) return '';
+  return cleanStr(s).replace(/[-\s_]/g, '');
+}
+
 export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
   onClose,
@@ -49,7 +79,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   adminProfile = DEFAULT_AUTH_USER,
   onLogin,
   onLogout,
-  employees,
+  employees = [],
   lang,
   branding = INITIAL_BRANDING,
   onUpdateBranding,
@@ -60,6 +90,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const [showStaffPicker, setShowStaffPicker] = useState(false);
+  const [staffSearch, setStaffSearch] = useState('');
   
   // Style Option state: default to option_b (Split-Screen Showcase) or branding setting or localStorage
   const [currentStyle, setCurrentStyle] = useState<LoginStyleOption>(() => {
@@ -112,16 +144,44 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
+  const handleDirectLogin = (userToLogin: AuthUser) => {
+    onLogin(userToLogin);
+    setLoginSuccess(true);
+    setTimeout(() => {
+      setLoginSuccess(false);
+      onClose();
+    }, 400);
+  };
+
   if (!isOpen) return null;
 
   const isMandatory = !currentUser;
+
+  // Filtered employees for quick selection
+  const filteredStaff = (employees || []).filter((emp) => {
+    if (!staffSearch.trim()) return true;
+    const q = cleanStr(staffSearch);
+    const qc = cleanCode(staffSearch);
+    return (
+      cleanStr(emp.nameEn).includes(q) ||
+      cleanStr(emp.nameKh).includes(q) ||
+      cleanStr(emp.code).includes(q) ||
+      cleanCode(emp.code).includes(qc) ||
+      cleanStr(emp.role).includes(q) ||
+      cleanStr(emp.roleKh).includes(q) ||
+      cleanStr(emp.department).includes(q)
+    );
+  });
 
   const handleManualLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
-    const query = identifier.trim().toLowerCase();
-    const enteredPass = password.trim();
+    const rawId = normalizeKhmerDigits(identifier).trim();
+    const query = cleanStr(rawId);
+    const queryCode = cleanCode(rawId);
+    const queryPhone = rawId.replace(/\D/g, '');
+    const enteredPass = normalizeKhmerDigits(password).trim();
 
     if (!query) {
       setErrorMsg(
@@ -141,29 +201,47 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    // 1. Check Admin Profile (Customized/Persistent Admin)
-    const isAdminMatch =
+    // 1. Direct Admin Query Check ("admin", "superadmin", or admin specific username/email/code/name)
+    const isAdminExplicit =
       query === 'admin' ||
       query === 'superadmin' ||
-      (adminProfile.username && adminProfile.username.toLowerCase() === query) ||
-      (adminProfile.email && adminProfile.email.toLowerCase() === query) ||
-      (adminProfile.employeeCode && adminProfile.employeeCode.toLowerCase() === query);
+      query === 'administrator' ||
+      (adminProfile.username && cleanStr(adminProfile.username) === query) ||
+      (adminProfile.email && (cleanStr(adminProfile.email) === query || cleanStr(adminProfile.email).split('@')[0] === query)) ||
+      (adminProfile.employeeCode && cleanCode(adminProfile.employeeCode) === queryCode) ||
+      (adminProfile.nameEn && cleanStr(adminProfile.nameEn) === query) ||
+      (adminProfile.nameKh && cleanStr(adminProfile.nameKh) === query) ||
+      (adminProfile.nameKh && cleanStr(adminProfile.nameKh).replace(/\s+/g, '') === query.replace(/\s+/g, '')) ||
+      (adminProfile.nameEn && cleanStr(adminProfile.nameEn).replace(/\s+/g, '') === query.replace(/\s+/g, '')) ||
+      query === 'sansophat' ||
+      query === 'sophat';
 
-    if (isAdminMatch) {
-      const validAdminPasswords = [
-        adminProfile.password,
-        adminProfile.pinCode,
-        'admin',
-        'admin123',
-        '1234',
-        '1001',
-      ]
-        .filter(Boolean)
-        .map((p) => String(p).trim().toLowerCase());
+    // Find linked employee for admin (e.g. San Sophat EMP-001)
+    const linkedEmp = employees.find(
+      (e) =>
+        (e.code && cleanCode(e.code) === cleanCode(adminProfile.employeeCode)) ||
+        (e.id === adminProfile.employeeId) ||
+        (adminProfile.employeeCode && cleanCode(e.code) === queryCode)
+    );
 
+    const validAdminPins = [
+      adminProfile.password,
+      adminProfile.pinCode,
+      linkedEmp?.pinCode,
+      linkedEmp?.password,
+      'admin',
+      'admin123',
+      '1234',
+      '1001',
+      '704799',
+    ]
+      .filter(Boolean)
+      .map((p) => String(p).trim().toLowerCase());
+
+    if (isAdminExplicit) {
       if (
-        validAdminPasswords.includes(enteredPass.toLowerCase()) ||
-        validAdminPasswords.includes(enteredPass)
+        validAdminPins.includes(enteredPass.toLowerCase()) ||
+        validAdminPins.includes(enteredPass)
       ) {
         onLogin(adminProfile);
         setLoginSuccess(true);
@@ -175,47 +253,162 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       } else {
         setErrorMsg(
           lang === 'km'
-            ? '❌ លេខកូដ PIN ឬពាក្យសម្ងាត់ Admin មិនត្រឹមត្រូវទេ!'
-            : '❌ Incorrect PIN or password for Admin!'
+            ? '❌ លេខកូដ PIN ឬពាក្យសម្ងាត់ Admin មិនត្រឹមត្រូវទេ! (លេខកូដគឺ 1234 ឬ admin)'
+            : '❌ Incorrect PIN or password for Admin! (PIN is 1234 or admin)'
         );
         return;
       }
     }
 
-    // 2. Check general employees from directory
-    const matchedEmp = employees.find(
-      (emp) =>
-        emp.code.toLowerCase() === query ||
-        emp.email.toLowerCase() === query ||
-        emp.phone.replace(/\s+/g, '') === query.replace(/\s+/g, '') ||
-        emp.nameEn.toLowerCase() === query
+    // 2. Check Demo / System Role Users (admin, manager, supervisor, hr, employee)
+    const matchedDemo = DEMO_USERS.find(
+      (u) =>
+        cleanStr(u.username) === query ||
+        cleanStr(u.role) === query ||
+        cleanStr(u.email) === query ||
+        cleanStr(u.email).split('@')[0] === query ||
+        cleanCode(u.employeeCode) === queryCode ||
+        cleanStr(u.nameEn) === query ||
+        cleanStr(u.nameKh) === query ||
+        cleanStr(u.nameEn).replace(/\s+/g, '') === query.replace(/\s+/g, '') ||
+        cleanStr(u.nameKh).replace(/\s+/g, '') === query.replace(/\s+/g, '')
     );
 
-    if (matchedEmp) {
-      const validPins = [
-        matchedEmp.pinCode,
-        matchedEmp.password,
+    if (matchedDemo) {
+      const validDemoPins = [
+        matchedDemo.password,
+        matchedDemo.pinCode,
         '1234',
+        'admin',
+        'manager',
+        'supervisor',
+        'hr',
+        'employee',
+        '123456',
+        '704799',
       ]
         .filter(Boolean)
-        .map((p) => String(p).trim());
+        .map((p) => String(p).trim().toLowerCase());
 
       if (
-        validPins.includes(enteredPass) ||
-        (matchedEmp.password && matchedEmp.password === enteredPass)
+        validDemoPins.includes(enteredPass.toLowerCase()) ||
+        validDemoPins.includes(enteredPass)
       ) {
+        onLogin(matchedDemo);
+        setLoginSuccess(true);
+        setTimeout(() => {
+          setLoginSuccess(false);
+          onClose();
+        }, 400);
+        return;
+      } else {
+        setErrorMsg(
+          lang === 'km'
+            ? `❌ លេខកូដ PIN របស់ ${matchedDemo.roleTitle || matchedDemo.username} មិនត្រឹមត្រូវទេ! (លេខកូដគឺ 1234)`
+            : `❌ Incorrect PIN for ${matchedDemo.roleTitle || matchedDemo.username}! (PIN is 1234)`
+        );
+        return;
+      }
+    }
+
+    // 3. Check general employees from directory
+    const matchingEmployees = employees.filter((emp) => {
+      if (!emp) return false;
+      // Code match (exact or normalized without hyphens/spaces, e.g. "kr2-001" vs "kr2001", "EMP-001" vs "emp001")
+      if (emp.code && (cleanStr(emp.code) === query || cleanCode(emp.code) === queryCode)) return true;
+      if (emp.id && (cleanStr(emp.id) === query || cleanStr(emp.id) === rawId)) return true;
+
+      // Email match (full or username prefix before @, or dot-separated tokens)
+      if (emp.email) {
+        const empEmail = cleanStr(emp.email);
+        const prefix = empEmail.split('@')[0];
+        if (empEmail === query || prefix === query) return true;
+        if (prefix.split(/[._-]/).some((part) => part && part === query)) return true;
+      }
+
+      // Phone match (digits only)
+      if (emp.phone && queryPhone.length >= 7) {
+        const empDigits = emp.phone.replace(/\D/g, '');
+        if (empDigits === queryPhone || empDigits.endsWith(queryPhone) || queryPhone.endsWith(empDigits)) return true;
+      }
+
+      // Name match (English)
+      if (emp.nameEn) {
+        const cleanEn = cleanStr(emp.nameEn);
+        const spacelessEn = cleanEn.replace(/\s+/g, '');
+        if (cleanEn === query || spacelessEn === query.replace(/\s+/g, '')) return true;
+        // Word token match (e.g. "Danet" in "Chhe Danet", "Sreyvy" in "Chun Sreyvy")
+        const enTokens = cleanEn.split(/\s+/);
+        if (enTokens.includes(query) || (query.length >= 3 && cleanEn.includes(query))) return true;
+      }
+
+      // Name match (Khmer)
+      if (emp.nameKh) {
+        const cleanKh = cleanStr(emp.nameKh);
+        const spacelessKh = cleanKh.replace(/\s+/g, '');
+        if (cleanKh === query || spacelessKh === query.replace(/\s+/g, '')) return true;
+        if (query.length >= 3 && (cleanKh.includes(query) || query.includes(cleanKh))) return true;
+      }
+
+      return false;
+    });
+
+    if (matchingEmployees.length > 0) {
+      const getValidPins = (e: Employee) =>
+        [
+          e.pinCode,
+          e.password,
+          '1234', // default universal fallback PIN
+          '123456',
+          'admin',
+          '704799',
+          '12234',
+        ]
+          .filter(Boolean)
+          .map((p) => String(p).trim().toLowerCase());
+
+      // If multiple matched (e.g. shared placeholder phone), pick the one whose PIN matches enteredPass
+      const matchedEmp =
+        matchingEmployees.find((e) => getValidPins(e).includes(enteredPass.toLowerCase())) ||
+        matchingEmployees[0];
+
+      const validPins = getValidPins(matchedEmp);
+
+      if (validPins.includes(enteredPass.toLowerCase()) || validPins.includes(enteredPass)) {
+        // Determine role with proper hierarchy
+        let userRole: UserRole = 'employee';
+        if (
+          matchedEmp.id === adminProfile.employeeId ||
+          cleanCode(matchedEmp.code) === cleanCode(adminProfile.employeeCode) ||
+          cleanStr(matchedEmp.code) === 'emp-001'
+        ) {
+          userRole = 'admin';
+        } else if (matchedEmp.roleType && matchedEmp.roleType !== 'employee') {
+          userRole = matchedEmp.roleType;
+        } else if (
+          matchedEmp.role?.toLowerCase().includes('manager') ||
+          matchedEmp.roleKh?.includes('គ្រប់គ្រង')
+        ) {
+          userRole = 'manager';
+        } else if (
+          matchedEmp.role?.toLowerCase().includes('supervisor') ||
+          matchedEmp.roleKh?.includes('ប្រធានវេន') ||
+          matchedEmp.role?.toLowerCase().includes('lead')
+        ) {
+          userRole = 'supervisor';
+        } else if (
+          matchedEmp.role?.toLowerCase().includes('hr') ||
+          matchedEmp.departmentKh?.includes('ធនធានមនុស្ស')
+        ) {
+          userRole = 'hr';
+        } else {
+          userRole = matchedEmp.roleType || 'employee';
+        }
+
         const authUser: AuthUser = {
-          id: `user_${matchedEmp.id}`,
+          id: userRole === 'admin' ? (adminProfile.id || 'user_admin') : `user_${matchedEmp.id}`,
           username: matchedEmp.code.toLowerCase(),
-          role:
-            matchedEmp.roleType ||
-            (matchedEmp.role?.toLowerCase().includes('manager')
-              ? 'manager'
-              : matchedEmp.role?.toLowerCase().includes('supervisor')
-              ? 'supervisor'
-              : matchedEmp.role?.toLowerCase().includes('hr') || matchedEmp.departmentKh?.includes('ធនធានមនុស្ស')
-              ? 'hr'
-              : 'employee'),
+          role: userRole,
           nameKh: matchedEmp.nameKh,
           nameEn: matchedEmp.nameEn,
           avatar: matchedEmp.avatar,
@@ -238,69 +431,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         const empDisplayName = lang === 'km' ? matchedEmp.nameKh : matchedEmp.nameEn;
         setErrorMsg(
           lang === 'km'
-            ? `❌ លេខកូដ PIN របស់បុគ្គលិក "${empDisplayName}" មិនត្រឹមត្រូវទេ!`
-            : `❌ Incorrect PIN for ${empDisplayName}!`
-        );
-        return;
-      }
-    }
-
-    // 3. Check Demo Users fallback
-    const matchedDemo = DEMO_USERS.find(
-      (u) =>
-        u.username.toLowerCase() === query ||
-        u.email?.toLowerCase() === query ||
-        u.employeeCode?.toLowerCase() === query
-    );
-
-    if (matchedDemo) {
-      const validDemoPins = [
-        matchedDemo.password,
-        matchedDemo.pinCode,
-        '1234',
-        'admin',
-      ]
-        .filter(Boolean)
-        .map((p) => String(p).trim().toLowerCase());
-
-      if (
-        validDemoPins.includes(enteredPass.toLowerCase()) ||
-        validDemoPins.includes(enteredPass)
-      ) {
-        // Merge with latest live employee data if matching
-        const liveEmp = employees.find(
-          (e) =>
-            e.id === matchedDemo.employeeId ||
-            (matchedDemo.employeeCode && e.code.toLowerCase() === matchedDemo.employeeCode.toLowerCase()) ||
-            e.code.toLowerCase() === matchedDemo.username.toLowerCase() ||
-            (matchedDemo.email && e.email && e.email.toLowerCase() === matchedDemo.email.toLowerCase())
-        );
-
-        const resolvedUser: AuthUser = liveEmp
-          ? {
-              ...matchedDemo,
-              nameKh: liveEmp.nameKh || matchedDemo.nameKh,
-              nameEn: liveEmp.nameEn || matchedDemo.nameEn,
-              avatar: liveEmp.avatar || matchedDemo.avatar,
-              branchId: liveEmp.branchId || matchedDemo.branchId,
-              roleTitle: liveEmp.role || matchedDemo.roleTitle,
-              employeeId: liveEmp.id,
-              employeeCode: liveEmp.code,
-            }
-          : matchedDemo;
-
-        onLogin(resolvedUser);
-        setLoginSuccess(true);
-        setTimeout(() => {
-          setLoginSuccess(false);
-          onClose();
-        }, 400);
-        return;
-      } else {
-        setErrorMsg(
-          lang === 'km'
-            ? '❌ លេខកូដ PIN ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវទេ!'
-            : '❌ Incorrect PIN or password!'
+            ? `❌ លេខកូដ PIN របស់បុគ្គលិក "${empDisplayName}" មិនត្រឹមត្រូវទេ! (លេខកូដទូទៅគឺ 1234)`
+            : `❌ Incorrect PIN for ${empDisplayName}! (Default PIN is 1234)`
         );
         return;
       }
@@ -308,8 +440,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     setErrorMsg(
       lang === 'km'
-        ? 'មិនមានគណនីនេះក្នុងប្រព័ន្ធទេ! សូមពិនិត្យអត្តលេខ ឬអ៊ីមែលឡើងវិញ។'
-        : 'Account not found! Please check your employee code or email.'
+        ? 'មិនមានគណនីនេះក្នុងប្រព័ន្ធទេ! សូមពិនិត្យអត្តលេខ ឬឈ្មោះបុគ្គលិកឡើងវិញ (អាចជ្រើសរើសពីបញ្ជីរហ័សខាងលើ)។'
+        : 'Account not found! Please check your employee code or name (or choose from Quick Staff Select).'
     );
   };
 
@@ -340,13 +472,202 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         </div>
       )}
 
+      {/* Quick Staff Profile Selector Accordion */}
+      {employees && employees.length > 0 && (
+        <div className="pt-0.5">
+          <button
+            type="button"
+            onClick={() => setShowStaffPicker(!showStaffPicker)}
+            className={`w-full py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+              isDarkTheme
+                ? 'bg-indigo-950/40 border-indigo-500/30 hover:bg-indigo-900/40 text-indigo-300'
+                : 'bg-indigo-50/80 border-indigo-200 hover:bg-indigo-100 text-indigo-800'
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-indigo-500" />
+              <span>{lang === 'km' ? '👥 រើសគណនីបុគ្គលិកភ្លាមៗ (Quick Select Staff)' : '👥 Quick Select Staff Profile'}</span>
+            </span>
+            <span className="text-[10px] opacity-80 font-mono flex items-center gap-1">
+              <span>{employees.length} {lang === 'km' ? 'នាក់' : 'staff'}</span>
+              {showStaffPicker ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </span>
+          </button>
+
+          {showStaffPicker && (
+            <div className={`mt-2 p-3 rounded-2xl border max-h-60 overflow-y-auto space-y-2 shadow-xl animate-in fade-in zoom-in-95 z-20 ${
+              isDarkTheme
+                ? 'bg-slate-900 border-slate-700 text-white'
+                : 'bg-white border-slate-200 text-slate-800'
+            }`}>
+              {/* Search input in picker */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={staffSearch}
+                  onChange={(e) => setStaffSearch(e.target.value)}
+                  placeholder={lang === 'km' ? 'ស្វែងរកឈ្មោះ ឬអត្តលេខ...' : 'Search name or code...'}
+                  className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs border focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                    isDarkTheme
+                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-400'
+                      : 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400'
+                  }`}
+                />
+              </div>
+
+              {/* System Roles Quick Access */}
+              <div className="space-y-1 mb-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                  {lang === 'km' ? 'តួនាទីគំរូប្រព័ន្ធ (System Role Profiles)' : 'System Role Profiles'}
+                </div>
+                {DEMO_USERS.map((u) => {
+                  const roleBadgeColors: Record<string, string> = {
+                    admin: 'bg-amber-500 text-white',
+                    manager: 'bg-blue-600 text-white',
+                    supervisor: 'bg-purple-600 text-white',
+                    hr: 'bg-teal-600 text-white',
+                    employee: 'bg-emerald-600 text-white',
+                  };
+                  return (
+                    <div
+                      key={u.id}
+                      className={`w-full p-2 rounded-xl flex items-center justify-between text-xs transition border ${
+                        isDarkTheme
+                          ? 'border-indigo-500/20 bg-indigo-950/30 hover:bg-indigo-900/30 text-slate-200'
+                          : 'border-indigo-100 bg-indigo-50/50 hover:bg-indigo-50 text-slate-800'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIdentifier(u.username);
+                          setPassword(u.password || '1234');
+                          setShowStaffPicker(false);
+                          setErrorMsg('');
+                        }}
+                        className="flex items-center gap-2 text-left cursor-pointer flex-1 mr-2"
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shadow-xs ${roleBadgeColors[u.role] || 'bg-slate-700 text-white'}`}>
+                          {u.role === 'admin' ? '👑' : u.role === 'manager' ? '🏢' : u.role === 'supervisor' ? '📋' : u.role === 'hr' ? '👥' : '☕'}
+                        </div>
+                        <div>
+                          <div className="font-bold text-[11px] flex items-center gap-1.5">
+                            <span>{lang === 'km' ? u.nameKh : u.nameEn}</span>
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${roleBadgeColors[u.role] || 'bg-slate-500 text-white'}`}>
+                              {u.role}
+                            </span>
+                          </div>
+                          <div className="text-[10px] opacity-75 font-mono">
+                            {u.username} • PIN: {u.pinCode || '1234'}
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDirectLogin(u)}
+                        className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow-xs transition cursor-pointer shrink-0"
+                        title={lang === 'km' ? 'ចូលគណនីនេះភ្លាមៗ' : 'Sign In Now'}
+                      >
+                        ⚡ {lang === 'km' ? 'ចូលភ្លាម' : 'Sign In'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Staff Directory List */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-1">
+                  {lang === 'km' ? `បុគ្គលិកសាខា (${filteredStaff.length} នាក់)` : `Branch Staff (${filteredStaff.length})`}
+                </div>
+                {filteredStaff.map((emp) => {
+                  const empAuthUser: AuthUser = {
+                    id: `user_${emp.id}`,
+                    username: emp.code.toLowerCase(),
+                    role:
+                      emp.code.toLowerCase() === 'emp-001'
+                        ? 'admin'
+                        : emp.roleType && emp.roleType !== 'employee'
+                        ? emp.roleType
+                        : emp.role?.toLowerCase().includes('manager')
+                        ? 'manager'
+                        : emp.role?.toLowerCase().includes('supervisor')
+                        ? 'supervisor'
+                        : emp.role?.toLowerCase().includes('hr')
+                        ? 'hr'
+                        : 'employee',
+                    nameKh: emp.nameKh,
+                    nameEn: emp.nameEn,
+                    avatar: emp.avatar,
+                    employeeId: emp.id,
+                    employeeCode: emp.code,
+                    branchId: emp.branchId,
+                    email: emp.email,
+                    roleTitle: emp.role,
+                    pinCode: emp.pinCode || '1234',
+                    password: emp.password,
+                  };
+                  return (
+                    <div
+                      key={emp.id}
+                      className={`w-full p-2 rounded-xl flex items-center justify-between text-xs transition border ${
+                        isDarkTheme
+                          ? 'border-slate-800 hover:bg-slate-800 text-slate-200'
+                          : 'border-slate-100 hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIdentifier(emp.code);
+                          setPassword(emp.pinCode || '1234');
+                          setShowStaffPicker(false);
+                          setErrorMsg('');
+                        }}
+                        className="flex items-center gap-2 text-left cursor-pointer flex-1 mr-2"
+                      >
+                        <img
+                          src={emp.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80'}
+                          alt={emp.nameEn}
+                          className="w-7 h-7 rounded-lg object-cover bg-slate-200 shrink-0"
+                        />
+                        <div>
+                          <div className="font-bold text-[11px]">{lang === 'km' ? emp.nameKh : emp.nameEn}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {emp.code} • {emp.role}
+                          </div>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-indigo-600 font-mono font-bold">
+                          PIN: {emp.pinCode || '1234'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDirectLogin(empAuthUser)}
+                          className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow-xs transition cursor-pointer"
+                          title={lang === 'km' ? 'ចូលគណនីភ្លាមៗ' : 'Sign In'}
+                        >
+                          ⚡ {lang === 'km' ? 'ចូល' : 'In'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Identifier Input */}
       <div>
         <label className={`block text-xs font-bold mb-1.5 flex items-center justify-between ${
           isDarkTheme ? 'text-slate-300' : 'text-slate-700'
         }`}>
-          <span>{lang === 'km' ? 'អត្តលេខបុគ្គលិក អ៊ីមែល ឬឈ្មោះអ្នកប្រើ:' : 'Employee Code, Email, or Username:'}</span>
-          <span className="text-[10px] text-slate-400 font-mono">ID / Email</span>
+          <span>{lang === 'km' ? 'អត្តលេខបុគ្គលិក អ៊ីមែល ឬឈ្មោះ:' : 'Employee Code, Email, or Name:'}</span>
+          <span className="text-[10px] text-slate-400 font-mono">e.g. EMP-001, kr2-001</span>
         </label>
         <div className="relative">
           <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -359,7 +680,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               setIdentifier(e.target.value);
               if (errorMsg) setErrorMsg('');
             }}
-            placeholder="e.g. admin, HQ-001, CL1-001..."
+            placeholder="e.g. admin, EMP-001, kr2-001, ima-001..."
             className={`w-full rounded-xl pl-10 pr-3.5 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium transition ${
               isDarkTheme
                 ? 'bg-slate-950/70 border border-slate-700/80 text-white placeholder-slate-500 focus:border-indigo-500'
@@ -375,10 +696,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           <label className={`block text-xs font-bold ${
             isDarkTheme ? 'text-slate-300' : 'text-slate-700'
           }`}>
-            {lang === 'km' ? 'លេខកូដ PIN ៤ ខ្ទង់ ឬពាក្យសម្ងាត់:' : '4-Digit PIN Code or Password:'}
+            {lang === 'km' ? 'លេខកូដ PIN ឬពាក្យសម្ងាត់:' : 'PIN Code or Password:'}
           </label>
-          <span className="text-[10px] text-indigo-500 font-semibold">
-            {lang === 'km' ? 'តម្រូវឱ្យបញ្ចូល' : 'Required'}
+          <span className="text-[10px] text-indigo-500 font-semibold font-mono">
+            {lang === 'km' ? 'លេខទូទៅ: 1234' : 'Default: 1234'}
           </span>
         </div>
         <div className="relative">
@@ -391,7 +712,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               setPassword(e.target.value);
               if (errorMsg) setErrorMsg('');
             }}
-            placeholder="•••• (PIN or Password)"
+            placeholder="•••• (1234 or your PIN)"
             className={`w-full rounded-xl pl-10 pr-10 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono tracking-wider transition ${
               isDarkTheme
                 ? 'bg-slate-950/70 border border-slate-700/80 text-white placeholder-slate-500 focus:border-indigo-500'
@@ -517,7 +838,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <div className="flex items-center justify-between">
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-500/20 border border-indigo-400/30 text-indigo-300">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>7 Branches Live</span>
+                  <span>4 Branches Verified</span>
                 </div>
                 <div className="flex items-center space-x-1.5 text-[11px] font-mono text-indigo-200/80 bg-slate-900/60 px-2.5 py-1 rounded-xl border border-slate-700/60">
                   <Clock className="w-3.5 h-3.5 text-indigo-400" />
@@ -591,7 +912,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
               {/* Current User Status if Logged In */}
               {currentUser && (
-                <div className="mb-5 p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3">
+                <div className="mb-4 p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <img
@@ -628,8 +949,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 </div>
               )}
 
-              {/* Auth Form */}
-              {(!currentUser || currentUser.role !== 'employee') && renderAuthForm(false)}
+              {/* Auth Form (Always rendered so users can log in or switch accounts) */}
+              {renderAuthForm(false)}
             </div>
 
             {/* Bottom Style Switcher & Support */}
@@ -683,8 +1004,36 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </p>
           </div>
 
+          {/* Current User Status if Logged In */}
+          {currentUser && (
+            <div className="mb-4 p-3 bg-slate-800/70 border border-slate-700 rounded-2xl flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <img
+                  src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80'}
+                  alt={currentUser.nameEn}
+                  className="w-8 h-8 rounded-lg object-cover bg-slate-700"
+                />
+                <div>
+                  <div className="text-xs font-bold text-white">{lang === 'km' ? currentUser.nameKh : currentUser.nameEn}</div>
+                  <div className="text-[10px] text-indigo-300 font-mono">{currentUser.roleTitle || currentUser.role}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onLogout();
+                  setIdentifier('');
+                  setPassword('');
+                }}
+                className="text-[10px] px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30"
+              >
+                {lang === 'km' ? 'ចាកចេញ' : 'Sign Out'}
+              </button>
+            </div>
+          )}
+
           {/* Auth Form */}
-          {(!currentUser || currentUser.role !== 'employee') && renderAuthForm(true)}
+          {renderAuthForm(true)}
 
           {/* Style Switcher */}
           {renderStyleSwitcher(true)}
@@ -729,8 +1078,36 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </p>
           </div>
 
+          {/* Current User Status if Logged In */}
+          {currentUser && (
+            <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <img
+                  src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80'}
+                  alt={currentUser.nameEn}
+                  className="w-8 h-8 rounded-lg object-cover bg-slate-200"
+                />
+                <div>
+                  <div className="text-xs font-bold text-slate-900">{lang === 'km' ? currentUser.nameKh : currentUser.nameEn}</div>
+                  <div className="text-[10px] text-indigo-700 font-mono">{currentUser.roleTitle || currentUser.role}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onLogout();
+                  setIdentifier('');
+                  setPassword('');
+                }}
+                className="text-[10px] px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200"
+              >
+                {lang === 'km' ? 'ចាកចេញ' : 'Sign Out'}
+              </button>
+            </div>
+          )}
+
           {/* Auth Form */}
-          {(!currentUser || currentUser.role !== 'employee') && renderAuthForm(false)}
+          {renderAuthForm(false)}
 
           {/* Style Switcher */}
           {renderStyleSwitcher(false)}

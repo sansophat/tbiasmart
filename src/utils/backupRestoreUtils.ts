@@ -182,16 +182,18 @@ export function validateAndParseBackupJSON(jsonString: string): {
     if (!foundAdminProfile && Array.isArray(parsed.employees)) {
       const adminEmp = parsed.employees.find((e: any) => 
         e.role === 'admin' || 
-        e.code === 'HQ-001' || 
+        e.roleType === 'admin' ||
+        e.code === 'EMP-001' || 
         e.code === 'ADMIN-001' || 
         e.id === 'user_admin' ||
+        (e.role && (e.role.toLowerCase().includes('director') || e.role.toLowerCase().includes('super admin'))) ||
         (e.positionEn && (e.positionEn.toLowerCase().includes('director') || e.positionEn.toLowerCase().includes('super admin')))
       );
       if (adminEmp) {
         foundAdminProfile = {
           id: 'user_admin',
           username: 'admin',
-          email: adminEmp.email || 'admin@enterprise.com.kh',
+          email: adminEmp.email || 'admin@pp-hospitality.com.kh',
           role: 'admin',
           nameKh: adminEmp.nameKh,
           nameEn: adminEmp.nameEn,
@@ -199,7 +201,7 @@ export function validateAndParseBackupJSON(jsonString: string): {
           employeeId: adminEmp.id,
           employeeCode: adminEmp.code,
           branchId: adminEmp.branchId,
-          roleTitle: adminEmp.positionKh || adminEmp.positionEn || 'Super Administrator / HR Director',
+          roleTitle: adminEmp.positionKh || adminEmp.roleKh || adminEmp.role || 'Super Administrator / HR Director',
           pinCode: adminEmp.pinCode || '1234',
         };
       }

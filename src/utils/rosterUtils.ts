@@ -156,7 +156,7 @@ export function getEmployeeRosterDay(
     code: 'EMP-000',
     nameKh: 'បុគ្គលិក',
     nameEn: 'Staff Member',
-    branchId: 'br_office',
+    branchId: 'br_main_hq',
     department: 'Operations',
     departmentKh: 'ប្រតិបត្តិការ',
     role: 'Staff',

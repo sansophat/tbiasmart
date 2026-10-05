@@ -140,6 +140,8 @@ export interface CloudSystemState {
   auditLogs?: any[];
   staffAlerts?: any[];
   shifts?: any[];
+  isReset?: boolean;
+  isRestore?: boolean;
   lastUpdated?: string;
   updatedBy?: string;
 }
@@ -282,15 +284,22 @@ export async function syncStateToCloudDatabase(data: Partial<CloudSystemState>):
       try {
         const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
         
-        // Safety guard: if pendingState branches is empty or missing, don't accidentally wipe existing branches
-        if (pendingState.branches !== undefined && pendingState.branches.length === 0) {
-          const currentDoc = await getDoc(docRef);
-          if (currentDoc.exists()) {
-            const currentBranches = currentDoc.data()?.branches;
-            if (Array.isArray(currentBranches) && currentBranches.length > 0) {
-              console.warn('Cloud sync guard: Protected cloud branches from accidental empty wipe.');
-              delete pendingState.branches;
-            }
+        // Safety guard: Never wipe populated data arrays unless explicitly marked as isReset
+        if (!pendingState.isReset) {
+          if (pendingState.branches !== undefined && Array.isArray(pendingState.branches) && pendingState.branches.length === 0) {
+            delete pendingState.branches;
+          }
+          if (pendingState.employees !== undefined && Array.isArray(pendingState.employees) && pendingState.employees.length === 0) {
+            delete pendingState.employees;
+          }
+          if (pendingState.attendanceRecords !== undefined && Array.isArray(pendingState.attendanceRecords) && pendingState.attendanceRecords.length === 0) {
+            delete pendingState.attendanceRecords;
+          }
+          if (pendingState.branchTypes !== undefined && Array.isArray(pendingState.branchTypes) && pendingState.branchTypes.length === 0) {
+            delete pendingState.branchTypes;
+          }
+          if (pendingState.shifts !== undefined && Array.isArray(pendingState.shifts) && pendingState.shifts.length === 0) {
+            delete pendingState.shifts;
           }
         }
 
@@ -318,8 +327,29 @@ export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>)
   notifyStatus('connected');
   try {
     const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
+    const cleanData = { ...data };
+
+    // Safety guard: Never wipe populated data arrays unless explicitly marked as isReset
+    if (!cleanData.isReset) {
+      if (cleanData.branches !== undefined && Array.isArray(cleanData.branches) && cleanData.branches.length === 0) {
+        delete cleanData.branches;
+      }
+      if (cleanData.employees !== undefined && Array.isArray(cleanData.employees) && cleanData.employees.length === 0) {
+        delete cleanData.employees;
+      }
+      if (cleanData.attendanceRecords !== undefined && Array.isArray(cleanData.attendanceRecords) && cleanData.attendanceRecords.length === 0) {
+        delete cleanData.attendanceRecords;
+      }
+      if (cleanData.branchTypes !== undefined && Array.isArray(cleanData.branchTypes) && cleanData.branchTypes.length === 0) {
+        delete cleanData.branchTypes;
+      }
+      if (cleanData.shifts !== undefined && Array.isArray(cleanData.shifts) && cleanData.shifts.length === 0) {
+        delete cleanData.shifts;
+      }
+    }
+
     const sanitizedPayload = sanitizeForFirestore({
-      ...data,
+      ...cleanData,
       lastUpdated: new Date().toISOString()
     });
     await setDoc(docRef, sanitizedPayload, { merge: true });

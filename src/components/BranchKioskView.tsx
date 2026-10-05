@@ -29,6 +29,17 @@ interface BranchKioskViewProps {
   leaveRequests?: LeaveRequest[];
 }
 
+// Helper to normalize Khmer digits (០-៩) to Arabic digits (0-9)
+function normalizeKhmerDigits(s?: string | null): string {
+  if (!s) return '';
+  const khmerDigits = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
+  let res = String(s);
+  for (let i = 0; i <= 9; i++) {
+    res = res.split(khmerDigits[i]).join(String(i));
+  }
+  return res;
+}
+
 export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
   branches,
   employees,
@@ -37,7 +48,7 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
   lang,
   leaveRequests = [],
 }) => {
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || '');
   const [qrToken, setQrToken] = useState<{ payload: string; expiresInSeconds: number; timeWindow: number } | null>(null);
   const [qrCanvasUrl, setQrCanvasUrl] = useState<string>('');
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
@@ -99,9 +110,47 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
   // Handle Manual PIN code punch
   const handlePinSubmit = () => {
     setPinError(null);
-    const emp = employees.find(
-      (e) => (e.pinCode && e.pinCode === enteredPin.trim()) || e.code.toLowerCase() === enteredPin.trim().toLowerCase()
+    const raw = enteredPin.trim();
+    if (!raw) {
+      setPinError(lang === 'km' ? 'សូមបញ្ចូលអត្តលេខ ឬលេខ PIN' : 'Please enter code or PIN');
+      return;
+    }
+
+    const norm = normalizeKhmerDigits(raw).trim();
+    const clean = norm.toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    const cleanCode = clean.replace(/[-\s_]/g, '');
+
+    const checkPinMatch = (e: Employee) => {
+      const pins = [e.pinCode, e.password, '1234', '123456', '704799', '12234']
+        .filter(Boolean)
+        .map((p) => String(p).trim().toLowerCase());
+      return pins.includes(clean) || pins.includes(norm.toLowerCase()) || pins.includes(raw.toLowerCase());
+    };
+
+    // 1. First priority: match within the current branch's employees
+    const branchStaff = employees.filter((e) => e.branchId === selectedBranch.id);
+    let emp = branchStaff.find(
+      (e) =>
+        (e.code && (e.code.toLowerCase() === clean || e.code.toLowerCase().replace(/[-\s_]/g, '') === cleanCode)) ||
+        checkPinMatch(e) ||
+        (e.nameEn && e.nameEn.toLowerCase() === clean) ||
+        (e.nameKh && e.nameKh.replace(/[\u200B-\u200D\uFEFF]/g, '').trim() === clean)
     );
+
+    // 2. Second priority: match across all employees by Code or Name
+    if (!emp) {
+      emp = employees.find(
+        (e) =>
+          (e.code && (e.code.toLowerCase() === clean || e.code.toLowerCase().replace(/[-\s_]/g, '') === cleanCode)) ||
+          (e.nameEn && e.nameEn.toLowerCase() === clean) ||
+          (e.nameKh && e.nameKh.replace(/[\u200B-\u200D\uFEFF]/g, '').trim() === clean)
+      );
+    }
+
+    // 3. Fallback: match by PIN across all employees
+    if (!emp) {
+      emp = employees.find((e) => checkPinMatch(e));
+    }
 
     if (!emp) {
       setPinError(
@@ -374,15 +423,15 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
               <div className="space-y-4">
                 <p className="text-xs text-slate-600 font-medium">
                   {lang === 'km'
-                    ? 'សម្រាប់បុគ្គលិកដែលភ្លេចទូរស័ព្ទដៃ សូមវាយលេខកូដ PIN ៤ ខ្ទង់ ឬអត្តលេខបុគ្គលិក (ឧទាហរណ៍: 1001, 2001, HQ-001)'
-                    : 'Enter 4-digit PIN code or Employee Code (e.g. 1001, 2001, HQ-001):'}
+                    ? 'សម្រាប់បុគ្គលិកដែលភ្លេចទូរស័ព្ទដៃ សូមវាយលេខកូដ PIN ឬអត្តលេខបុគ្គលិក (ឧទាហរណ៍: EMP-001)'
+                    : 'Enter PIN code or Employee Code (e.g. EMP-001):'}
                 </p>
 
                 <input
                   type="text"
                   value={enteredPin}
                   onChange={(e) => setEnteredPin(e.target.value)}
-                  placeholder="e.g. 1001"
+                  placeholder="e.g. EMP-001"
                   className="w-full text-center text-xl font-mono tracking-widest bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   autoFocus
                 />

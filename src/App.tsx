@@ -98,6 +98,9 @@ function safeGetJson<T>(key: string, fallback: T): T {
     if (!saved || saved === 'undefined' || saved === 'null') return fallback;
     const parsed = JSON.parse(saved);
     if (parsed === null || parsed === undefined) return fallback;
+    if (Array.isArray(fallback) && fallback.length > 0 && Array.isArray(parsed) && parsed.length === 0) {
+      return fallback;
+    }
     return parsed;
   } catch (err) {
     console.warn(`SafeStorage: reset corrupted key "${key}" to initial fallback.`, err);
@@ -395,173 +398,183 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // 1. Prioritize Cloud Firestore first (universal source of truth across all devices)
-        const cloudState = await getCloudDatabaseState();
-        if (isMounted && cloudState && Array.isArray(cloudState.branches) && cloudState.branches.length > 0) {
-          isReceivingCloudUpdate.current = true;
-          setBranches(cloudState.branches);
-          localStorage.setItem('attend_branches', JSON.stringify(cloudState.branches));
+        // Fetch both Cloud Firestore and Local Server state concurrently to guarantee complete data
+        const [cloudStateRes, serverRes] = await Promise.allSettled([
+          getCloudDatabaseState(),
+          fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        ]);
 
-          if (Array.isArray(cloudState.employees)) {
-            setEmployees(cloudState.employees);
-            localStorage.setItem('attend_employees', JSON.stringify(cloudState.employees));
-          }
-          if (Array.isArray(cloudState.attendanceRecords)) {
-            setAttendanceRecords((prev) => {
-              const merged = mergeDatasets(prev, cloudState.attendanceRecords!);
-              try {
-                localStorage.setItem('attend_records', JSON.stringify(merged));
-              } catch (_) {}
-              return merged;
-            });
-          }
-          if (Array.isArray(cloudState.leaveRequests)) {
-            setLeaveRequests(cloudState.leaveRequests);
-            localStorage.setItem('attend_leaves', JSON.stringify(cloudState.leaveRequests));
-          }
-          if (Array.isArray(cloudState.transferRecords)) {
-            setTransferRecords(cloudState.transferRecords);
-            localStorage.setItem('attend_transfers', JSON.stringify(cloudState.transferRecords));
-          }
-          if (Array.isArray(cloudState.branchTypes)) {
-            setBranchTypes(cloudState.branchTypes);
-            localStorage.setItem('attend_branch_types', JSON.stringify(cloudState.branchTypes));
-          }
-          if (cloudState.branding) {
-            setBranding(cloudState.branding);
-            localStorage.setItem('attend_branding', JSON.stringify(cloudState.branding));
-          }
-          if (Array.isArray(cloudState.rolePermissions)) {
-            setRolePermissions(cloudState.rolePermissions);
-            localStorage.setItem('attend_role_permissions', JSON.stringify(cloudState.rolePermissions));
-          }
-          if (cloudState.systemSettings) {
-            setSystemSettings(cloudState.systemSettings);
-            localStorage.setItem('attend_system_settings', JSON.stringify(cloudState.systemSettings));
-          }
-          if (cloudState.adminProfile) {
-            setAdminProfile(cloudState.adminProfile);
-            localStorage.setItem('attend_admin_profile', JSON.stringify(cloudState.adminProfile));
-            setCurrentUser((curr) => {
-              if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
-                const updated = { ...curr, ...cloudState.adminProfile };
-                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
-                return updated;
-              }
-              return curr;
-            });
-          }
-          if (Array.isArray(cloudState.auditLogs)) {
-            setAuditLogs(cloudState.auditLogs);
-            localStorage.setItem('attend_audit_logs', JSON.stringify(cloudState.auditLogs));
-          }
-          if (Array.isArray(cloudState.shifts) && cloudState.shifts.length > 0) {
-            setShifts(cloudState.shifts);
-            localStorage.setItem('attend_shifts', JSON.stringify(cloudState.shifts));
-          }
-          const cloudAlerts = cloudState.staffAlerts;
-          if (Array.isArray(cloudAlerts) && cloudAlerts.length > 0) {
-            setActionAlerts((prev) => {
-              const prevIds = new Set(prev.map((a) => a.id));
-              const newIncoming = cloudAlerts.filter((a: any) => !prevIds.has(a.id));
-              const merged = [...newIncoming, ...prev];
-              merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
-              return merged.slice(0, 50);
-            });
-          }
+        const cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
+        const sState = (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.state)
+          ? serverRes.value.state
+          : null;
 
-          setTimeout(() => {
-            isReceivingCloudUpdate.current = false;
-          }, 400);
+        if (!isMounted) return;
 
-          isCloudInitializedRef.current = true;
-          setIsCloudSyncLoading(false);
+        // Prioritize populated datasets to ensure no empty overwrites
+        const bestBranches = (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
+          ? cState.branches
+          : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
+            ? sState.branches
+            : null;
 
-          // Update server memory state with true cloud data
-          fetch('/api/system/state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ state: cloudState, senderId: 'cloud_sync_client' }),
-          }).catch(() => {});
+        const bestEmployees = (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
+          ? cState.employees
+          : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
+            ? sState.employees
+            : null;
 
-          return;
+        const bestRecords = mergeDatasets(
+          (cState?.attendanceRecords || []),
+          (sState?.attendanceRecords || [])
+        );
+
+        const bestLeaves = (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
+          ? cState.leaveRequests
+          : (sState?.leaveRequests || []);
+
+        const bestTransfers = (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
+          ? cState.transferRecords
+          : (sState?.transferRecords || []);
+
+        const bestBranchTypes = (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
+          ? cState.branchTypes
+          : (sState?.branchTypes || []);
+
+        const bestBranding = cState?.branding || sState?.branding;
+        const bestRolePerms = (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
+          ? cState.rolePermissions
+          : (sState?.rolePermissions || []);
+        const bestSettings = cState?.systemSettings || sState?.systemSettings;
+        const bestAdmin = cState?.adminProfile || sState?.adminProfile;
+        const bestAudit = (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
+          ? cState.auditLogs
+          : (sState?.auditLogs || []);
+        const bestShifts = (cState && Array.isArray(cState.shifts) && cState.shifts.length > 0)
+          ? cState.shifts
+          : (sState?.shifts || []);
+        const bestAlerts = (cState && Array.isArray(cState.staffAlerts) && cState.staffAlerts.length > 0)
+          ? cState.staffAlerts
+          : (sState?.staffAlerts || []);
+
+        isReceivingCloudUpdate.current = true;
+
+        if (bestBranches && bestBranches.length > 0) {
+          setBranches(bestBranches);
+          localStorage.setItem('attend_branches', JSON.stringify(bestBranches));
         }
 
-        // 2. Fallback to local server API ONLY if this device has no local cache
-        if (!hasLocalCache) {
-          try {
-            const res = await fetch('/api/system/state');
-            if (res.ok) {
-              const data = await res.json();
-              if (data.success && data.state && isMounted) {
-                const s = data.state;
-              if (Array.isArray(s.branches) && s.branches.length > 0) {
-                setBranches(s.branches);
-                localStorage.setItem('attend_branches', JSON.stringify(s.branches));
-              }
-              if (Array.isArray(s.employees)) {
-                setEmployees(s.employees);
-                localStorage.setItem('attend_employees', JSON.stringify(s.employees));
-              }
-              if (Array.isArray(s.staffAlerts) && s.staffAlerts.length > 0) {
-                setActionAlerts((prev) => {
-                  const prevIds = new Set(prev.map((a) => a.id));
-                  const newIncoming = s.staffAlerts.filter((a: any) => !prevIds.has(a.id));
-                  const merged = [...newIncoming, ...prev];
-                  merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
-                  return merged.slice(0, 50);
-                });
-              }
-              if (Array.isArray(s.attendanceRecords)) {
-                setAttendanceRecords(s.attendanceRecords);
-                localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
-              }
-              if (Array.isArray(s.leaveRequests)) {
-                setLeaveRequests(s.leaveRequests);
-                localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
-              }
-              if (Array.isArray(s.transferRecords)) {
-                setTransferRecords(s.transferRecords);
-                localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
-              }
-              if (s.branding) {
-                setBranding(s.branding);
-                localStorage.setItem('attend_branding', JSON.stringify(s.branding));
-              }
-              if (Array.isArray(s.rolePermissions)) {
-                setRolePermissions(s.rolePermissions);
-                localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
-              }
-              if (s.systemSettings) {
-                setSystemSettings(s.systemSettings);
-                localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
-              }
-              if (s.adminProfile) {
-                setAdminProfile(s.adminProfile);
-                localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
-                setCurrentUser((curr) => {
-                  if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
-                    const updated = { ...curr, ...s.adminProfile };
-                    localStorage.setItem('attend_auth_user', JSON.stringify(updated));
-                    return updated;
-                  }
-                  return curr;
-                });
-              }
-              if (Array.isArray(s.auditLogs)) {
-                setAuditLogs(s.auditLogs);
-                localStorage.setItem('attend_audit_logs', JSON.stringify(s.auditLogs));
-              }
-              if (Array.isArray(s.shifts) && s.shifts.length > 0) {
-                setShifts(s.shifts);
-                localStorage.setItem('attend_shifts', JSON.stringify(s.shifts));
-              }
+        if (bestEmployees && bestEmployees.length > 0) {
+          setEmployees(bestEmployees);
+          localStorage.setItem('attend_employees', JSON.stringify(bestEmployees));
+        }
+
+        if (bestRecords.length > 0) {
+          setAttendanceRecords((prev) => {
+            const merged = mergeDatasets(prev, bestRecords);
+            try { localStorage.setItem('attend_records', JSON.stringify(merged)); } catch (_) {}
+            return merged;
+          });
+        }
+
+        if (bestLeaves.length > 0) {
+          setLeaveRequests(bestLeaves);
+          localStorage.setItem('attend_leaves', JSON.stringify(bestLeaves));
+        }
+
+        if (bestTransfers.length > 0) {
+          setTransferRecords(bestTransfers);
+          localStorage.setItem('attend_transfers', JSON.stringify(bestTransfers));
+        }
+
+        if (bestBranchTypes.length > 0) {
+          setBranchTypes(bestBranchTypes);
+          localStorage.setItem('attend_branch_types', JSON.stringify(bestBranchTypes));
+        }
+
+        if (bestBranding) {
+          setBranding(bestBranding);
+          localStorage.setItem('attend_branding', JSON.stringify(bestBranding));
+        }
+
+        if (bestRolePerms.length > 0) {
+          setRolePermissions(bestRolePerms);
+          localStorage.setItem('attend_role_permissions', JSON.stringify(bestRolePerms));
+        }
+
+        if (bestSettings && Object.keys(bestSettings).length > 0) {
+          setSystemSettings(bestSettings);
+          localStorage.setItem('attend_system_settings', JSON.stringify(bestSettings));
+        }
+
+        if (bestAdmin) {
+          setAdminProfile(bestAdmin);
+          localStorage.setItem('attend_admin_profile', JSON.stringify(bestAdmin));
+          setCurrentUser((curr) => {
+            if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
+              const updated = { ...curr, ...bestAdmin };
+              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              return updated;
             }
-          }
-        } catch (err) {
-          // Expected on static environments like Vercel
+            return curr;
+          });
         }
-      }
+
+        if (bestAudit.length > 0) {
+          setAuditLogs(bestAudit);
+          localStorage.setItem('attend_audit_logs', JSON.stringify(bestAudit));
+        }
+
+        if (bestShifts.length > 0) {
+          setShifts(bestShifts);
+          localStorage.setItem('attend_shifts', JSON.stringify(bestShifts));
+        }
+
+        if (bestAlerts.length > 0) {
+          setActionAlerts((prev) => {
+            const prevIds = new Set(prev.map((a) => a.id));
+            const newIncoming = bestAlerts.filter((a: any) => !prevIds.has(a.id));
+            const merged = [...newIncoming, ...prev];
+            merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+            return merged.slice(0, 50);
+          });
+        }
+
+        // Auto-heal any store that had missing/empty data
+        if (bestEmployees && bestEmployees.length > 0 && bestBranches && bestBranches.length > 0) {
+          const reconciledPayload = {
+            branches: bestBranches,
+            employees: bestEmployees,
+            attendanceRecords: bestRecords,
+            leaveRequests: bestLeaves,
+            transferRecords: bestTransfers,
+            branchTypes: bestBranchTypes,
+            branding: bestBranding,
+            rolePermissions: bestRolePerms,
+            systemSettings: bestSettings,
+            adminProfile: bestAdmin,
+            auditLogs: bestAudit,
+            shifts: bestShifts,
+          };
+
+          // Re-sync server if server had 0 emps
+          if (!sState || !Array.isArray(sState.employees) || sState.employees.length === 0) {
+            fetch('/api/system/state', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ state: reconciledPayload, senderId: 'client_reconcile' }),
+            }).catch(() => {});
+          }
+
+          // Re-sync Firestore if Firestore had 0 emps
+          if (!cState || !Array.isArray(cState.employees) || cState.employees.length === 0) {
+            syncStateToCloudImmediate(reconciledPayload);
+          }
+        }
+
+        setTimeout(() => {
+          isReceivingCloudUpdate.current = false;
+        }, 400);
       } catch (err) {
         console.warn('Failed to fetch initial canonical state:', err);
       } finally {
@@ -1057,11 +1070,11 @@ export default function App() {
         if (!cloudData) return;
         isReceivingCloudUpdate.current = true;
 
-        if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
+        if (Array.isArray(cloudData.branches) && (cloudData.branches.length > 0 || cloudData.isReset)) {
           setBranches(cloudData.branches);
           localStorage.setItem('attend_branches', JSON.stringify(cloudData.branches));
         }
-        if (Array.isArray(cloudData.employees)) {
+        if (Array.isArray(cloudData.employees) && (cloudData.employees.length > 0 || cloudData.isReset)) {
           setEmployees(cloudData.employees);
           localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
           setCurrentUser((curr) => {
@@ -1090,7 +1103,7 @@ export default function App() {
             return curr;
           });
         }
-        if (Array.isArray(cloudData.attendanceRecords)) {
+        if (Array.isArray(cloudData.attendanceRecords) && (cloudData.attendanceRecords.length > 0 || cloudData.isReset)) {
           setAttendanceRecords((prevRecords) => {
             const prevIds = new Set(prevRecords.map((r) => r.id));
             const newPunches = cloudData.attendanceRecords!.filter((r) => !prevIds.has(r.id));
@@ -1279,6 +1292,25 @@ export default function App() {
                 return prevRecords;
               });
             }
+            // Auto-heal: If local employees is unexpectedly empty but server has employees, restore them immediately!
+            if (Array.isArray(serverState.employees) && serverState.employees.length > 0) {
+              setEmployees((currentEmps) => {
+                if (!currentEmps || currentEmps.length === 0) {
+                  localStorage.setItem('attend_employees', JSON.stringify(serverState.employees));
+                  return serverState.employees;
+                }
+                return currentEmps;
+              });
+            }
+            if (Array.isArray(serverState.branches) && serverState.branches.length > 0) {
+              setBranches((currentBranches) => {
+                if (!currentBranches || currentBranches.length === 0) {
+                  localStorage.setItem('attend_branches', JSON.stringify(serverState.branches));
+                  return serverState.branches;
+                }
+                return currentBranches;
+              });
+            }
             if (Array.isArray(serverState.staffAlerts) && serverState.staffAlerts.length > 0) {
               setActionAlerts((prev) => {
                 const prevIds = new Set(prev.map((a) => a.id));
@@ -1368,6 +1400,11 @@ export default function App() {
     if (isReceivingCloudUpdate.current) return;
     if (!initialMountSkipped.current) {
       initialMountSkipped.current = true;
+      return;
+    }
+
+    // Safety guard: Never push to cloud if branches or employees are unexpectedly empty
+    if (branches.length === 0 || employees.length === 0) {
       return;
     }
 
@@ -2242,8 +2279,8 @@ export default function App() {
       action: 'System Factory Reset',
       actionKh: 'កំណត់ប្រព័ន្ធឡើងវិញ (Factory Reset)',
       module: 'system',
-      details: `Reinitialized system state to: ${type === 'demo_seed' ? 'Official 7-Branch Seed Data' : 'Brand New Blank Start'}.`,
-      detailsKh: `បានកំណត់ប្រព័ន្ធឡើងវិញទៅកាន់ ${type === 'demo_seed' ? 'ទិន្នន័យគំរូ ៧ សាខា' : 'ទិន្នន័យទទេរស្អាត (Brand New)'}។`,
+      details: `Reinitialized system state to: ${type === 'demo_seed' ? 'Clean Production State (Punches & History Cleared)' : 'Brand New Blank Start'}.`,
+      detailsKh: `បានកំណត់ប្រព័ន្ធឡើងវិញទៅកាន់ ${type === 'demo_seed' ? 'ទិន្នន័យជាក់ស្តែងស្អាត (សម្អាតប្រវត្តិវត្តមាន)' : 'ទិន្នន័យទទេរស្អាត (Brand New)'}។`,
       status: 'warning',
     });
   };

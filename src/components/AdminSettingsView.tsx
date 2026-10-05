@@ -205,7 +205,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   const [showResetAllDevicesModal, setShowResetAllDevicesModal] = useState<boolean>(false);
 
   // Branch Management State
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || '');
   const activeBranch = branches.find((b) => b.id === selectedBranchId) || branches[0];
 
   const [branchForm, setBranchForm] = useState<Branch>(activeBranch);

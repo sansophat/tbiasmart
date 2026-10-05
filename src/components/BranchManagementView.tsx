@@ -181,7 +181,7 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
   lang,
 }) => {
   const [activeTab, setActiveTab] = useState<'branches' | 'types' | 'transfers'>('branches');
-  const [editingBranchId, setEditingBranchId] = useState<string>(branches[0]?.id || 'br_club_1');
+  const [editingBranchId, setEditingBranchId] = useState<string>(branches[0]?.id || '');
   const [searchBranch, setSearchBranch] = useState<string>('');
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
 

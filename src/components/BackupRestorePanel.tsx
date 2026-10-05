@@ -1418,8 +1418,8 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                 </h3>
                 <p className="text-[11px] text-rose-700 font-medium">
                   {lang === 'km'
-                    ? 'កំណត់ប្រព័ន្ធឡើងវិញទៅទិន្នន័យគំរូដើម ៧ សាខា ឬសម្អាតទិន្នន័យប្រវត្តិទាំងអស់'
-                    : 'Reinitialize system state to standard 7-branch seed demo data or clean fresh start.'}
+                    ? 'កំណត់ប្រព័ន្ធឡើងវិញ៖ សម្អាតប្រវត្តិវត្តមាន និងសំណើសុំច្បាប់ ឬសម្អាតប្រព័ន្ធទាំងមូល'
+                    : 'Reinitialize system state: Clear attendance/leave history or perform full factory reset.'}
                 </p>
               </div>
             </div>
@@ -1434,7 +1434,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                 className="flex-1 py-3 px-4 rounded-2xl bg-white hover:bg-rose-100/60 text-rose-700 border border-rose-300 font-bold text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs"
               >
                 <RotateCcw className="w-4 h-4" />
-                <span>{lang === 'km' ? 'កំណត់ទៅទិន្នន័យគំរូ ៧ សាខា' : 'Reset to 7-Branch Seed Data'}</span>
+                <span>{lang === 'km' ? 'សម្អាតប្រវត្តិវត្តមាន & សកម្មភាព (Clear History)' : 'Clear Attendance & Activity History'}</span>
               </button>
 
               <button
@@ -1468,8 +1468,8 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                       ? 'កំណត់ប្រព័ន្ធទទេរស្អាត ចាប់ផ្តើមថ្មី (Blank Brand New Start)'
                       : 'Wipe System Clean & Blank Brand New Start'
                     : lang === 'km'
-                    ? 'កំណត់ទៅទិន្នន័យគំរូដើម ៧ សាខា (Restore 7-Branch Seed Data)'
-                    : 'Restore 7-Branch Demonstration Seed State'}
+                    ? 'សម្អាតប្រវត្តិវត្តមាន និងសកម្មភាព (Clear Activity History)'
+                    : 'Clear Attendance & Activity Records'}
                 </h3>
                 <span className="text-[11px] text-rose-600 font-bold">
                   {resetType === 'clean_fresh'
@@ -1477,8 +1477,8 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                       ? '⚠️ សម្អាតទិន្នន័យបុគ្គលិក, វត្តមាន, ច្បាប់ និង Log ទាំងអស់'
                       : '⚠️ Empties all staff, punches, leaves, and logs'
                     : lang === 'km'
-                    ? '🔄 ស្តារឡើងវិញនូវ ៧ សាខា និង ២១ បុគ្គលិកគំរូ'
-                    : '🔄 Reinitializes 7 branches, 21 demo staff, and records'}
+                    ? '🔄 សម្អាតប្រវត្តិចុះវត្តមាន, ច្បាប់ឈប់សម្រាក និងការផ្ទេរសាខា (រក្សាទុកសាខា និងបុគ្គលិក)'
+                    : '🔄 Empties attendance punches, leave requests, and transfers (preserves branches & staff)'}
                 </span>
               </div>
             </div>
@@ -1490,17 +1490,17 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                     ? 'តើអ្នកប្រាកដជាចង់សម្អាតប្រព័ន្ធទាំងមូលឱ្យទទេរស្អាតដូចដើម (Brand New Blank Start) មែនទេ?'
                     : 'Are you sure you want to wipe the system to a clean blank slate (brand new start)?'
                   : lang === 'km'
-                  ? 'តើអ្នកប្រាកដជាចង់ស្តារទិន្នន័យគំរូដើម ៧ សាខាឡើងវិញមែនទេ?'
-                  : 'Are you sure you want to restore the official 7-branch demonstration system?'}
+                  ? 'តើអ្នកប្រាកដជាចង់សម្អាតប្រវត្តិវត្តមាន និងសំណើសុំច្បាប់ទាំងអស់មែនទេ?'
+                  : 'Are you sure you want to clear all attendance punch and leave activity records?'}
               </p>
               <p className="text-[11px] text-rose-700 leading-relaxed">
                 {resetType === 'clean_fresh'
                   ? lang === 'km'
-                    ? 'ទិន្នន័យបុគ្គលិកទាំងអស់, ប្រវត្តិស្កេនវត្តមាន, សំណើសុំច្បាប់, ការផ្ទេរសាខា និង Audit Log នឹងត្រូវបានលុបចោលទាំងស្រុង។ ប្រព័ន្ធនឹងរៀបចំសាខាកណ្តាលថ្មីស្រឡាងមួយសម្រាប់ចាប់ផ្តើមអាជីវកម្មរបស់អ្នក។'
-                    : 'All employee profiles, check-in punch history, leave approvals, branch transfers, and logs will be emptied. The system will be initialized to a clean blank slate ready for your company.'
+                    ? 'ទិន្នន័យបុគ្គលិកទាំងអស់, ប្រវត្តិស្កេនវត្តមាន, សំណើសុំច្បាប់, ការផ្ទេរសាខា និង Audit Log នឹងត្រូវបានលុបចោលទាំងស្រុង។'
+                    : 'All employee profiles, check-in punch history, leave approvals, branch transfers, and logs will be emptied.'
                   : lang === 'km'
-                  ? 'ទិន្នន័យគំរូដើម ៧ សាខា (ក្លិប Sapphire, Rooftop Eclipse, ឃ្លាំងកណ្តាល, Aroma Cafe ៤ សាខា) នឹងត្រូវស្តារឡើងវិញ។'
-                  : 'The official 7-branch multi-venue setup (Sapphire Club, Eclipse Sky, Central Logistics Warehouse, and 4 Aroma Cafe branches) will be restored.'}
+                  ? 'ទិន្នន័យសាខា និងបុគ្គលិកជាក់ស្តែងនឹងត្រូវបានរក្សាទុកដដែល។ មានតែប្រវត្តិស្កេនវត្តមាន សំណើសុំច្បាប់ និងការផ្ទេរប៉ុណ្ណោះដែលត្រូវបានកំណត់ទៅ ០ ដើម្បីចាប់ផ្តើមប្រតិបត្តិការថ្មី។'
+                  : 'Branches and real employee profiles will be preserved. Only attendance punch history, leave approvals, and transfer records will be cleared to 0 for a clean operating ledger.'}
               </p>
             </div>
 
@@ -1533,7 +1533,7 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
                 ) : (
                   <>
                     <RotateCcw className="w-4 h-4" />
-                    <span>{lang === 'km' ? 'បាទ/ចាស កំណត់ទៅទិន្នន័យគំរូ ៧ សាខា' : 'Yes, Restore 7-Branch Seed'}</span>
+                    <span>{lang === 'km' ? 'បាទ/ចាស សម្អាតប្រវត្តិសកម្មភាព (Clear History Now)' : 'Yes, Clear History Now'}</span>
                   </>
                 )}
               </button>

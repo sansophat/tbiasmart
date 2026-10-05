@@ -64,50 +64,54 @@ async function syncToFirestore(patch: any) {
   }
 }
 
-const DEFAULT_STARTER_BRANCH = {
-  id: 'br_main_hq',
-  nameKh: 'ការិយាល័យកណ្តាល (Head Office)',
-  nameEn: 'Main Corporate HQ',
-  type: 'office',
-  addressKh: 'រាជធានីភ្នំពេញ ព្រះរាជាណាចក្រកម្ពុជា',
-  addressEn: 'Phnom Penh, Cambodia',
-  lat: 11.55802,
-  lng: 104.92804,
-  radiusMeters: 80,
-  openTime: '08:00',
-  closeTime: '17:30',
-  managerName: 'Administrator',
-  contactPhone: '+855 23 888 999',
-  themeColor: 'from-indigo-600 to-blue-600',
-  iconName: 'Building2',
-  activeStaffCount: 0,
-};
-
 const DEFAULT_ADMIN_PROFILE = {
   id: 'user_admin',
   username: 'admin',
-  email: 'admin@enterprise.com.kh',
+  email: 'admin@pp-hospitality.com.kh',
   role: 'admin',
-  nameKh: 'ទៀង វឌ្ឍនា (នាយក HR)',
-  nameEn: 'Tieng Vathana (HR Director)',
+  nameKh: 'សាន្ត សុផាត',
+  nameEn: 'San Sophat',
   avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-  employeeId: 'emp_off_1',
-  employeeCode: 'HQ-001',
-  branchId: 'br_office',
+  employeeId: 'emp_1790150117850',
+  employeeCode: 'EMP-001',
+  branchId: 'br_main_hq',
   roleTitle: 'Super Administrator / HR Director',
   pinCode: '1234',
   password: 'admin',
 };
 
 const DEFAULT_BRANDING = {
-  companyNameKh: 'ក្លឹបកម្សាន្ត & ភោជនីយដ្ឋាន ស្តារឡាយ',
-  companyNameEn: 'STARLIGHT ENTERTAINMENT GROUP',
-  sloganKh: 'សេវាកម្មកម្សាន្ត និងបដិសណ្ឋារកិច្ចលំដាប់ខ្ពស់',
-  sloganEn: 'Premier Nightlife, Hospitality & F&B Services',
+  companyNameKh: 'ក្រុមហ៊ុន ធីប៊ីអាយអេ ខេមបូឌា ចំកាត់',
+  companyNameEn: 'TBIA Cambodia Co., Ltd.',
+  sloganKh: 'សេវាកម្មភេសជ្ជៈ និងការបដិសណ្ឋារកិច្ចលំដាប់ខ្ពស់',
+  sloganEn: 'Excellence in Hospitality & Premium Beverage Service',
   logoUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=200&auto=format&fit=crop&q=80',
+  themeColor: 'indigo',
+  primaryColorHex: '#4f46e5',
+  loginStyle: 'option_b',
+  supportEmail: 'admin@pp-hospitality.com.kh',
   supportPhone: '+855 23 888 999',
-  primaryColor: '#4f46e5',
-  accentColor: '#10b981',
+  addressKh: 'អគារពាណិជ្ជកម្មកណ្តាល រាជធានីភ្នំពេញ ព្រះរាជាណាចក្រកម្ពុជា',
+  addressEn: 'Central Corporate Tower, Phnom Penh, Kingdom of Cambodia',
+};
+
+const DEFAULT_STARTER_BRANCH = {
+  id: 'br_main_hq',
+  nameKh: 'ការិយាល័យកណ្តាល (Head Office)',
+  nameEn: 'Main Corporate HQ',
+  type: 'office',
+  addressKh: 'រាជធានីភ្នំពេញ ព្រះរាជាណាចក្រកម្ពុជា',
+  addressEn: 'Phnom Penh Commercial Center, Kingdom of Cambodia',
+  lat: 11.56625,
+  lng: 104.91811,
+  radiusMeters: 80,
+  openTime: '08:00',
+  closeTime: '17:30',
+  managerName: 'San Sophat',
+  contactPhone: '+855 23 888 999',
+  themeColor: 'from-indigo-600 to-blue-600',
+  iconName: 'Building2',
+  activeStaffCount: 2,
 };
 
 function readDbFileFromDisk(): any {
@@ -128,17 +132,28 @@ function readDbFileFromDisk(): any {
 function getCleanBlankState() {
   const current = readDbFileFromDisk();
   return {
-    branches: [DEFAULT_STARTER_BRANCH],
+    branches: (current?.branches && current.branches.length > 0) ? current.branches : [DEFAULT_STARTER_BRANCH],
     branchTypes: current?.branchTypes || [],
-    employees: [],
+    employees: current?.employees || [],
     attendanceRecords: [],
     leaveRequests: [],
     transferRecords: [],
     branding: current?.branding || DEFAULT_BRANDING,
     rolePermissions: current?.rolePermissions || [],
-    systemSettings: current?.systemSettings || {},
-    adminProfile: DEFAULT_ADMIN_PROFILE,
-    auditLogs: [],
+    systemSettings: current?.systemSettings || {
+      strictGeofenceEnforcement: true,
+      enableSelfieVerification: true,
+      autoCheckoutHours: 12,
+      overtimeThresholdHours: 8,
+      gracePeriodMins: 15,
+      broadcastActive: true,
+      broadcastNoticeKh: '📢 សូមរំលឹកបុគ្គលិកគ្រប់សាខា៖ សូមចុះវត្តមានទាន់ម៉ោង និងរក្សាវិន័យការងារឱ្យបានខ្ជាប់ខ្ជួន។',
+      broadcastNoticeEn: '📢 Reminder to all branches: Please punch in on time and maintain standard workplace protocols.',
+      enableAuditLogs: true,
+      defaultLanguage: 'km',
+    },
+    adminProfile: current?.adminProfile || DEFAULT_ADMIN_PROFILE,
+    auditLogs: current?.auditLogs || [],
     staffAlerts: [],
     lastUpdated: new Date().toISOString(),
     isReset: true,
@@ -153,22 +168,7 @@ function getDemoSeedState() {
     }
     return diskState;
   }
-  return {
-    branches: [DEFAULT_STARTER_BRANCH],
-    branchTypes: [],
-    employees: [],
-    attendanceRecords: [],
-    leaveRequests: [],
-    transferRecords: [],
-    branding: DEFAULT_BRANDING,
-    rolePermissions: [],
-    systemSettings: {},
-    adminProfile: DEFAULT_ADMIN_PROFILE,
-    auditLogs: [],
-    staffAlerts: [],
-    lastUpdated: new Date().toISOString(),
-    isReset: false,
-  };
+  return getCleanBlankState();
 }
 
 // In-Memory Database initialized from file if exists, or demo seed
@@ -190,6 +190,61 @@ try {
 } catch (err) {
   console.error('[DB] Error initializing system database file:', err);
 }
+
+// Reconcile disk state with Firestore on server start so neither is ever blank
+async function reconcileWithFirestoreOnStart() {
+  if (!firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'attendance_system', 'app_state_v1');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const cloudData = snap.data();
+      const cloudEmps = Array.isArray(cloudData.employees) ? cloudData.employees.length : 0;
+      const diskEmps = Array.isArray(serverDb.employees) ? serverDb.employees.length : 0;
+      const cloudBranches = Array.isArray(cloudData.branches) ? cloudData.branches.length : 0;
+      const diskBranches = Array.isArray(serverDb.branches) ? serverDb.branches.length : 0;
+
+      if (diskEmps > 0 && cloudEmps === 0) {
+        console.log(`[Firestore Sync] Restoring ${diskEmps} employees and ${diskBranches} branches from disk to Firestore...`);
+        await setDoc(docRef, sanitizeForFirestore({
+          ...serverDb,
+          lastUpdated: new Date().toISOString()
+        }), { merge: true });
+        console.log('[Firestore Sync] Restored to Firestore successfully.');
+      } else if (cloudEmps > 0 && diskEmps === 0) {
+        console.log(`[Firestore Sync] Loading ${cloudEmps} employees from Firestore to disk...`);
+        serverDb = { ...serverDb, ...cloudData };
+        persistDatabase();
+      } else if (cloudEmps > 0 && diskEmps > 0) {
+        // Merge to preserve all employees and punches
+        const empMap = new Map();
+        (serverDb.employees || []).forEach((e: any) => empMap.set(e.id || e.code, e));
+        (cloudData.employees || []).forEach((e: any) => empMap.set(e.id || e.code, { ...empMap.get(e.id || e.code), ...e }));
+        serverDb.employees = Array.from(empMap.values());
+
+        const punchMap = new Map();
+        (serverDb.attendanceRecords || []).forEach((r: any) => punchMap.set(r.id, r));
+        (cloudData.attendanceRecords || []).forEach((r: any) => punchMap.set(r.id, r));
+        serverDb.attendanceRecords = Array.from(punchMap.values());
+
+        persistDatabase();
+        await setDoc(docRef, sanitizeForFirestore({
+          ...serverDb,
+          lastUpdated: new Date().toISOString()
+        }), { merge: true });
+      }
+    } else {
+      console.log('[Firestore Sync] Initializing Firestore doc from system database...');
+      await setDoc(docRef, sanitizeForFirestore({
+        ...serverDb,
+        lastUpdated: new Date().toISOString()
+      }), { merge: true });
+    }
+  } catch (err) {
+    console.warn('[Firestore Sync] Startup sync notice:', err);
+  }
+}
+reconcileWithFirestoreOnStart();
 
 function persistDatabase() {
   try {
@@ -490,13 +545,32 @@ app.post('/api/system/state', (req, res) => {
     return res.status(400).json({ error: 'Missing state payload' });
   }
 
+  // Safety checks: Never overwrite populated arrays with empty arrays unless isReset is true
+  const isReset = Boolean(state.isReset);
+
+  const safeEmployees = (!isReset && Array.isArray(state.employees) && state.employees.length === 0 && (serverDb.employees?.length || 0) > 0)
+    ? serverDb.employees
+    : (state.employees !== undefined ? state.employees : serverDb.employees);
+
+  const safeBranches = (!isReset && Array.isArray(state.branches) && state.branches.length === 0 && (serverDb.branches?.length || 0) > 0)
+    ? serverDb.branches
+    : (state.branches !== undefined ? state.branches : serverDb.branches);
+
+  const safeRecords = (!isReset && Array.isArray(state.attendanceRecords) && state.attendanceRecords.length === 0 && (serverDb.attendanceRecords?.length || 0) > 0)
+    ? serverDb.attendanceRecords
+    : (state.attendanceRecords !== undefined ? state.attendanceRecords : serverDb.attendanceRecords);
+
   serverDb = {
     ...serverDb,
     ...state,
+    employees: safeEmployees,
+    branches: safeBranches,
+    attendanceRecords: safeRecords,
     lastUpdated: new Date().toISOString(),
   };
 
   persistDatabase();
+  syncToFirestore(serverDb);
 
   const eventPayload = {
     type: 'SYSTEM_STATE_SYNC',
@@ -515,11 +589,7 @@ app.post('/api/system/reset', (req, res) => {
   const { resetType, resetBy, senderId } = req.body;
   const isDemo = resetType === 'demo_seed';
 
-  if (isDemo) {
-    serverDb = getDemoSeedState();
-  } else {
-    serverDb = getCleanBlankState();
-  }
+  serverDb = getCleanBlankState();
 
   persistDatabase();
 
@@ -535,7 +605,7 @@ app.post('/api/system/reset', (req, res) => {
   };
 
   broadcastToClients(eventPayload);
-  console.log(`[DB] System reset executed: ${isDemo ? '7-Branch Demo Seed' : 'Brand New Blank Start'}`);
+  console.log(`[DB] System reset executed: Clean Real State (Records wiped)`);
   res.json({ success: true, state: serverDb, resetType });
 });
 
