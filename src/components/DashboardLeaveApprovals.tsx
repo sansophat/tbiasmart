@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { LeaveRequest, Employee, Branch, Language, AuthUser } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
+import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 
 interface DashboardLeaveApprovalsProps {
   leaveRequests: LeaveRequest[];
@@ -375,13 +376,11 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
                     {/* Left: Staff & Request Details */}
                     <div className="flex items-start space-x-3.5 min-w-0 flex-1">
                       <img
-                        src={
-                          req.employeeAvatar ||
-                          emp?.avatar ||
-                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-                        }
+                        src={resolveAvatar(emp?.avatar, req.employeeAvatar, req.employeeNameEn || req.employeeNameKh || emp?.nameEn)}
                         alt="Employee Avatar"
-                        className="w-12 h-12 rounded-2xl object-cover border-2 border-white shadow-sm shrink-0"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => handleAvatarError(e, req.employeeNameEn || req.employeeNameKh || emp?.nameEn || 'Staff')}
+                        className="w-12 h-12 rounded-2xl object-cover border-2 border-white shadow-sm shrink-0 bg-slate-100"
                       />
 
                       <div className="min-w-0 flex-1 space-y-1">

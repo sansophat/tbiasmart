@@ -30,13 +30,16 @@ import {
   Moon,
   Flame,
   Check,
-  AlertCircle
+  AlertCircle,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole, Shift } from '../types';
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
+import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
 
 export const DEPARTMENT_OPTIONS = [
   { id: 'dept_barista_cafe', nameKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)', nameEn: 'Barista & Coffee Service' },
@@ -165,6 +168,25 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [selectedDayOffFilter, setSelectedDayOffFilter] = useState('all');
   const [selectedBadgeEmp, setSelectedBadgeEmp] = useState<Employee | null>(null);
   const [badgeQrUrl, setBadgeQrUrl] = useState<string>('');
+  
+  // View mode: 'grid' (Card grid) vs 'table' (Table list)
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
+    try {
+      const saved = localStorage.getItem('tbiasmart_staff_view_mode');
+      return saved === 'table' ? 'table' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+
+  const handleSetViewMode = (mode: 'grid' | 'table') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('tbiasmart_staff_view_mode', mode);
+    } catch {
+      // ignore
+    }
+  };
   
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -565,10 +587,40 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+          {/* Toggle buttons: Grid View vs Table View */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleSetViewMode('grid')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                viewMode === 'grid'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title={lang === 'km' ? 'ទម្រង់ប្រអប់ (Grid)' : 'Grid View'}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === 'km' ? 'ប្រអប់' : 'Grid'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetViewMode('table')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title={lang === 'km' ? 'ទម្រង់តារាងបញ្ជី (Table)' : 'Table List View'}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === 'km' ? 'តារាង' : 'Table'}</span>
+            </button>
+          </div>
+
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center space-x-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-200 transition w-full md:w-auto justify-center"
+            className="flex items-center space-x-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-200 transition w-full sm:w-auto justify-center cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>{lang === 'km' ? 'បន្ថែមបុគ្គលិកថ្មី (រូបថត)' : 'Add Employee & Photo'}</span>
@@ -661,187 +713,443 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
         </div>
       </div>
 
-      {/* Employee Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {filteredEmployees.map((emp) => {
-          const branch = getBranch(emp.branchId);
-          const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
-          const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
-          const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
-          const matchedShift = shifts.find((s) => s.id === emp.shiftId);
-          const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
-          const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
+      {/* Employees Display: Grid View vs Table List View */}
+      {viewMode === 'grid' ? (
+        filteredEmployees.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 shadow-sm">
+            <Users className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+            <p className="font-bold text-slate-700">
+              {lang === 'km' ? 'មិនមានទិន្នន័យបុគ្គលិកត្រូវនឹងតម្រងស្វែងរកទេ' : 'No staff members match the selected filters'}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {lang === 'km' ? 'សូមសាកល្បងផ្លាស់ប្តូរពាក្យស្វែងរក ឬជ្រើសរើសសាខា/តួនាទីផ្សេង' : 'Try adjusting your search query or filter options'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {filteredEmployees.map((emp) => {
+              const branch = getBranch(emp.branchId);
+              const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
+              const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
+              const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+              const matchedShift = shifts.find((s) => s.id === emp.shiftId);
+              const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
+              const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
 
-          return (
-            <div
-              key={emp.id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition flex flex-col justify-between space-y-3.5 group"
-            >
-              {/* Header with Avatar & Code */}
-              <div className="flex items-start space-x-3">
-                <div className="relative shrink-0">
-                  <img
-                    src={emp.avatar || DEFAULT_AVATAR}
-                    alt={emp.nameEn}
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = DEFAULT_AVATAR;
-                    }}
-                    className="w-14 h-14 rounded-xl object-cover border border-slate-200 shadow-sm group-hover:ring-2 group-hover:ring-indigo-400 transition bg-slate-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleOpenPhotoEdit(emp)}
-                    title={lang === 'km' ? 'ប្តូររូបថត' : 'Change photo'}
-                    className="absolute -bottom-1 -right-1 p-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition"
-                  >
-                    <Camera className="w-3 h-3" />
-                  </button>
-                </div>
+              return (
+                <div
+                  key={emp.id}
+                  className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition flex flex-col justify-between space-y-3.5 group"
+                >
+                  {/* Header with Avatar & Code */}
+                  <div className="flex items-start space-x-3">
+                    <div className="relative shrink-0">
+                      <img
+                        src={resolveAvatar(emp.avatar, null, emp.nameEn || emp.nameKh)}
+                        alt={emp.nameEn}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => handleAvatarError(e, emp.nameEn || emp.nameKh)}
+                        className="w-14 h-14 rounded-xl object-cover border border-slate-200 shadow-sm group-hover:ring-2 group-hover:ring-indigo-400 transition bg-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPhotoEdit(emp)}
+                        title={lang === 'km' ? 'ប្តូររូបថត' : 'Change photo'}
+                        className="absolute -bottom-1 -right-1 p-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition cursor-pointer"
+                      >
+                        <Camera className="w-3 h-3" />
+                      </button>
+                    </div>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                      {emp.code}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                          {emp.code}
+                        </span>
+                        <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 font-semibold">
+                          PIN: {emp.pinCode || '1234'}
+                        </span>
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-800 truncate mt-1">
+                        {lang === 'km' ? emp.nameKh : emp.nameEn}
+                      </h4>
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
+                          isManager
+                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                            : isSupervisor
+                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            : isHr
+                            ? 'bg-teal-50 text-teal-700 border-teal-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                        }`}>
+                          {emp.role}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Shift & Schedule Badge */}
+                  <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-100">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 shrink-0 ${shiftBadge.badgeBg} ${shiftBadge.badgeText} ${shiftBadge.badgeBorder}`}>
+                      {emp.shiftId?.includes('cafe') || emp.departmentKh?.includes('កាហ្វេ') ? (
+                        <Coffee className="w-3 h-3" />
+                      ) : emp.shiftId?.includes('gas') || emp.departmentKh?.includes('ប្រេង') ? (
+                        <Fuel className="w-3 h-3" />
+                      ) : (
+                        <Clock className="w-3 h-3" />
+                      )}
+                      <span>{matchedShift ? (lang === 'km' ? matchedShift.nameKh.split('(')[0] : matchedShift.nameEn.split('(')[0]) : shiftBadge.label}</span>
                     </span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 font-semibold">
-                      PIN: {emp.pinCode || '1234'}
+                    <span className="font-mono text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg truncate" title={workingHoursStr}>
+                      {workingHoursStr}
                     </span>
                   </div>
-                  <h4 className="text-sm font-bold text-slate-800 truncate mt-1">
-                    {lang === 'km' ? emp.nameKh : emp.nameEn}
-                  </h4>
-                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                    <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
-                      isManager
-                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                        : isSupervisor
-                        ? 'bg-purple-50 text-purple-700 border-purple-200'
-                        : isHr
-                        ? 'bg-teal-50 text-teal-700 border-teal-200'
-                        : 'bg-slate-100 text-slate-700 border-slate-200'
-                    }`}>
-                      {emp.role}
-                    </span>
+
+                  {/* Branch Assignment Info */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] space-y-1.5">
+                    <div className="text-slate-500 flex items-center justify-between">
+                      <span>{lang === 'km' ? 'សាខាប្រចាំការ:' : 'Assigned Branch:'}</span>
+                      <span className="font-semibold text-slate-800 truncate max-w-[130px]">
+                        {branch?.nameEn}
+                      </span>
+                    </div>
+                    <div className="text-slate-500 flex items-center justify-between">
+                      <span>{lang === 'km' ? 'ផ្នែក:' : 'Department:'}</span>
+                      <span className="text-slate-700 font-medium truncate max-w-[140px]">{emp.departmentKh}</span>
+                    </div>
+                    <div className="text-slate-500 flex items-center justify-between">
+                      <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
+                      <span className="font-mono text-slate-700 font-medium">{emp.phone}</span>
+                    </div>
+                    <div className="text-slate-500 flex items-center justify-between">
+                      <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាក (Day Off):' : 'Weekly Day Off:'}</span>
+                      <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                        {getEmployeeDayOffName(emp, lang)}
+                      </span>
+                    </div>
+
+                    {/* Hardware Device Lock Status */}
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                        <Smartphone className="w-3 h-3 text-slate-400" />
+                        <span>{lang === 'km' ? 'ឧបករណ៍:' : 'Device:'}</span>
+                      </span>
+                      {emp.trustedDeviceId ? (
+                        <span 
+                          className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 truncate max-w-[140px]" 
+                          title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                        >
+                          🔒 {emp.trustedDeviceName || 'Bound Phone'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
+                          {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Shift & Schedule Badge */}
-              <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-100">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 shrink-0 ${shiftBadge.badgeBg} ${shiftBadge.badgeText} ${shiftBadge.badgeBorder}`}>
-                  {emp.shiftId?.includes('cafe') || emp.departmentKh?.includes('កាហ្វេ') ? (
-                    <Coffee className="w-3 h-3" />
-                  ) : emp.shiftId?.includes('gas') || emp.departmentKh?.includes('ប្រេង') ? (
-                    <Fuel className="w-3 h-3" />
-                  ) : (
-                    <Clock className="w-3 h-3" />
-                  )}
-                  <span>{matchedShift ? (lang === 'km' ? matchedShift.nameKh.split('(')[0] : matchedShift.nameEn.split('(')[0]) : shiftBadge.label}</span>
-                </span>
-                <span className="font-mono text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg truncate" title={workingHoursStr}>
-                  {workingHoursStr}
-                </span>
-              </div>
-
-              {/* Branch Assignment Info */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] space-y-1.5">
-                <div className="text-slate-500 flex items-center justify-between">
-                  <span>{lang === 'km' ? 'សាខាប្រចាំការ:' : 'Assigned Branch:'}</span>
-                  <span className="font-semibold text-slate-800 truncate max-w-[130px]">
-                    {branch?.nameEn}
-                  </span>
-                </div>
-                <div className="text-slate-500 flex items-center justify-between">
-                  <span>{lang === 'km' ? 'ផ្នែក:' : 'Department:'}</span>
-                  <span className="text-slate-700 font-medium truncate max-w-[140px]">{emp.departmentKh}</span>
-                </div>
-                <div className="text-slate-500 flex items-center justify-between">
-                  <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
-                  <span className="font-mono text-slate-700 font-medium">{emp.phone}</span>
-                </div>
-                <div className="text-slate-500 flex items-center justify-between">
-                  <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាក (Day Off):' : 'Weekly Day Off:'}</span>
-                  <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                    {getEmployeeDayOffName(emp, lang)}
-                  </span>
-                </div>
-
-                {/* Hardware Device Lock Status */}
-                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
-                  <span className="text-[11px] text-slate-500 flex items-center gap-1">
-                    <Smartphone className="w-3 h-3 text-slate-400" />
-                    <span>{lang === 'km' ? 'ឧបករណ៍:' : 'Device:'}</span>
-                  </span>
-                  {emp.trustedDeviceId ? (
-                    <span 
-                      className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 truncate max-w-[140px]" 
-                      title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                  {/* Action Buttons */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center space-x-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenBadge(emp)}
+                      className="flex-1 py-2 px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center justify-center space-x-1 transition cursor-pointer"
                     >
-                      🔒 {emp.trustedDeviceName || 'Bound Phone'}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
-                      {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
-                    </span>
-                  )}
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>{lang === 'km' ? 'កាត QR' : 'QR Badge'}</span>
+                    </button>
+
+                    {/* Quick Shift & Working Hours Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenQuickSchedule(emp)}
+                      title={lang === 'km' ? 'កំណត់វេនការងារ និងម៉ោង' : 'Set shift & working hours'}
+                      className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span className="text-[11px] hidden sm:inline">{lang === 'km' ? 'វេន' : 'Shift'}</span>
+                    </button>
+
+                    {onOpenTransferModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenTransferModal(emp)}
+                        title={lang === 'km' ? 'ផ្ទេរទៅសាខាផ្សេង' : 'Transfer to another branch'}
+                        className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5" />
+                        <span className="text-[11px] hidden sm:inline">{lang === 'km' ? 'ផ្ទេរ' : 'Transfer'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(emp)}
+                      title={lang === 'km' ? 'កែប្រែព័ត៌មាន' : 'Edit profile'}
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+
+                    {onDeleteEmployee && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(emp)}
+                        title={lang === 'km' ? 'លុប' : 'Delete'}
+                        className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        /* Table List View */
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'បុគ្គលិក (Staff)' : 'Staff Member'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'អត្តលេខ & PIN' : 'ID & PIN'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'តួនាទី & ផ្នែក' : 'Role & Dept'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'សាខាប្រចាំការ' : 'Assigned Branch'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'វេន & ម៉ោងការងារ' : 'Shift & Schedule'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'ថ្ងៃឈប់ (Day Off)' : 'Weekly Day Off'}</th>
+                  <th className="py-3.5 px-4">{lang === 'km' ? 'ទូរស័ព្ទ & ឧបករណ៍' : 'Phone & Device'}</th>
+                  <th className="py-3.5 px-4 text-right">{lang === 'km' ? 'សកម្មភាព' : 'Actions'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {filteredEmployees.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                      <Users className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                      <p className="font-bold text-slate-700">
+                        {lang === 'km' ? 'មិនមានទិន្នន័យបុគ្គលិកត្រូវនឹងតម្រងស្វែងរកទេ' : 'No staff members match the selected filters'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {lang === 'km' ? 'សូមសាកល្បងផ្លាស់ប្តូរពាក្យស្វែងរក ឬជ្រើសរើសសាខា/តួនាទីផ្សេង' : 'Try adjusting your search query or filter options'}
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredEmployees.map((emp) => {
+                    const branch = getBranch(emp.branchId);
+                    const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
+                    const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
+                    const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+                    const matchedShift = shifts.find((s) => s.id === emp.shiftId);
+                    const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
+                    const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
+                    const avatarSrc = resolveAvatar(emp.avatar, null, emp.nameEn || emp.nameKh);
 
-              {/* Action Buttons */}
-              <div className="pt-2 border-t border-slate-100 flex items-center space-x-1.5">
-                <button
-                  onClick={() => handleOpenBadge(emp)}
-                  className="flex-1 py-2 px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center justify-center space-x-1 transition"
-                >
-                  <QrCode className="w-3.5 h-3.5" />
-                  <span>{lang === 'km' ? 'កាត QR' : 'QR Badge'}</span>
-                </button>
+                    return (
+                      <tr key={emp.id} className="hover:bg-slate-50/80 transition group">
+                        {/* Avatar & Names */}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="relative shrink-0">
+                              <img
+                                src={avatarSrc}
+                                alt={emp.nameEn}
+                                referrerPolicy="no-referrer"
+                                onError={(e) => handleAvatarError(e, emp.nameEn || emp.nameKh)}
+                                className="w-11 h-11 rounded-xl object-cover border border-slate-200 shadow-xs bg-slate-100"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPhotoEdit(emp)}
+                                title={lang === 'km' ? 'ប្តូររូបថត' : 'Change photo'}
+                                className="absolute -bottom-1 -right-1 p-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition cursor-pointer"
+                              >
+                                <Camera className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-800 text-sm truncate">
+                                {lang === 'km' ? emp.nameKh : emp.nameEn}
+                              </div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {lang === 'km' ? emp.nameEn : emp.nameKh}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
 
-                {/* Quick Shift & Working Hours Button */}
-                <button
-                  onClick={() => handleOpenQuickSchedule(emp)}
-                  title={lang === 'km' ? 'កំណត់វេនការងារ និងម៉ោង' : 'Set shift & working hours'}
-                  className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition flex items-center gap-1"
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span className="text-[11px] hidden sm:inline">{lang === 'km' ? 'វេន' : 'Shift'}</span>
-                </button>
+                        {/* ID Code & PIN */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            <span className="inline-block text-[11px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                              {emp.code}
+                            </span>
+                            <div>
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-semibold font-mono">
+                                PIN: {emp.pinCode || '1234'}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
 
-                {onOpenTransferModal && (
-                  <button
-                    onClick={() => onOpenTransferModal(emp)}
-                    title={lang === 'km' ? 'ផ្ទេរទៅសាខាផ្សេង' : 'Transfer to another branch'}
-                    className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold transition flex items-center gap-1"
-                  >
-                    <ArrowRightLeft className="w-3.5 h-3.5" />
-                    <span className="text-[11px] hidden sm:inline">{lang === 'km' ? 'ផ្ទេរ' : 'Transfer'}</span>
-                  </button>
+                        {/* Role & Dept */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1 max-w-[160px]">
+                            <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
+                              isManager
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : isSupervisor
+                                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                : isHr
+                                ? 'bg-teal-50 text-teal-700 border-teal-200'
+                                : 'bg-slate-100 text-slate-700 border-slate-200'
+                            }`}>
+                              {emp.role}
+                            </span>
+                            <div className="text-[11px] text-slate-500 truncate" title={emp.departmentKh}>
+                              {emp.departmentKh}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Assigned Branch */}
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-800 text-xs">
+                            {branch?.nameEn || 'All Branches'}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate max-w-[140px]">
+                            {branch?.nameKh}
+                          </div>
+                        </td>
+
+                        {/* Shift & Hours */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border inline-flex items-center gap-1 ${shiftBadge.badgeBg} ${shiftBadge.badgeText} ${shiftBadge.badgeBorder}`}>
+                              {emp.shiftId?.includes('cafe') || emp.departmentKh?.includes('កាហ្វេ') ? (
+                                <Coffee className="w-3 h-3" />
+                              ) : emp.shiftId?.includes('gas') || emp.departmentKh?.includes('ប្រេង') ? (
+                                <Fuel className="w-3 h-3" />
+                              ) : (
+                                <Clock className="w-3 h-3" />
+                              )}
+                              <span>{matchedShift ? (lang === 'km' ? matchedShift.nameKh.split('(')[0] : matchedShift.nameEn.split('(')[0]) : shiftBadge.label}</span>
+                            </span>
+                            <div className="font-mono text-[11px] font-bold text-slate-600 truncate" title={workingHoursStr}>
+                              {workingHoursStr}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Weekly Day Off */}
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 text-[11px] inline-block">
+                            {getEmployeeDayOffName(emp, lang)}
+                          </span>
+                        </td>
+
+                        {/* Phone & Device */}
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            <div className="font-mono text-xs text-slate-700 font-medium">
+                              {emp.phone || '-'}
+                            </div>
+                            <div>
+                              {emp.trustedDeviceId ? (
+                                <span 
+                                  className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block truncate max-w-[130px]" 
+                                  title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                                >
+                                  🔒 {emp.trustedDeviceName || 'Bound'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded inline-block">
+                                  {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenBadge(emp)}
+                              title={lang === 'km' ? 'កាត QR' : 'QR Badge'}
+                              className="p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition cursor-pointer"
+                            >
+                              <QrCode className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenQuickSchedule(emp)}
+                              title={lang === 'km' ? 'កំណត់វេនការងារ និងម៉ោង' : 'Set shift & working hours'}
+                              className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition cursor-pointer"
+                            >
+                              <Clock className="w-3.5 h-3.5" />
+                            </button>
+
+                            {onOpenTransferModal && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenTransferModal(emp)}
+                                title={lang === 'km' ? 'ផ្ទេរទៅសាខាផ្សេង' : 'Transfer to another branch'}
+                                className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold transition cursor-pointer"
+                              >
+                                <ArrowRightLeft className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(emp)}
+                              title={lang === 'km' ? 'កែប្រែព័ត៌មាន' : 'Edit profile'}
+                              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+
+                            {onDeleteEmployee && (
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(emp)}
+                                title={lang === 'km' ? 'លុប' : 'Delete'}
+                                className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
+              </tbody>
+            </table>
+          </div>
 
-                <button
-                  onClick={() => handleOpenEdit(emp)}
-                  title={lang === 'km' ? 'កែប្រែព័ត៌មាន' : 'Edit profile'}
-                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                </button>
-
-                {onDeleteEmployee && (
-                  <button
-                    onClick={() => handleDelete(emp)}
-                    title={lang === 'km' ? 'លុប' : 'Delete'}
-                    className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+          {/* Table Footer with Summary */}
+          <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
+            <span>
+              {lang === 'km'
+                ? `បង្ហាញ ${filteredEmployees.length} នៃបុគ្គលិកសរុប ${employees.length} នាក់`
+                : `Showing ${filteredEmployees.length} of ${employees.length} total staff`}
+            </span>
+            <span className="font-medium text-slate-600">
+              {lang === 'km' ? 'ចុចប៊ូតុងកាមេរ៉ាលើរូបថតដើម្បីផ្លាស់ប្តូររូបភាព' : 'Click camera button on photo to update staff portrait'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Digital ID Badge Modal */}
       {selectedBadgeEmp && (

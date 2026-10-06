@@ -58,6 +58,7 @@ import {
   EmployeeMergedSummary
 } from '../utils/reportExportUtils';
 import { getEmployeeDayOffName } from '../utils/dayOffUtils';
+import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 import { ReportTableCustomizerModal } from './ReportTableCustomizerModal';
 import { ReportTableToolbar } from './ReportTableToolbar';
 import { useTableColumnResize } from '../utils/useTableColumnResize';
@@ -2419,18 +2420,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredRawRecords.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-slate-50/80 transition">
-                      <td className="py-3.5 px-6">
-                        <div className="flex items-center space-x-3">
-                          <img
-                            src={rec.employeeAvatar}
-                            alt={rec.employeeNameEn}
-                            className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm"
-                            onError={(e) => {
-                              e.currentTarget.src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                            }}
-                          />
+                  filteredRawRecords.map((rec) => {
+                    const matchedEmp = employees.find(
+                      (e) => e.id === rec.employeeId || e.code === rec.employeeCode
+                    );
+                    const avatarSrc = resolveAvatar(
+                      matchedEmp?.avatar,
+                      rec.employeeAvatar,
+                      rec.employeeNameEn || rec.employeeNameKh || matchedEmp?.nameEn || 'Staff'
+                    );
+
+                    return (
+                      <tr key={rec.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-3.5 px-6">
+                          <div className="flex items-center space-x-3">
+                            <img
+                              src={avatarSrc}
+                              alt={rec.employeeNameEn || 'Staff'}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-100"
+                              onError={(e) => {
+                                handleAvatarError(e, rec.employeeNameEn || rec.employeeNameKh || 'Staff');
+                              }}
+                            />
                           <div>
                             <div className="font-bold text-slate-800 text-sm">
                               {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
@@ -2505,8 +2517,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         </span>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+                }))}
               </tbody>
             </table>
           </div>
@@ -2737,12 +2749,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         >
                           <td className="py-3.5 px-6">
                             <div className="flex items-center space-x-3">
-                              <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
-                                {emp?.avatar ? (
-                                  <img src={emp.avatar} alt="avatar" className="w-full h-full rounded-full object-cover" />
-                                ) : (
-                                  (req.employeeNameEn || 'S').charAt(0)
-                                )}
+                              <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-200 shadow-xs shrink-0 bg-slate-100 flex items-center justify-center">
+                                <img
+                                  src={resolveAvatar(emp?.avatar, req.employeeAvatar, req.employeeNameEn || req.employeeNameKh || emp?.nameEn || 'Staff')}
+                                  alt="avatar"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    handleAvatarError(e, req.employeeNameEn || req.employeeNameKh || emp?.nameEn || 'Staff');
+                                  }}
+                                />
                               </div>
                               <div>
                                 <div className="font-bold text-slate-800 text-sm">

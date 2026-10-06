@@ -21,11 +21,7 @@ import {
   LayoutGrid,
   Sparkles,
   Layers,
-  Globe,
-  Users,
-  Search,
-  ChevronDown,
-  ChevronUp
+  Globe
 } from 'lucide-react';
 import { AuthUser, Employee, Language, CompanyBranding, UserRole } from '../types';
 import { DEFAULT_AUTH_USER } from '../data/authUsers';
@@ -90,8 +86,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
-  const [showStaffPicker, setShowStaffPicker] = useState(false);
-  const [staffSearch, setStaffSearch] = useState('');
   
   // Style Option state: default to option_b (Split-Screen Showcase) or branding setting or localStorage
   const [currentStyle, setCurrentStyle] = useState<LoginStyleOption>(() => {
@@ -156,22 +150,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   if (!isOpen) return null;
 
   const isMandatory = !currentUser;
-
-  // Filtered employees for quick selection
-  const filteredStaff = (employees || []).filter((emp) => {
-    if (!staffSearch.trim()) return true;
-    const q = cleanStr(staffSearch);
-    const qc = cleanCode(staffSearch);
-    return (
-      cleanStr(emp.nameEn).includes(q) ||
-      cleanStr(emp.nameKh).includes(q) ||
-      cleanStr(emp.code).includes(q) ||
-      cleanCode(emp.code).includes(qc) ||
-      cleanStr(emp.role).includes(q) ||
-      cleanStr(emp.roleKh).includes(q) ||
-      cleanStr(emp.department).includes(q)
-    );
-  });
 
   const handleManualLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -413,128 +391,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         }`}>
           <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
           <span className="font-bold">{lang === 'km' ? 'ចូលប្រើប្រព័ន្ធជោគជ័យ!' : 'Authenticated successfully! Redirecting...'}</span>
-        </div>
-      )}
-
-      {/* Quick Staff Profile Selector Accordion */}
-      {employees && employees.length > 0 && (
-        <div className="pt-0.5">
-          <button
-            type="button"
-            onClick={() => setShowStaffPicker(!showStaffPicker)}
-            className={`w-full py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-              isDarkTheme
-                ? 'bg-indigo-950/40 border-indigo-500/30 hover:bg-indigo-900/40 text-indigo-300'
-                : 'bg-indigo-50/80 border-indigo-200 hover:bg-indigo-100 text-indigo-800'
-            }`}
-          >
-            <span className="flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-500" />
-              <span>{lang === 'km' ? '👥 រើសគណនីបុគ្គលិកភ្លាមៗ (Quick Select Staff)' : '👥 Quick Select Staff Profile'}</span>
-            </span>
-            <span className="text-[10px] opacity-80 font-mono flex items-center gap-1">
-              <span>{employees.length} {lang === 'km' ? 'នាក់' : 'staff'}</span>
-              {showStaffPicker ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            </span>
-          </button>
-
-          {showStaffPicker && (
-            <div className={`mt-2 p-3 rounded-2xl border max-h-60 overflow-y-auto space-y-2 shadow-xl animate-in fade-in zoom-in-95 z-20 ${
-              isDarkTheme
-                ? 'bg-slate-900 border-slate-700 text-white'
-                : 'bg-white border-slate-200 text-slate-800'
-            }`}>
-              {/* Search input in picker */}
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={staffSearch}
-                  onChange={(e) => setStaffSearch(e.target.value)}
-                  placeholder={lang === 'km' ? 'ស្វែងរកឈ្មោះ ឬអត្តលេខ...' : 'Search name or code...'}
-                  className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs border focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-                    isDarkTheme
-                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-400'
-                      : 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400'
-                  }`}
-                />
-              </div>
-
-
-              {/* Staff Directory List */}
-              <div className="space-y-1">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-1">
-                  {lang === 'km' ? `បុគ្គលិកសាខា (${filteredStaff.length} នាក់)` : `Branch Staff (${filteredStaff.length})`}
-                </div>
-                {filteredStaff.map((emp) => {
-                  const empAuthUser: AuthUser = {
-                    id: `user_${emp.id}`,
-                    username: emp.code.toLowerCase(),
-                    role:
-                      emp.code.toLowerCase() === 'emp-001'
-                        ? 'admin'
-                        : emp.roleType
-                        ? emp.roleType
-                        : emp.role?.toLowerCase().includes('manager')
-                        ? 'manager'
-                        : emp.role?.toLowerCase().includes('supervisor')
-                        ? 'supervisor'
-                        : /\bhr\b/i.test(emp.role || '')
-                        ? 'hr'
-                        : 'employee',
-                    nameKh: emp.nameKh,
-                    nameEn: emp.nameEn,
-                    avatar: emp.avatar,
-                    employeeId: emp.id,
-                    employeeCode: emp.code,
-                    branchId: emp.branchId,
-                    email: emp.email,
-                    roleTitle: emp.role,
-                    pinCode: emp.pinCode || '1234',
-                    password: emp.password,
-                  };
-                  return (
-                    <div
-                      key={emp.id}
-                      className={`w-full p-2 rounded-xl flex items-center justify-between text-xs transition border ${
-                        isDarkTheme
-                          ? 'border-slate-800 hover:bg-slate-800 text-slate-200'
-                          : 'border-slate-100 hover:bg-slate-50 text-slate-800'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIdentifier(emp.code);
-                          setPassword('');
-                          setShowStaffPicker(false);
-                          setErrorMsg('');
-                        }}
-                        className="flex items-center gap-2 text-left cursor-pointer flex-1 mr-2"
-                      >
-                        <img
-                          src={emp.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80'}
-                          alt={emp.nameEn}
-                          className="w-7 h-7 rounded-lg object-cover bg-slate-200 shrink-0"
-                        />
-                        <div>
-                          <div className="font-bold text-[11px]">{lang === 'km' ? emp.nameKh : emp.nameEn}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            {emp.code} • {emp.role}
-                          </div>
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
-                          {emp.code}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
