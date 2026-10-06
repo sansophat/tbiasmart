@@ -29,3 +29,7 @@ dist-ssr
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Local data backups (contain personal data)
+backup/
+data/
