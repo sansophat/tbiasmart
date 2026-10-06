@@ -115,7 +115,66 @@ function safeGetJson<T>(key: string, fallback: T): T {
   }
 }
 
+function safeSetJson(key: string, value: any): boolean {
+  try {
+    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    localStorage.setItem(key, str);
+    return true;
+  } catch (err) {
+    console.warn(`[SafeStorage] Quota exceeded on "${key}". Freeing non-essential cache...`, err);
+    try {
+      // 1. Instantly free up non-critical bloated caches
+      localStorage.removeItem('attend_audit_logs');
+      localStorage.removeItem('attend_staff_alerts');
+      localStorage.removeItem('attend_transfers');
+      localStorage.removeItem('hrms_backup_snapshots');
+
+      let parsed = value;
+      if (typeof value === 'string') {
+        try { parsed = JSON.parse(value); } catch (_) {}
+      }
+
+      // 2. If saving attendance records, keep only the latest 20 without massive base64 selfies
+      if (key === 'attend_records' && Array.isArray(parsed)) {
+        const compact = parsed.slice(0, 20).map((r) => {
+          if (!r) return r;
+          const { selfieUrl, ...rest } = r;
+          return {
+            ...rest,
+            selfieUrl: selfieUrl && selfieUrl.length < 500 ? selfieUrl : undefined,
+          };
+        });
+        localStorage.setItem(key, JSON.stringify(compact));
+        return true;
+      }
+
+      // 3. If saving employees, strip massive data-urls if quota is exceeded
+      if (key === 'attend_employees' && Array.isArray(parsed)) {
+        const compact = parsed.map((e) => {
+          if (!e) return e;
+          if (e.avatar && e.avatar.length > 1000 && e.avatar.startsWith('data:')) {
+            return { ...e, avatar: undefined };
+          }
+          return e;
+        });
+        localStorage.setItem(key, JSON.stringify(compact));
+        return true;
+      }
+
+      // 4. Retry saving with cleaned quota
+      const str = typeof value === 'string' ? value : JSON.stringify(value);
+      localStorage.setItem(key, str);
+      return true;
+    } catch (_) {
+      // Mobile device hard storage limit; do not crash React!
+      console.warn(`[SafeStorage] Hard quota limit on device for key "${key}". Running safely in memory.`);
+      return false;
+    }
+  }
+}
+
 export default function App() {
+
   // Language State
   const [lang, setLang] = useState<Language>(() => {
     try {
@@ -253,7 +312,7 @@ export default function App() {
       const filtered = prev.filter((a) => a.id !== newAlert.id);
       const nextAlerts = [newAlert, ...filtered].slice(0, 50);
       try {
-        localStorage.setItem('attend_staff_alerts', JSON.stringify(nextAlerts));
+        safeSetJson('attend_staff_alerts', JSON.stringify(nextAlerts));
       } catch {}
       return nextAlerts;
     });
@@ -263,8 +322,8 @@ export default function App() {
     const now = Date.now();
     setAlertsClearedAt(now);
     try {
-      localStorage.setItem('attend_alerts_cleared_at', String(now));
-      localStorage.setItem('attend_staff_alerts', JSON.stringify([]));
+      safeSetJson('attend_alerts_cleared_at', String(now));
+      safeSetJson('attend_staff_alerts', JSON.stringify([]));
     } catch {}
     setActionAlerts([]);
     fetch('/api/staff/alerts', { method: 'DELETE' }).catch(() => {});
@@ -495,12 +554,12 @@ export default function App() {
 
         if (bestBranches && bestBranches.length > 0) {
           setBranches(bestBranches);
-          localStorage.setItem('attend_branches', JSON.stringify(bestBranches));
+          safeSetJson('attend_branches', JSON.stringify(bestBranches));
         }
 
         if (bestEmployees && bestEmployees.length > 0) {
           setEmployees(bestEmployees);
-          localStorage.setItem('attend_employees', JSON.stringify(bestEmployees));
+          safeSetJson('attend_employees', JSON.stringify(bestEmployees));
           setCurrentUser((curr) => {
             if (curr && curr.role !== 'admin') {
               const liveEmp = bestEmployees.find(
@@ -520,7 +579,7 @@ export default function App() {
                   nameEn: liveEmp.nameEn || curr.nameEn,
                   roleTitle: liveEmp.role || curr.roleTitle,
                 };
-                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                safeSetJson('attend_auth_user', JSON.stringify(updated));
                 return updated;
               }
             }
@@ -531,48 +590,48 @@ export default function App() {
         if (bestRecords.length > 0) {
           setAttendanceRecords((prev) => {
             const merged = mergeDatasets(prev, bestRecords);
-            try { localStorage.setItem('attend_records', JSON.stringify(merged)); } catch (_) {}
+            try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
             return merged;
           });
         }
 
         if (bestLeaves.length > 0) {
           setLeaveRequests(bestLeaves);
-          localStorage.setItem('attend_leaves', JSON.stringify(bestLeaves));
+          safeSetJson('attend_leaves', JSON.stringify(bestLeaves));
         }
 
         if (bestTransfers.length > 0) {
           setTransferRecords(bestTransfers);
-          localStorage.setItem('attend_transfers', JSON.stringify(bestTransfers));
+          safeSetJson('attend_transfers', JSON.stringify(bestTransfers));
         }
 
         if (bestBranchTypes.length > 0) {
           setBranchTypes(bestBranchTypes);
-          localStorage.setItem('attend_branch_types', JSON.stringify(bestBranchTypes));
+          safeSetJson('attend_branch_types', JSON.stringify(bestBranchTypes));
         }
 
         if (bestBranding) {
           setBranding(bestBranding);
-          localStorage.setItem('attend_branding', JSON.stringify(bestBranding));
+          safeSetJson('attend_branding', JSON.stringify(bestBranding));
         }
 
         if (bestRolePerms.length > 0) {
           setRolePermissions(bestRolePerms);
-          localStorage.setItem('attend_role_permissions', JSON.stringify(bestRolePerms));
+          safeSetJson('attend_role_permissions', JSON.stringify(bestRolePerms));
         }
 
         if (bestSettings && Object.keys(bestSettings).length > 0) {
           setSystemSettings(bestSettings);
-          localStorage.setItem('attend_system_settings', JSON.stringify(bestSettings));
+          safeSetJson('attend_system_settings', JSON.stringify(bestSettings));
         }
 
         if (bestAdmin) {
           setAdminProfile(bestAdmin);
-          localStorage.setItem('attend_admin_profile', JSON.stringify(bestAdmin));
+          safeSetJson('attend_admin_profile', JSON.stringify(bestAdmin));
           setCurrentUser((curr) => {
             if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
               const updated = { ...curr, ...bestAdmin };
-              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              safeSetJson('attend_auth_user', JSON.stringify(updated));
               return updated;
             }
             return curr;
@@ -581,12 +640,12 @@ export default function App() {
 
         if (bestAudit.length > 0) {
           setAuditLogs(bestAudit);
-          localStorage.setItem('attend_audit_logs', JSON.stringify(bestAudit));
+          safeSetJson('attend_audit_logs', JSON.stringify(bestAudit));
         }
 
         if (bestShifts.length > 0) {
           setShifts(bestShifts);
-          localStorage.setItem('attend_shifts', JSON.stringify(bestShifts));
+          safeSetJson('attend_shifts', JSON.stringify(bestShifts));
         }
 
         if (bestAlerts.length > 0) {
@@ -680,43 +739,43 @@ export default function App() {
         if (s && (s.isReset === true || s.isRestore === true)) {
           if (Array.isArray(s.branches)) {
             setBranches(s.branches);
-            localStorage.setItem('attend_branches', JSON.stringify(s.branches));
+            safeSetJson('attend_branches', JSON.stringify(s.branches));
           }
           if (Array.isArray(s.employees)) {
             setEmployees(s.employees);
-            localStorage.setItem('attend_employees', JSON.stringify(s.employees));
+            safeSetJson('attend_employees', JSON.stringify(s.employees));
           }
           if (Array.isArray(s.attendanceRecords)) {
             setAttendanceRecords(s.attendanceRecords);
-            localStorage.setItem('attend_records', JSON.stringify(s.attendanceRecords));
+            safeSetJson('attend_records', JSON.stringify(s.attendanceRecords));
           }
           if (Array.isArray(s.leaveRequests)) {
             setLeaveRequests(s.leaveRequests);
-            localStorage.setItem('attend_leaves', JSON.stringify(s.leaveRequests));
+            safeSetJson('attend_leaves', JSON.stringify(s.leaveRequests));
           }
           if (Array.isArray(s.transferRecords)) {
             setTransferRecords(s.transferRecords);
-            localStorage.setItem('attend_transfers', JSON.stringify(s.transferRecords));
+            safeSetJson('attend_transfers', JSON.stringify(s.transferRecords));
           }
           if (s.branding) {
             setBranding(s.branding);
-            localStorage.setItem('attend_branding', JSON.stringify(s.branding));
+            safeSetJson('attend_branding', JSON.stringify(s.branding));
           }
           if (Array.isArray(s.rolePermissions)) {
             setRolePermissions(s.rolePermissions);
-            localStorage.setItem('attend_role_permissions', JSON.stringify(s.rolePermissions));
+            safeSetJson('attend_role_permissions', JSON.stringify(s.rolePermissions));
           }
           if (s.systemSettings) {
             setSystemSettings(s.systemSettings);
-            localStorage.setItem('attend_system_settings', JSON.stringify(s.systemSettings));
+            safeSetJson('attend_system_settings', JSON.stringify(s.systemSettings));
           }
           if (s.adminProfile) {
             setAdminProfile(s.adminProfile);
-            localStorage.setItem('attend_admin_profile', JSON.stringify(s.adminProfile));
+            safeSetJson('attend_admin_profile', JSON.stringify(s.adminProfile));
             setCurrentUser((curr) => {
               if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
                 const updated = { ...curr, ...s.adminProfile };
-                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                safeSetJson('attend_auth_user', JSON.stringify(updated));
                 return updated;
               }
               return curr;
@@ -727,11 +786,11 @@ export default function App() {
         const { user, employee } = payload;
         if (user && (user.role === 'admin' || user.id === 'user_admin' || user.username === 'admin')) {
           setAdminProfile(user);
-          localStorage.setItem('attend_admin_profile', JSON.stringify(user));
+          safeSetJson('attend_admin_profile', JSON.stringify(user));
           setCurrentUser((curr) => {
             if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
               const updated = { ...curr, ...user };
-              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              safeSetJson('attend_auth_user', JSON.stringify(updated));
               return updated;
             }
             return curr;
@@ -764,7 +823,7 @@ export default function App() {
                   }
                 : e
             );
-            localStorage.setItem('attend_employees', JSON.stringify(next));
+            safeSetJson('attend_employees', JSON.stringify(next));
             return next;
           });
 
@@ -780,7 +839,7 @@ export default function App() {
                     }
                   : r
               );
-              localStorage.setItem('attend_records', JSON.stringify(next));
+              safeSetJson('attend_records', JSON.stringify(next));
               return next;
             });
           }
@@ -801,7 +860,7 @@ export default function App() {
                 pinCode: user?.pinCode || effectiveEmp.pinCode || curr.pinCode,
                 branchId: effectiveEmp.branchId || curr.branchId,
               };
-              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              safeSetJson('attend_auth_user', JSON.stringify(updated));
               return updated;
             }
             return curr;
@@ -819,7 +878,7 @@ export default function App() {
           if (prev.some((r) => r.id === record.id)) return prev;
           const next = [record, ...prev];
           try {
-            localStorage.setItem('attend_records', JSON.stringify(next));
+            safeSetJson('attend_records', JSON.stringify(next));
           } catch (_) {}
           return next;
         });
@@ -886,8 +945,8 @@ export default function App() {
           const clearedTime = payload.clearedAt || Date.now();
           setAlertsClearedAt(clearedTime);
           try {
-            localStorage.setItem('attend_alerts_cleared_at', String(clearedTime));
-            localStorage.setItem('attend_staff_alerts', JSON.stringify([]));
+            safeSetJson('attend_alerts_cleared_at', String(clearedTime));
+            safeSetJson('attend_staff_alerts', JSON.stringify([]));
           } catch {}
           setActionAlerts([]);
         }
@@ -996,7 +1055,7 @@ export default function App() {
       } else if (type === 'UPDATE_EMPLOYEE' && payload) {
         setEmployees((prev) => {
           const next = prev.map((e) => (e.id === payload.id ? { ...e, ...payload } : e));
-          localStorage.setItem('attend_employees', JSON.stringify(next));
+          safeSetJson('attend_employees', JSON.stringify(next));
           return next;
         });
         if (payload.avatar) {
@@ -1011,7 +1070,7 @@ export default function App() {
                   }
                 : r
             );
-            localStorage.setItem('attend_records', JSON.stringify(next));
+            safeSetJson('attend_records', JSON.stringify(next));
             return next;
           });
         }
@@ -1031,7 +1090,7 @@ export default function App() {
               branchId: payload.branchId || curr.branchId,
               roleTitle: payload.role || curr.roleTitle,
             };
-            localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+            safeSetJson('attend_auth_user', JSON.stringify(updated));
             return updated;
           }
           return curr;
@@ -1132,11 +1191,11 @@ export default function App() {
 
         if (Array.isArray(cloudData.branches) && (cloudData.branches.length > 0 || cloudData.isReset)) {
           setBranches(cloudData.branches);
-          localStorage.setItem('attend_branches', JSON.stringify(cloudData.branches));
+          safeSetJson('attend_branches', JSON.stringify(cloudData.branches));
         }
         if (Array.isArray(cloudData.employees) && (cloudData.employees.length > 0 || cloudData.isReset)) {
           setEmployees(cloudData.employees);
-          localStorage.setItem('attend_employees', JSON.stringify(cloudData.employees));
+          safeSetJson('attend_employees', JSON.stringify(cloudData.employees));
           setCurrentUser((curr) => {
             if (curr) {
               const liveEmp = cloudData.employees!.find(
@@ -1156,7 +1215,7 @@ export default function App() {
                   nameEn: liveEmp.nameEn || curr.nameEn,
                   roleTitle: liveEmp.role || curr.roleTitle,
                 };
-                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                safeSetJson('attend_auth_user', JSON.stringify(updated));
                 return updated;
               }
             }
@@ -1195,7 +1254,7 @@ export default function App() {
             }
             return cloudData.attendanceRecords!;
           });
-          localStorage.setItem('attend_records', JSON.stringify(cloudData.attendanceRecords));
+          safeSetJson('attend_records', JSON.stringify(cloudData.attendanceRecords));
         }
         if (Array.isArray(cloudData.leaveRequests)) {
           setLeaveRequests((prevLeaves) => {
@@ -1225,35 +1284,35 @@ export default function App() {
             }
             return cloudData.leaveRequests!;
           });
-          localStorage.setItem('attend_leaves', JSON.stringify(cloudData.leaveRequests));
+          safeSetJson('attend_leaves', JSON.stringify(cloudData.leaveRequests));
         }
         if (Array.isArray(cloudData.transferRecords)) {
           setTransferRecords(cloudData.transferRecords);
-          localStorage.setItem('attend_transfers', JSON.stringify(cloudData.transferRecords));
+          safeSetJson('attend_transfers', JSON.stringify(cloudData.transferRecords));
         }
         if (Array.isArray(cloudData.branchTypes)) {
           setBranchTypes(cloudData.branchTypes);
-          localStorage.setItem('attend_branch_types', JSON.stringify(cloudData.branchTypes));
+          safeSetJson('attend_branch_types', JSON.stringify(cloudData.branchTypes));
         }
         if (cloudData.branding) {
           setBranding(cloudData.branding);
-          localStorage.setItem('attend_branding', JSON.stringify(cloudData.branding));
+          safeSetJson('attend_branding', JSON.stringify(cloudData.branding));
         }
         if (Array.isArray(cloudData.rolePermissions)) {
           setRolePermissions(cloudData.rolePermissions);
-          localStorage.setItem('attend_role_permissions', JSON.stringify(cloudData.rolePermissions));
+          safeSetJson('attend_role_permissions', JSON.stringify(cloudData.rolePermissions));
         }
         if (cloudData.systemSettings) {
           setSystemSettings(cloudData.systemSettings);
-          localStorage.setItem('attend_system_settings', JSON.stringify(cloudData.systemSettings));
+          safeSetJson('attend_system_settings', JSON.stringify(cloudData.systemSettings));
         }
         if (cloudData.adminProfile) {
           setAdminProfile(cloudData.adminProfile);
-          localStorage.setItem('attend_admin_profile', JSON.stringify(cloudData.adminProfile));
+          safeSetJson('attend_admin_profile', JSON.stringify(cloudData.adminProfile));
           setCurrentUser((curr) => {
             if (curr && (curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin')) {
               const updated = { ...curr, ...cloudData.adminProfile };
-              localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+              safeSetJson('attend_auth_user', JSON.stringify(updated));
               return updated;
             }
             return curr;
@@ -1261,11 +1320,11 @@ export default function App() {
         }
         if (Array.isArray(cloudData.auditLogs)) {
           setAuditLogs(cloudData.auditLogs);
-          localStorage.setItem('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
+          safeSetJson('attend_audit_logs', JSON.stringify(cloudData.auditLogs));
         }
         if (Array.isArray(cloudData.shifts) && cloudData.shifts.length > 0) {
           setShifts(cloudData.shifts);
-          localStorage.setItem('attend_shifts', JSON.stringify(cloudData.shifts));
+          safeSetJson('attend_shifts', JSON.stringify(cloudData.shifts));
         }
 
         if (!isInitialCloudLoad) {
@@ -1346,7 +1405,7 @@ export default function App() {
                       'punch'
                     );
                   });
-                  localStorage.setItem('attend_records', JSON.stringify(serverState.attendanceRecords));
+                  safeSetJson('attend_records', JSON.stringify(serverState.attendanceRecords));
                   return serverState.attendanceRecords;
                 }
                 return prevRecords;
@@ -1356,7 +1415,7 @@ export default function App() {
             if (Array.isArray(serverState.employees) && serverState.employees.length > 0) {
               setEmployees((currentEmps) => {
                 if (!currentEmps || currentEmps.length === 0) {
-                  localStorage.setItem('attend_employees', JSON.stringify(serverState.employees));
+                  safeSetJson('attend_employees', JSON.stringify(serverState.employees));
                   return serverState.employees;
                 }
                 return currentEmps;
@@ -1365,7 +1424,7 @@ export default function App() {
             if (Array.isArray(serverState.branches) && serverState.branches.length > 0) {
               setBranches((currentBranches) => {
                 if (!currentBranches || currentBranches.length === 0) {
-                  localStorage.setItem('attend_branches', JSON.stringify(serverState.branches));
+                  safeSetJson('attend_branches', JSON.stringify(serverState.branches));
                   return serverState.branches;
                 }
                 return currentBranches;
@@ -1393,61 +1452,61 @@ export default function App() {
 
   // Sync to local storage and Cloud Firestore
   useEffect(() => {
-    localStorage.setItem('attend_lang', lang);
+    safeSetJson('attend_lang', lang);
   }, [lang]);
 
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('attend_auth_user', JSON.stringify(currentUser));
+      safeSetJson('attend_auth_user', JSON.stringify(currentUser));
     } else {
       localStorage.removeItem('attend_auth_user');
     }
   }, [currentUser]);
 
   useEffect(() => {
-    localStorage.setItem('attend_branches', JSON.stringify(branches));
+    safeSetJson('attend_branches', JSON.stringify(branches));
   }, [branches]);
 
   useEffect(() => {
-    localStorage.setItem('attend_employees', JSON.stringify(employees));
+    safeSetJson('attend_employees', JSON.stringify(employees));
   }, [employees]);
 
   useEffect(() => {
-    localStorage.setItem('attend_records', JSON.stringify(attendanceRecords));
+    safeSetJson('attend_records', JSON.stringify(attendanceRecords));
   }, [attendanceRecords]);
 
   useEffect(() => {
-    localStorage.setItem('attend_leaves', JSON.stringify(leaveRequests));
+    safeSetJson('attend_leaves', JSON.stringify(leaveRequests));
   }, [leaveRequests]);
 
   useEffect(() => {
-    localStorage.setItem('attend_transfers', JSON.stringify(transferRecords));
+    safeSetJson('attend_transfers', JSON.stringify(transferRecords));
   }, [transferRecords]);
 
   useEffect(() => {
-    localStorage.setItem('attend_branding', JSON.stringify(branding));
+    safeSetJson('attend_branding', JSON.stringify(branding));
     updateDynamicAppBranding(branding, lang);
     applyKhmerTypography(branding.typography, lang);
   }, [branding, lang]);
 
   useEffect(() => {
-    localStorage.setItem('attend_role_permissions', JSON.stringify(rolePermissions));
+    safeSetJson('attend_role_permissions', JSON.stringify(rolePermissions));
   }, [rolePermissions]);
 
   useEffect(() => {
-    localStorage.setItem('attend_system_settings', JSON.stringify(systemSettings));
+    safeSetJson('attend_system_settings', JSON.stringify(systemSettings));
   }, [systemSettings]);
 
   useEffect(() => {
-    localStorage.setItem('attend_audit_logs', JSON.stringify(auditLogs));
+    safeSetJson('attend_audit_logs', JSON.stringify(auditLogs));
   }, [auditLogs]);
 
   useEffect(() => {
-    localStorage.setItem('attend_admin_profile', JSON.stringify(adminProfile));
+    safeSetJson('attend_admin_profile', JSON.stringify(adminProfile));
   }, [adminProfile]);
 
   useEffect(() => {
-    localStorage.setItem('attend_shifts', JSON.stringify(shifts));
+    safeSetJson('attend_shifts', JSON.stringify(shifts));
   }, [shifts]);
 
   // Automatically sync any local modifications to Firebase Cloud Firestore
@@ -1516,7 +1575,7 @@ export default function App() {
 
     const newRecordsList = [newRecord, ...attendanceRecords.filter((r) => r.id !== newRecord.id)];
     setAttendanceRecords(newRecordsList);
-    localStorage.setItem('attend_records', JSON.stringify(newRecordsList));
+    safeSetJson('attend_records', JSON.stringify(newRecordsList));
 
     const empName = lang === 'km' ? (newRecord.employeeNameKh || newRecord.employeeNameEn) : (newRecord.employeeNameEn || newRecord.employeeNameKh);
     const actionType = newRecord.type === 'check_in' 
@@ -1579,7 +1638,7 @@ export default function App() {
     let nextEmployees: Employee[] = [];
     setEmployees((prev) => {
       nextEmployees = [preparedEmp, ...prev];
-      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
     realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
@@ -1595,7 +1654,7 @@ export default function App() {
     // 1. Synchronously update in-memory and localStorage
     const nextEmployees = employees.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
     setEmployees(nextEmployees);
-    localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+    safeSetJson('attend_employees', JSON.stringify(nextEmployees));
 
     const nextRecords = attendanceRecords.map((r) =>
       r.employeeId === updatedEmp.id
@@ -1608,7 +1667,7 @@ export default function App() {
         : r
     );
     setAttendanceRecords(nextRecords);
-    localStorage.setItem('attend_records', JSON.stringify(nextRecords));
+    safeSetJson('attend_records', JSON.stringify(nextRecords));
 
     // Also sync currentUser if current session belongs to this employee
     setCurrentUser((curr) => {
@@ -1627,7 +1686,7 @@ export default function App() {
           branchId: updatedEmp.branchId,
           roleTitle: updatedEmp.role,
         };
-        localStorage.setItem('attend_auth_user', JSON.stringify(syncedUser));
+        safeSetJson('attend_auth_user', JSON.stringify(syncedUser));
         return syncedUser;
       }
       return curr;
@@ -1656,7 +1715,7 @@ export default function App() {
     let nextEmployees: Employee[] = [];
     setEmployees((prev) => {
       nextEmployees = prev.filter((e) => e.id !== id);
-      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
     realtimeService.emit('DELETE_EMPLOYEE', { id });
@@ -1670,7 +1729,7 @@ export default function App() {
 
   const handleUpdateEmployeesList = (nextEmployees: Employee[]) => {
     setEmployees(nextEmployees);
-    localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+    safeSetJson('attend_employees', JSON.stringify(nextEmployees));
     realtimeService.emit('UPDATE_EMPLOYEES_BATCH', nextEmployees);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/batch', {
@@ -1684,7 +1743,7 @@ export default function App() {
     let nextBranches: Branch[] = [];
     setBranches((prev) => {
       nextBranches = prev.map((b) => (b.id === updatedBranch.id ? updatedBranch : b));
-      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
     realtimeService.emit('UPDATE_BRANCH', updatedBranch);
@@ -1813,7 +1872,7 @@ export default function App() {
     let nextBranches: Branch[] = [];
     setBranches((prev) => {
       nextBranches = [...prev, newBranch];
-      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
     realtimeService.emit('UPDATE_BRANCH', newBranch);
@@ -1829,7 +1888,7 @@ export default function App() {
     let nextBranches: Branch[] = [];
     setBranches((prev) => {
       nextBranches = prev.filter((b) => b.id !== branchId);
-      localStorage.setItem('attend_branches', JSON.stringify(nextBranches));
+      safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
     realtimeService.emit('DELETE_BRANCH', { id: branchId });
@@ -1844,7 +1903,7 @@ export default function App() {
   const handleAddBranchType = (typeConfig: BranchTypeConfig) => {
     setBranchTypes((prev) => {
       const updated = [...prev, typeConfig];
-      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      safeSetJson('attend_branch_types', JSON.stringify(updated));
       return updated;
     });
     fetch('/api/branch-types/save', {
@@ -1857,7 +1916,7 @@ export default function App() {
   const handleUpdateBranchType = (typeConfig: BranchTypeConfig) => {
     setBranchTypes((prev) => {
       const updated = prev.map((t) => (t.id === typeConfig.id ? typeConfig : t));
-      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      safeSetJson('attend_branch_types', JSON.stringify(updated));
       return updated;
     });
     fetch('/api/branch-types/save', {
@@ -1870,7 +1929,7 @@ export default function App() {
   const handleDeleteBranchType = (typeId: string) => {
     setBranchTypes((prev) => {
       const updated = prev.filter((t) => t.id !== typeId);
-      localStorage.setItem('attend_branch_types', JSON.stringify(updated));
+      safeSetJson('attend_branch_types', JSON.stringify(updated));
       return updated;
     });
     fetch('/api/branch-types/delete', {
@@ -2136,7 +2195,7 @@ export default function App() {
     let nextTransfers: BranchTransferRecord[] = [];
     setTransferRecords((prev) => {
       nextTransfers = [record, ...prev];
-      localStorage.setItem('attend_transfers', JSON.stringify(nextTransfers));
+      safeSetJson('attend_transfers', JSON.stringify(nextTransfers));
       return nextTransfers;
     });
 
@@ -2153,7 +2212,7 @@ export default function App() {
         }
         return e;
       });
-      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+      safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
 
@@ -2166,7 +2225,7 @@ export default function App() {
       setCurrentUser((prev) => {
         if (!prev) return null;
         const updated = { ...prev, branchId: toBranchId };
-        localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+        safeSetJson('attend_auth_user', JSON.stringify(updated));
         return updated;
       });
     }
@@ -2214,11 +2273,11 @@ export default function App() {
     if (incomingProfile) {
       nextAdminProfile = incomingProfile;
       setAdminProfile(incomingProfile);
-      localStorage.setItem('attend_admin_profile', JSON.stringify(incomingProfile));
+      safeSetJson('attend_admin_profile', JSON.stringify(incomingProfile));
       setCurrentUser((curr) => {
         if (!curr || curr.role === 'admin' || curr.id === 'user_admin' || curr.username === 'admin' || curr.id === incomingProfile.id) {
           const updated = { ...(curr || {}), ...incomingProfile };
-          localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+          safeSetJson('attend_auth_user', JSON.stringify(updated));
           return updated;
         }
         return curr;
@@ -2299,10 +2358,10 @@ export default function App() {
       setTransferRecords([]);
       setAuditLogs([]);
 
-      localStorage.setItem('attend_records', JSON.stringify([]));
-      localStorage.setItem('attend_leaves', JSON.stringify([]));
-      localStorage.setItem('attend_transfers', JSON.stringify([]));
-      localStorage.setItem('attend_audit_logs', JSON.stringify([]));
+      safeSetJson('attend_records', JSON.stringify([]));
+      safeSetJson('attend_leaves', JSON.stringify([]));
+      safeSetJson('attend_transfers', JSON.stringify([]));
+      safeSetJson('attend_audit_logs', JSON.stringify([]));
     } else {
       // 100% Blank Brand New Start
       freshBranches = [DEFAULT_STARTER_BRANCH];
@@ -2314,12 +2373,12 @@ export default function App() {
       setAuditLogs([]);
       setSelectedBranchId('all');
 
-      localStorage.setItem('attend_branches', JSON.stringify(freshBranches));
-      localStorage.setItem('attend_employees', JSON.stringify([]));
-      localStorage.setItem('attend_records', JSON.stringify([]));
-      localStorage.setItem('attend_leaves', JSON.stringify([]));
-      localStorage.setItem('attend_transfers', JSON.stringify([]));
-      localStorage.setItem('attend_audit_logs', JSON.stringify([]));
+      safeSetJson('attend_branches', JSON.stringify(freshBranches));
+      safeSetJson('attend_employees', JSON.stringify([]));
+      safeSetJson('attend_records', JSON.stringify([]));
+      safeSetJson('attend_leaves', JSON.stringify([]));
+      safeSetJson('attend_transfers', JSON.stringify([]));
+      safeSetJson('attend_audit_logs', JSON.stringify([]));
     }
 
     // Sync reset to Cloud Firestore
@@ -2357,11 +2416,11 @@ export default function App() {
 
   const handleUpdateUserProfile = (updatedUser: AuthUser, updatedEmp?: Employee) => {
     setCurrentUser(updatedUser);
-    localStorage.setItem('attend_auth_user', JSON.stringify(updatedUser));
+    safeSetJson('attend_auth_user', JSON.stringify(updatedUser));
 
     if (updatedUser.role === 'admin' || updatedUser.id === 'user_admin' || updatedUser.username === 'admin') {
       setAdminProfile(updatedUser);
-      localStorage.setItem('attend_admin_profile', JSON.stringify(updatedUser));
+      safeSetJson('attend_admin_profile', JSON.stringify(updatedUser));
       syncStateToCloudImmediate({ adminProfile: updatedUser });
     }
 
@@ -2407,7 +2466,7 @@ export default function App() {
 
   const handleLogin = (user: AuthUser) => {
     setCurrentUser(user);
-    localStorage.setItem('attend_auth_user', JSON.stringify(user));
+    safeSetJson('attend_auth_user', JSON.stringify(user));
     setShowLoginModal(false);
     if (user.role === 'employee') {
       setActiveTab('portal');

@@ -129,7 +129,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const handleStyleChange = (style: LoginStyleOption) => {
     setCurrentStyle(style);
-    localStorage.setItem('hrms_login_style', style);
+    try {
+      localStorage.setItem('hrms_login_style', style);
+    } catch (_) {}
     if (onUpdateBranding) {
       onUpdateBranding({
         ...branding,

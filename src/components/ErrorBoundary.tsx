@@ -27,9 +27,44 @@ export class ErrorBoundary extends Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('AMS ErrorBoundary caught an unhandled error:', error, errorInfo);
     this.setState({ errorInfo });
+
+    const msg = (error?.message || '').toLowerCase();
+    const isQuota = msg.includes('quota') || msg.includes('exceeded') || error.name === 'QuotaExceededError';
+
+    if (isQuota) {
+      try {
+        console.warn('[ErrorBoundary] QuotaExceededError detected. Auto-purging bloated caches...');
+        const keysToClear = [
+          'attend_records',
+          'attend_staff_alerts',
+          'attend_audit_logs',
+          'attend_transfers',
+          'attend_leaves',
+          'hrms_backup_snapshots',
+        ];
+        keysToClear.forEach((k) => {
+          try { localStorage.removeItem(k); } catch (_) {}
+        });
+
+        // Auto-heal once seamlessly without trapping the user
+        const autoHealed = sessionStorage.getItem('quota_auto_healed');
+        if (!autoHealed) {
+          sessionStorage.setItem('quota_auto_healed', '1');
+          setTimeout(() => {
+            window.location.reload();
+          }, 300);
+        }
+      } catch (_) {}
+    }
   }
 
   private handleReload = () => {
+    try {
+      // Clear heavy cache to ensure safe reload
+      ['attend_records', 'attend_staff_alerts', 'attend_audit_logs'].forEach((k) => {
+        try { localStorage.removeItem(k); } catch (_) {}
+      });
+    } catch (_) {}
     window.location.reload();
   };
 
