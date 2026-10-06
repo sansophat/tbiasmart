@@ -24,6 +24,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { AttendanceRecord, LeaveRequest, Language, AuthUser, Employee } from '../types';
+import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 
 export interface ActionAlertItem {
   id: string;
@@ -302,12 +303,10 @@ export const RealtimeActionAlertCenter: React.FC<RealtimeActionAlertCenterProps>
                       <div className="relative shrink-0">
                         {item.actorAvatar ? (
                           <img
-                            src={item.actorAvatar}
+                            src={resolveAvatar(item.actorAvatar, null, item.actorName || 'Staff')}
                             alt={item.actorName || ''}
                             className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100 shadow-2xs"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                            }}
+                            onError={(e) => handleAvatarError(e, item.actorName || 'Staff')}
                           />
                         ) : (
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${

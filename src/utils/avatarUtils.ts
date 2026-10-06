@@ -43,31 +43,45 @@ export function getInitials(name?: string): string {
 
 /**
  * Generates an indestructible inline SVG data URI avatar with the employee's initial.
- * Does not require external internet connection, never 404s, never fails CORS.
+ * Fully URL-encoded with charset=utf-8, does not break on hash (#) color codes, works 100% offline.
  */
 export function getFallbackAvatar(name: string = 'Staff', customBg?: string): string {
   const initial = getInitials(name);
   const bg = customBg || getBgColorForString(name);
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='${bg}'/><text x='50' y='64' font-family='-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' font-size='${initial.length > 1 ? 40 : 46}' font-weight='700' fill='#ffffff' text-anchor='middle'>${encodeURIComponent(initial)}</text></svg>`;
-  return `data:image/svg+xml;utf8,${svg}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="${bg}"/><text x="50" y="55" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="${initial.length > 1 ? 38 : 46}" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${initial}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 export const DEFAULT_AVATAR = getFallbackAvatar('Staff', '#4f46e5');
 
 /**
+ * Helper to check if an avatar string is a usable, non-expired image URL or data URI
+ */
+function isValidAvatarUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed === '""') return false;
+  if (trimmed.startsWith('blob:')) return false; // Expired browser blob URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:image/')) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resolves avatar with cascade: candidate 1 -> candidate 2 -> inline SVG initial avatar.
- * Ignores expired blob URLs.
+ * Ignores expired blob URLs, null/undefined strings, and invalid patterns.
  */
 export function resolveAvatar(
   primary?: string | null,
   secondary?: string | null,
   nameForFallback: string = 'Staff'
 ): string {
-  if (primary && typeof primary === 'string' && primary.trim() && !primary.startsWith('blob:')) {
-    return primary.trim();
+  if (isValidAvatarUrl(primary)) {
+    return primary!.trim();
   }
-  if (secondary && typeof secondary === 'string' && secondary.trim() && !secondary.startsWith('blob:')) {
-    return secondary.trim();
+  if (isValidAvatarUrl(secondary)) {
+    return secondary!.trim();
   }
   return getFallbackAvatar(nameForFallback);
 }

@@ -350,7 +350,13 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
         ) : (
           <div className="space-y-3.5">
             {filteredRequests.map((req) => {
-              const emp = employees.find((e) => e.id === req.employeeId || e.code === req.employeeCode);
+              const emp = employees.find(
+                (e) =>
+                  e.id === req.employeeId ||
+                  e.code?.toLowerCase() === req.employeeCode?.toLowerCase() ||
+                  (e.nameEn && req.employeeNameEn && e.nameEn.toLowerCase() === req.employeeNameEn.toLowerCase()) ||
+                  (e.nameKh && req.employeeNameKh && e.nameKh === req.employeeNameKh)
+              );
               const branch = branches.find((b) => b.id === req.branchId || b.id === emp?.branchId);
               const badge = getCategoryBadge(req.category, req.type);
               const BadgeIcon = badge.icon;

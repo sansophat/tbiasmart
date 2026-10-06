@@ -427,17 +427,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             {row.dayOfWeek.split(' ')[0]}
           </span>
         );
-      case 'name':
+      case 'name': {
+        const matchedEmp = employees.find(
+          (e) => e.id === row.employeeId || e.code === row.enrollId || (e.nameEn && row.nameEn && e.nameEn.toLowerCase() === row.nameEn.toLowerCase())
+        );
+        const avatarSrc = resolveAvatar(
+          matchedEmp?.avatar,
+          row.avatar,
+          row.nameEn || row.nameKh
+        );
         return (
-          <div className="min-w-0 overflow-hidden leading-snug">
-            <div className={`font-bold truncate ${isSun ? 'text-rose-800' : isDayOff ? 'text-amber-900' : isLeave ? 'text-purple-900' : 'text-slate-800'}`}>
-              {lang === 'km' ? row.nameKh : row.nameEn}
-            </div>
-            <div className="text-[0.8em] text-slate-500 truncate mt-0.5">
-              {row.role}
+          <div className="flex items-center space-x-2.5 min-w-0 py-0.5">
+            <img
+              src={avatarSrc}
+              alt={row.nameEn || 'Staff'}
+              referrerPolicy="no-referrer"
+              className="w-7 h-7 rounded-lg object-cover border border-slate-200 shadow-2xs shrink-0 bg-slate-100"
+              onError={(e) => handleAvatarError(e, row.nameEn || row.nameKh)}
+            />
+            <div className="min-w-0 overflow-hidden leading-snug">
+              <div className={`font-bold truncate ${isSun ? 'text-rose-800' : isDayOff ? 'text-amber-900' : isLeave ? 'text-purple-900' : 'text-slate-800'}`}>
+                {lang === 'km' ? row.nameKh : row.nameEn}
+              </div>
+              <div className="text-[0.8em] text-slate-500 truncate">
+                {row.role}
+              </div>
             </div>
           </div>
         );
+      }
       case 'employeeId':
         return (
           <span className="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 whitespace-nowrap">
@@ -532,15 +550,33 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             {summary.enrollId}
           </span>
         );
-      case 'name':
+      case 'name': {
+        const matchedEmp = employees.find(
+          (e) => e.id === summary.employeeId || e.code === summary.enrollId || (e.nameEn && summary.nameEn && e.nameEn.toLowerCase() === summary.nameEn.toLowerCase())
+        );
+        const avatarSrc = resolveAvatar(
+          matchedEmp?.avatar,
+          summary.avatar,
+          summary.nameEn || summary.nameKh
+        );
         return (
-          <div className="min-w-0 overflow-hidden leading-snug">
-            <div className="font-bold text-slate-900 truncate">
-              {lang === 'km' ? summary.nameKh : summary.nameEn}
+          <div className="flex items-center space-x-2.5 min-w-0 py-0.5">
+            <img
+              src={avatarSrc}
+              alt={summary.nameEn || 'Staff'}
+              referrerPolicy="no-referrer"
+              className="w-7 h-7 rounded-lg object-cover border border-slate-200 shadow-2xs shrink-0 bg-slate-100"
+              onError={(e) => handleAvatarError(e, summary.nameEn || summary.nameKh)}
+            />
+            <div className="min-w-0 overflow-hidden leading-snug">
+              <div className="font-bold text-slate-900 truncate">
+                {lang === 'km' ? summary.nameKh : summary.nameEn}
+              </div>
+              <div className="text-[0.8em] text-slate-400 truncate">({summary.nameEn})</div>
             </div>
-            <div className="text-[0.8em] text-slate-400 truncate mt-0.5">({summary.nameEn})</div>
           </div>
         );
+      }
       case 'department':
         return <span className="font-semibold text-slate-700 truncate block">{summary.department}</span>;
       case 'role':
@@ -1973,8 +2009,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             <span className="w-6 text-center font-mono text-xs font-bold text-slate-400">
                               {idx + 1}
                             </span>
-                            <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
-                              {summary.enrollId}
+                            <div className="relative shrink-0">
+                              <img
+                                src={resolveAvatar(
+                                  employees.find((e) => e.id === summary.employeeId || e.code === summary.enrollId || (e.nameEn && summary.nameEn && e.nameEn.toLowerCase() === summary.nameEn.toLowerCase()))?.avatar,
+                                  summary.avatar,
+                                  summary.nameEn || summary.nameKh
+                                )}
+                                alt={summary.nameEn}
+                                referrerPolicy="no-referrer"
+                                className="w-11 h-11 rounded-xl object-cover border border-slate-200 shadow-2xs bg-slate-100"
+                                onError={(e) => handleAvatarError(e, summary.nameEn || summary.nameKh)}
+                              />
+                              <span className="absolute -bottom-1 -right-1 font-mono text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1 rounded border border-indigo-100 shadow-2xs">
+                                {summary.enrollId}
+                              </span>
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
@@ -2422,7 +2471,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 ) : (
                   filteredRawRecords.map((rec) => {
                     const matchedEmp = employees.find(
-                      (e) => e.id === rec.employeeId || e.code === rec.employeeCode
+                      (e) =>
+                        e.id === rec.employeeId ||
+                        e.code?.toLowerCase() === rec.employeeCode?.toLowerCase() ||
+                        (e.nameEn && rec.employeeNameEn && e.nameEn.toLowerCase() === rec.employeeNameEn.toLowerCase()) ||
+                        (e.nameKh && rec.employeeNameKh && e.nameKh === rec.employeeNameKh)
                     );
                     const avatarSrc = resolveAvatar(
                       matchedEmp?.avatar,
@@ -2734,7 +2787,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredRequests.map((req) => {
-                      const emp = employees.find((e) => e.id === req.employeeId || e.code === req.employeeCode);
+                      const emp = employees.find(
+                        (e) =>
+                          e.id === req.employeeId ||
+                          e.code?.toLowerCase() === req.employeeCode?.toLowerCase() ||
+                          (e.nameEn && req.employeeNameEn && e.nameEn.toLowerCase() === req.employeeNameEn.toLowerCase()) ||
+                          (e.nameKh && req.employeeNameKh && e.nameKh === req.employeeNameKh)
+                      );
                       const branch = branches.find((b) => b.id === req.branchId || b.id === emp?.branchId);
                       const isJustDone = justActionedLeaveIds.has(req.id);
 

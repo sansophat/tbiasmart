@@ -217,8 +217,23 @@ export default function App() {
   });
 
   // Real-time Action Alerts State (instant feedback for all staff activities)
+  const [alertsClearedAt, setAlertsClearedAt] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+    } catch {
+      return 0;
+    }
+  });
+
   const [actionAlerts, setActionAlerts] = useState<ActionAlertItem[]>(() => {
-    return safeGetJson('attend_staff_alerts', []);
+    const saved = safeGetJson('attend_staff_alerts', []);
+    try {
+      const clearedAt = Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+      if (clearedAt > 0 && Array.isArray(saved)) {
+        return saved.filter((a: ActionAlertItem) => (a.rawTimestamp || 0) > clearedAt);
+      }
+    } catch {}
+    return Array.isArray(saved) ? saved : [];
   });
 
   const addActionAlert = (alert: Omit<ActionAlertItem, 'id' | 'timestamp'> & { id?: string; timestamp?: string; rawTimestamp?: number }) => {
@@ -241,10 +256,15 @@ export default function App() {
   };
 
   const handleClearAlerts = () => {
+    const now = Date.now();
+    setAlertsClearedAt(now);
+    try {
+      localStorage.setItem('attend_alerts_cleared_at', String(now));
+      localStorage.setItem('attend_staff_alerts', JSON.stringify([]));
+    } catch {}
     setActionAlerts([]);
-    localStorage.removeItem('attend_staff_alerts');
     fetch('/api/staff/alerts', { method: 'DELETE' }).catch(() => {});
-    realtimeService.emit('ACTION_ALERT', { action: 'CLEAR_ALL' });
+    realtimeService.emit('ACTION_ALERT', { action: 'CLEAR_ALL', clearedAt: now });
   };
 
   const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
@@ -255,33 +275,43 @@ export default function App() {
 
   // Keep actionAlerts populated with pending leave requests and recent staff attendance punches, sorted chronologically
   useEffect(() => {
-    const recentPunches: ActionAlertItem[] = attendanceRecords.slice(0, 30).map((r) => {
-      const empName = lang === 'km' ? (r.employeeNameKh || r.employeeNameEn) : (r.employeeNameEn || r.employeeNameKh);
-      const actionType = r.type === 'check_in' 
-        ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
-        : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
-      const timeMs = r.timestamp ? new Date(r.timestamp).getTime() : Date.now();
-      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString(lang === 'km' ? 'km-KH' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    const recentPunches: ActionAlertItem[] = attendanceRecords
+      .filter((r) => {
+        const timeMs = r.timestamp ? new Date(r.timestamp).getTime() : 0;
+        return timeMs > alertsClearedAt;
+      })
+      .slice(0, 30)
+      .map((r) => {
+        const empName = lang === 'km' ? (r.employeeNameKh || r.employeeNameEn) : (r.employeeNameEn || r.employeeNameKh);
+        const actionType = r.type === 'check_in' 
+          ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
+          : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
+        const timeMs = r.timestamp ? new Date(r.timestamp).getTime() : Date.now();
+        const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString(lang === 'km' ? 'km-KH' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
-      return {
-        id: `alert_att_${r.id}`,
-        type: 'punch' as const,
-        titleKh: r.isWithinGeofence ? 'វត្តមានស្កេន GPS ជោគជ័យ' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
-        titleEn: r.isWithinGeofence ? 'GPS Scan Punch Verified' : '⚠️ Geofence Distance Warning',
-        detailKh: `${empName} ${actionType} - ${r.branchNameKh || r.branchNameEn || ''} (${r.isWithinGeofence ? 'ត្រឹមត្រូវតាម GPS' : `លើសដែនកំណត់ ${Math.round(r.distanceToBranch || 0)}m`})`,
-        detailEn: `${empName} ${actionType} - ${r.branchNameEn || ''} (${r.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(r.distanceToBranch || 0)}m Out of Range`})`,
-        timestamp: timeStr || r.timestamp || '',
-        rawTimestamp: timeMs,
-        actorName: empName,
-        actorAvatar: r.employeeAvatar,
-        branchId: r.branchId,
-        branchName: r.branchNameKh || r.branchNameEn,
-        isUnread: false,
-      };
-    });
+        return {
+          id: `alert_att_${r.id}`,
+          type: 'punch' as const,
+          titleKh: r.isWithinGeofence ? 'វត្តមានស្កេន GPS ជោគជ័យ' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
+          titleEn: r.isWithinGeofence ? 'GPS Scan Punch Verified' : '⚠️ Geofence Distance Warning',
+          detailKh: `${empName} ${actionType} - ${r.branchNameKh || r.branchNameEn || ''} (${r.isWithinGeofence ? 'ត្រឹមត្រូវតាម GPS' : `លើសដែនកំណត់ ${Math.round(r.distanceToBranch || 0)}m`})`,
+          detailEn: `${empName} ${actionType} - ${r.branchNameEn || ''} (${r.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(r.distanceToBranch || 0)}m Out of Range`})`,
+          timestamp: timeStr || r.timestamp || '',
+          rawTimestamp: timeMs,
+          actorName: empName,
+          actorAvatar: r.employeeAvatar,
+          branchId: r.branchId,
+          branchName: r.branchNameKh || r.branchNameEn,
+          isUnread: false,
+        };
+      });
 
     const pendingLeaves: ActionAlertItem[] = leaveRequests
-      .filter((r) => r.status === 'pending')
+      .filter((r) => {
+        if (r.status !== 'pending') return false;
+        const timeMs = r.appliedAt ? new Date(r.appliedAt).getTime() : 0;
+        return timeMs > alertsClearedAt;
+      })
       .map((r) => {
         const timeMs = r.appliedAt ? new Date(r.appliedAt).getTime() : Date.now();
         return {
@@ -301,9 +331,9 @@ export default function App() {
       });
 
     setActionAlerts((prev) => {
-      // Retain live alerts (such as staff logins and recent active punches) that were pushed live
+      // Retain live alerts (such as staff logins and recent active punches) that were pushed live and occurred after alertsClearedAt
       const liveCustomAlerts = prev.filter(
-        (a) => !a.id.startsWith('alert_leave_')
+        (a) => !a.id.startsWith('alert_leave_') && !a.id.startsWith('alert_att_') && (a.rawTimestamp || 0) > alertsClearedAt
       );
       const combined = [
         ...liveCustomAlerts,
@@ -322,7 +352,7 @@ export default function App() {
       result.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
       return result.slice(0, 50);
     });
-  }, [leaveRequests, attendanceRecords, lang]);
+  }, [leaveRequests, attendanceRecords, lang, alertsClearedAt]);
 
   // Transfer modal state
   const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
@@ -824,8 +854,13 @@ export default function App() {
         );
       } else if (type === 'ACTION_ALERT' && payload) {
         if (payload.action === 'CLEAR_ALL') {
+          const clearedTime = payload.clearedAt || Date.now();
+          setAlertsClearedAt(clearedTime);
+          try {
+            localStorage.setItem('attend_alerts_cleared_at', String(clearedTime));
+            localStorage.setItem('attend_staff_alerts', JSON.stringify([]));
+          } catch {}
           setActionAlerts([]);
-          localStorage.removeItem('attend_staff_alerts');
         }
       } else if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload) {
         // If message was originated by this client, skip duplicate toast and chime
