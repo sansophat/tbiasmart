@@ -49,6 +49,8 @@ export interface AuthUser {
   employeeCode?: string;
   branchId?: string;
   email?: string;
+  phone?: string;
+  address?: string;
   roleTitle?: string;
   pinCode?: string;
   password?: string;
@@ -71,6 +73,7 @@ export interface Employee {
   avatar: string;
   phone: string;
   email: string;
+  address?: string;
   status: 'active' | 'on_leave' | 'inactive';
   pinCode?: string;
   hourlyRate?: number;

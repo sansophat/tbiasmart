@@ -71,9 +71,10 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
   const [avatar, setAvatar] = useState<string>(currentUser.avatar || AVATAR_PRESETS[0]);
   const [nameKh, setNameKh] = useState<string>(currentUser.nameKh || currentEmp?.nameKh || '');
   const [nameEn, setNameEn] = useState<string>(currentUser.nameEn || currentEmp?.nameEn || '');
-  const [phone, setPhone] = useState<string>(currentEmp?.phone || '012 345 678');
-  const [email, setEmail] = useState<string>(currentUser.email || currentEmp?.email || 'staff@company.com');
-  const [pinCode, setPinCode] = useState<string>(currentEmp?.pinCode || '1234');
+  const [phone, setPhone] = useState<string>(currentUser.phone || currentEmp?.phone || '');
+  const [email, setEmail] = useState<string>(currentUser.email || currentEmp?.email || '');
+  const [address, setAddress] = useState<string>(currentUser.address || currentEmp?.address || '');
+  const [pinCode, setPinCode] = useState<string>(currentEmp?.pinCode || currentUser.pinCode || '1234');
   const [newPassword, setNewPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -149,7 +150,9 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
       avatar,
       nameKh: isEmployee ? currentUser.nameKh : nameKh.trim(),
       nameEn: isEmployee ? currentUser.nameEn : nameEn.trim(),
-      email: isEmployee ? currentUser.email : email.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      address: address.trim(),
       pinCode: pinCode.trim(),
       password: newPassword ? newPassword : currentUser.password,
     };
@@ -160,8 +163,9 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
           avatar,
           nameKh: isEmployee ? currentEmp.nameKh : nameKh.trim(),
           nameEn: isEmployee ? currentEmp.nameEn : nameEn.trim(),
-          phone: isEmployee ? currentEmp.phone : phone.trim(),
-          email: isEmployee ? currentEmp.email : email.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          address: address.trim(),
           pinCode: pinCode.trim(),
           password: newPassword ? newPassword : currentEmp.password,
         }
@@ -171,12 +175,8 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
     setSuccessMsg(
       lang === 'km'
-        ? isEmployee 
-          ? 'រូបភាព Profile និងលេខសម្ងាត់ PIN ៤ ខ្ទង់ ត្រូវបានរក្សាទុកដោយជោគជ័យ!' 
-          : 'ព័ត៌មានគណនី និងរូបភាព Profile ត្រូវបានរក្សាទុកដោយជោគជ័យ!'
-        : isEmployee
-          ? 'Profile picture & 4-digit PIN updated successfully!'
-          : 'Profile details & avatar updated successfully!'
+        ? 'ព័ត៌មានផ្ទាល់ខ្លួន លេខទូរស័ព្ទ អ៊ីមែល អាសយដ្ឋាន និងលេខសម្ងាត់ PIN ត្រូវបានរក្សាទុកដោយជោគជ័យ!'
+        : 'Official profile details, phone, email, address & 4-digit PIN updated successfully!'
     );
     setErrorMsg('');
     setNewPassword('');
@@ -376,17 +376,24 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
           </div>
         </div>
 
-        {/* 3. General Information Card (READ-ONLY FOR EMPLOYEE, Editable for Admin) */}
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-              <User className="w-4 h-4 text-indigo-600" />
-              <span>{lang === 'km' ? '៣. ព័ត៌មានផ្ទាល់ខ្លួន & សាខា (កំណត់ដោយ Admin)' : '3. Official Info & Branch (Set by Admin)'}</span>
-            </h3>
+        {/* 3. General Information Card (Official Info, Contact & Address) */}
+        <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <User className="w-4 h-4 text-indigo-600" />
+                <span>{lang === 'km' ? '៣. ព័ត៌មានផ្ទាល់ខ្លួន ទំនាក់ទំនង & អាសយដ្ឋាន' : '3. Official Info, Contact & Address'}</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {lang === 'km' 
+                  ? 'អ្នកអាចកែប្រែលេខទូរស័ព្ទ អ៊ីមែល និងអាសយដ្ឋានបច្ចុប្បន្នរបស់អ្នកបានគ្រប់ពេល។ ឈ្មោះ និងសាខាត្រូវគ្រប់គ្រងដោយរដ្ឋបាល។'
+                  : 'You can update your personal contact phone, email, and current address anytime. Official name and branch are managed by Admin.'}
+              </p>
+            </div>
             {isEmployee && (
-              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200 flex items-center gap-1">
-                <Lock className="w-3 h-3 text-slate-500" />
-                {lang === 'km' ? 'ចាក់សោ (កំណត់ដោយ Admin)' : 'Locked • Managed by Admin'}
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 flex items-center gap-1 shrink-0 self-start sm:self-auto">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                {lang === 'km' ? 'កែប្រែទំនាក់ទំនងបាន' : 'Contact Info Editable'}
               </span>
             )}
           </div>
@@ -396,7 +403,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
                 <span>{lang === 'km' ? 'ឈ្មោះជាភាសាខ្មែរ (Khmer Name):' : 'Full Name in Khmer:'}</span>
-                {isEmployee && <span className="text-[10px] text-slate-400">🔒 Read-only</span>}
+                {isEmployee && <span className="text-[10px] text-slate-400">🔒 {lang === 'km' ? 'កំណត់ដោយ Admin' : 'Admin Managed'}</span>}
               </label>
               <input
                 type="text"
@@ -416,7 +423,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
                 <span>{lang === 'km' ? 'ឈ្មោះជាភាសាអង់គ្លេស (English Name):' : 'Full Name in English:'}</span>
-                {isEmployee && <span className="text-[10px] text-slate-400">🔒 Read-only</span>}
+                {isEmployee && <span className="text-[10px] text-slate-400">🔒 {lang === 'km' ? 'កំណត់ដោយ Admin' : 'Admin Managed'}</span>}
               </label>
               <input
                 type="text"
@@ -436,7 +443,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
                 <span>{lang === 'km' ? 'ទីតាំងសាខាដែលបានចាត់តាំង (Assigned Branch):' : 'Assigned Branch Location:'}</span>
-                <span className="text-[10px] text-indigo-700 font-bold">🔒 Admin Transfer Only</span>
+                <span className="text-[10px] text-indigo-700 font-bold">🔒 {lang === 'km' ? 'ផ្ទេរដោយ Admin' : 'Admin Transfer Only'}</span>
               </label>
               <div className="relative">
                 <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -453,7 +460,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
                 <span>{lang === 'km' ? 'អត្តលេខបុគ្គលិក (Employee Code):' : 'Employee ID Code:'}</span>
-                <span className="text-[10px] text-slate-400">🔒 Read-only</span>
+                <span className="text-[10px] text-slate-400">🔒 {lang === 'km' ? 'សម្រាប់មើល' : 'Read-only'}</span>
               </label>
               <div className="relative">
                 <IdCard className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -466,46 +473,60 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
               </div>
             </div>
 
-            {/* Phone */}
+            {/* Phone (Now fully editable by all users!) */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                <span>{lang === 'km' ? 'លេខទូរស័ព្ទ (Contact Phone):' : 'Phone Number:'}</span>
-                {isEmployee && <span className="text-[10px] text-slate-400">🔒 Admin Managed</span>}
+                <span>{lang === 'km' ? 'លេខទូរស័ព្ទផ្ទាល់ខ្លួន (Phone Number):' : 'Phone Number:'}</span>
+                <span className="text-[10px] text-emerald-600 font-bold">✏️ {lang === 'km' ? 'អាចកែប្រែបាន' : 'Editable'}</span>
               </label>
               <div className="relative">
-                <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Phone className="w-4 h-4 text-indigo-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="text"
-                  disabled={isEmployee}
+                  type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className={`w-full border rounded-xl pl-10 pr-3.5 py-2.5 text-xs font-medium focus:outline-none ${
-                    isEmployee 
-                      ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed' 
-                      : 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-2 focus:ring-indigo-500'
-                  }`}
+                  placeholder="012 345 678"
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:bg-white rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
                 />
               </div>
             </div>
 
-            {/* Email */}
+            {/* Email (Now fully editable by all users!) */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                <span>{lang === 'km' ? 'អ៊ីមែល (Email Address):' : 'Email Address:'}</span>
-                {isEmployee && <span className="text-[10px] text-slate-400">🔒 Admin Managed</span>}
+                <span>{lang === 'km' ? 'អ៊ីមែលទំនាក់ទំនង (Email Address):' : 'Email Address:'}</span>
+                <span className="text-[10px] text-emerald-600 font-bold">✏️ {lang === 'km' ? 'អាចកែប្រែបាន' : 'Editable'}</span>
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-indigo-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
-                  disabled={isEmployee}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className={`w-full border rounded-xl pl-10 pr-3.5 py-2.5 text-xs font-medium focus:outline-none ${
-                    isEmployee 
-                      ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed' 
-                      : 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-2 focus:ring-indigo-500'
-                  }`}
+                  placeholder="yourname@example.com"
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:bg-white rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                />
+              </div>
+            </div>
+
+            {/* Full Current Residential Address (NEW FIELD - spans full width) */}
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                <span>{lang === 'km' ? 'អាសយដ្ឋានបច្ចុប្បន្ន (Residential Address):' : 'Current Residential Address:'}</span>
+                <span className="text-[10px] text-emerald-600 font-bold">✏️ {lang === 'km' ? 'អាចកែប្រែបាន' : 'Editable'}</span>
+              </label>
+              <div className="relative">
+                <MapPin className="w-4 h-4 text-indigo-500 absolute left-3.5 top-3" />
+                <textarea
+                  rows={2}
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder={
+                    lang === 'km'
+                      ? 'ផ្ទះលេខ..., ផ្លូវ..., សង្កាត់/ឃុំ..., ខណ្ឌ/ស្រុក..., រាជធានី/ខេត្ត...'
+                      : 'House No, Street, Sangkat/Commune, Khan/District, City/Province...'
+                  }
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:bg-white rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none transition"
                 />
               </div>
             </div>
@@ -521,8 +542,8 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             <CheckCircle2 className="w-4 h-4" />
             <span>
               {lang === 'km' 
-                ? isEmployee ? 'រក្សាទុក រូបភាព & លេខសម្ងាត់ PIN' : 'រក្សាទុកការកែប្រែទាំងអស់'
-                : isEmployee ? 'Save Photo & 4-Digit PIN' : 'Save Changes'}
+                ? isEmployee ? 'រក្សាទុកព័ត៌មាន & លេខសម្ងាត់ PIN' : 'រក្សាទុកការកែប្រែទាំងអស់'
+                : isEmployee ? 'Save Profile & 4-Digit PIN' : 'Save Changes'}
             </span>
           </button>
         </div>

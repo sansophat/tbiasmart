@@ -270,11 +270,23 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             <h2 className="text-xl sm:text-2xl font-bold text-slate-800">
               {lang === 'km' ? currentEmp.nameKh : currentEmp.nameEn}
             </h2>
-            <p className="text-xs sm:text-sm text-indigo-600 font-medium flex items-center gap-1.5">
-              <span>{currentEmp.role}</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-medium pt-0.5">
+              <span className="text-indigo-600 font-bold">{currentEmp.role}</span>
               <span className="text-slate-300">•</span>
-              <span className="text-slate-600">{branch?.nameEn}</span>
-            </p>
+              <span className="text-slate-600 font-semibold">{branch?.nameEn}</span>
+              {currentEmp.phone && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <span className="font-mono text-slate-600 font-semibold">📞 {currentEmp.phone}</span>
+                </>
+              )}
+              {currentEmp.address && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-600 truncate max-w-[220px]" title={currentEmp.address}>📍 {currentEmp.address}</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 

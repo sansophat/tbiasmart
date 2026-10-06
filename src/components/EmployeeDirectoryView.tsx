@@ -210,6 +210,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [newEmpDeptKh, setNewEmpDeptKh] = useState(DEPARTMENT_OPTIONS[0].nameKh);
   const [newEmpRoleKh, setNewEmpRoleKh] = useState('បារីស្តា / អ្នកឆុងកាហ្វេ');
   const [newEmpPhone, setNewEmpPhone] = useState('012 345 678');
+  const [newEmpAddress, setNewEmpAddress] = useState('');
   const [newEmpPin, setNewEmpPin] = useState(String(Math.floor(1000 + Math.random() * 9000)));
   const [newEmpAvatar, setNewEmpAvatar] = useState(DEFAULT_AVATAR);
   const [newEmpShiftId, setNewEmpShiftId] = useState<string>('shift_cafe_morning');
@@ -227,6 +228,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [editDeptKh, setEditDeptKh] = useState('');
   const [editRoleKh, setEditRoleKh] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editAddress, setEditAddress] = useState('');
   const [editPin, setEditPin] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
   const [editShiftId, setEditShiftId] = useState<string>('shift_office');
@@ -355,6 +357,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
        'employee')
     );
     setEditPhone(emp.phone);
+    setEditAddress(emp.address || '');
     setEditPin(emp.pinCode || '1234');
     setEditAvatar(emp.avatar || DEFAULT_AVATAR);
     setEditShiftId(emp.shiftId || 'shift_office');
@@ -456,6 +459,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       avatar: newEmpAvatar || DEFAULT_AVATAR,
       phone: newEmpPhone,
       email: `${newEmpNameEn.toLowerCase().replace(/\s+/g, '.')}@enterprise.com.kh`,
+      address: newEmpAddress.trim() || undefined,
       status: 'active',
       pinCode: newEmpPin,
       weeklyDayOff: newEmpWeeklyDayOff,
@@ -476,6 +480,8 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     setNewEmpDeptKh(DEPARTMENT_OPTIONS[0].nameKh);
     setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
     setNewEmpAvatar(DEFAULT_AVATAR);
+    setNewEmpPhone('012 345 678');
+    setNewEmpAddress('');
     setNewEmpWeeklyDayOff(1);
   };
 
@@ -503,6 +509,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       scheduledDailyHours: Number(editScheduledHours),
       workingHoursText: `${editShiftStartTime} - ${editShiftEndTime} (${editScheduledHours}h)`,
       phone: editPhone,
+      address: editAddress.trim() || undefined,
       pinCode: editPin,
       avatar: editAvatar || DEFAULT_AVATAR,
       weeklyDayOff: editWeeklyDayOff,
@@ -822,6 +829,14 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                       <span>{lang === 'km' ? 'ទូរស័ព្ទ:' : 'Phone:'}</span>
                       <span className="font-mono text-slate-700 font-medium">{emp.phone}</span>
                     </div>
+                    {emp.address && (
+                      <div className="text-slate-500 flex items-start justify-between gap-1 text-[11px]">
+                        <span className="shrink-0">{lang === 'km' ? 'អាសយដ្ឋាន:' : 'Address:'}</span>
+                        <span className="text-slate-700 font-medium truncate max-w-[150px] text-right" title={emp.address}>
+                          {emp.address}
+                        </span>
+                      </div>
+                    )}
                     <div className="text-slate-500 flex items-center justify-between">
                       <span>{lang === 'km' ? 'ថ្ងៃឈប់សម្រាក (Day Off):' : 'Weekly Day Off:'}</span>
                       <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
@@ -1059,6 +1074,11 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                             <div className="font-mono text-xs text-slate-700 font-medium">
                               {emp.phone || '-'}
                             </div>
+                            {emp.address && (
+                              <div className="text-[10px] text-slate-500 truncate max-w-[140px]" title={emp.address}>
+                                📍 {emp.address}
+                              </div>
+                            )}
                             <div>
                               {emp.trustedDeviceId ? (
                                 <span 
@@ -1404,6 +1424,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   type="text"
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold">
+                  {lang === 'km' ? 'អាសយដ្ឋានបច្ចុប្បន្ន (Residential Address):' : 'Residential Address:'}
+                </label>
+                <input
+                  type="text"
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  placeholder={lang === 'km' ? 'ផ្ទះលេខ, ផ្លូវ, សង្កាត់, រាជធានី/ខេត្ត...' : 'House No, Street, City/Province...'}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -1775,6 +1808,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                   type="text"
                   value={newEmpPhone}
                   onChange={(e) => setNewEmpPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 mb-1 font-semibold">
+                  {lang === 'km' ? 'អាសយដ្ឋានបច្ចុប្បន្ន (Residential Address):' : 'Residential Address:'}
+                </label>
+                <input
+                  type="text"
+                  value={newEmpAddress}
+                  onChange={(e) => setNewEmpAddress(e.target.value)}
+                  placeholder={lang === 'km' ? 'ផ្ទះលេខ, ផ្លូវ, សង្កាត់, រាជធានី/ខេត្ត...' : 'House No, Street, City/Province...'}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>

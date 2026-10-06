@@ -2328,26 +2328,29 @@ export default function App() {
       (updatedUser.nameEn && e.nameEn.toLowerCase() === updatedUser.nameEn.toLowerCase())
     );
 
+    let finalMergedEmp: Employee | undefined = undefined;
     if (matchedEmployee) {
-      const mergedEmp: Employee = {
+      finalMergedEmp = {
         ...matchedEmployee,
         avatar: updatedUser.avatar || matchedEmployee.avatar,
         nameKh: updatedUser.nameKh || matchedEmployee.nameKh,
         nameEn: updatedUser.nameEn || matchedEmployee.nameEn,
         pinCode: updatedUser.pinCode || matchedEmployee.pinCode,
-        phone: (updatedEmp && updatedEmp.phone) || matchedEmployee.phone,
+        phone: (updatedEmp && updatedEmp.phone) || updatedUser.phone || matchedEmployee.phone,
+        email: (updatedEmp && updatedEmp.email) || updatedUser.email || matchedEmployee.email,
+        address: (updatedEmp && updatedEmp.address) || updatedUser.address || matchedEmployee.address || '',
       };
-      handleUpdateEmployee(mergedEmp);
+      handleUpdateEmployee(finalMergedEmp);
     }
 
-    realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: matchedEmployee });
+    realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: finalMergedEmp || matchedEmployee });
 
     fetch('/api/user/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: updatedUser,
-        employee: matchedEmployee,
+        employee: finalMergedEmp || matchedEmployee,
         senderId: realtimeService.getClientId(),
       }),
     }).catch(() => {});
