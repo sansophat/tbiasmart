@@ -212,10 +212,12 @@ export function getEmployeeRosterDay(
     const isSameEmp = 
       (safeEmp.id && rec.employeeId === safeEmp.id) || 
       (safeEmp.code && rec.employeeCode === safeEmp.code) ||
-      (safeEmp.id && rec.employeeId === safeEmp.id.replace('user_', ''));
+      (safeEmp.id && rec.employeeId === safeEmp.id.replace('user_', '')) ||
+      (safeEmp.nameEn && rec.employeeNameEn && safeEmp.nameEn.toLowerCase() === rec.employeeNameEn.toLowerCase());
     if (!isSameEmp) return false;
-    const recDate = typeof rec.timestamp === 'string' ? rec.timestamp.slice(0, 10) : '';
-    return recDate === targetDateStr;
+    const localRecDate = new Date(rec.timestamp).toLocaleDateString('en-CA');
+    const rawDate = typeof rec.timestamp === 'string' ? rec.timestamp.slice(0, 10) : '';
+    return localRecDate === targetDateStr || rawDate === targetDateStr;
   });
 
   // Sort chronologically safely

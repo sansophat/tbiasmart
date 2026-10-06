@@ -149,12 +149,17 @@ export function generateDailyTimesheetRows(
       const isSunRest = isSunday && isEmployeeSundayRest(emp);
       const empLeave = getEmployeeLeaveOnDate(emp, dateStr, leaveRequests);
       
-      // Find punches for this employee on this date
-      const dayPunches = records.filter(
-        (r) =>
-          (r.employeeId === emp.id || r.employeeCode === emp.code) &&
-          r.timestamp.startsWith(dateStr)
-      );
+      // Find punches for this employee on this date (timezone-aware)
+      const dayPunches = records.filter((r) => {
+        if (!r || !r.timestamp) return false;
+        const matchesEmp =
+          r.employeeId === emp.id ||
+          r.employeeCode === emp.code ||
+          (emp.nameEn && r.employeeNameEn && emp.nameEn.toLowerCase() === r.employeeNameEn.toLowerCase());
+        if (!matchesEmp) return false;
+        const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
+        return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
+      });
 
       const checkIns = dayPunches.filter((p) => p.type === 'check_in').sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -315,11 +320,16 @@ export function generateEmployeeMergedSummaries(
       const dayNamesKh = ['អាទិត្យ', 'ច័ន្ទ', 'អង្គារ', 'ពុធ', 'ព្រហស្បតិ៍', 'សុក្រ', 'សៅរ៍'];
       const dayOfWeekStr = `${dayNames[dayIndex]} (${dayNamesKh[dayIndex]})`;
 
-      const dayPunches = records.filter(
-        (r) =>
-          (r.employeeId === emp.id || r.employeeCode === emp.code) &&
-          r.timestamp.startsWith(dateStr)
-      );
+      const dayPunches = records.filter((r) => {
+        if (!r || !r.timestamp) return false;
+        const matchesEmp =
+          r.employeeId === emp.id ||
+          r.employeeCode === emp.code ||
+          (emp.nameEn && r.employeeNameEn && emp.nameEn.toLowerCase() === r.employeeNameEn.toLowerCase());
+        if (!matchesEmp) return false;
+        const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
+        return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
+      });
 
       const checkIns = dayPunches.filter((p) => p.type === 'check_in').sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()

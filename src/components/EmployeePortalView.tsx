@@ -83,9 +83,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     (e) =>
       e &&
       (e.id === currentUser?.employeeId ||
-        (currentUser?.employeeCode && e.code === currentUser.employeeCode) ||
+        (currentUser?.employeeId && e.id === currentUser.employeeId.replace('user_', '')) ||
+        (currentUser?.employeeCode && e.code.toLowerCase() === currentUser.employeeCode.toLowerCase()) ||
         e.id === currentUser?.id ||
-        (currentUser?.username && e.code?.toLowerCase() === currentUser.username.toLowerCase()))
+        `user_${e.id}` === currentUser?.id ||
+        (currentUser?.username && e.code?.toLowerCase() === currentUser.username.toLowerCase()) ||
+        (currentUser?.email && e.email && e.email.toLowerCase() === currentUser.email.toLowerCase()))
   ) || {
     id: currentUser?.employeeId || currentUser?.id || 'emp_temp',
     code: currentUser?.employeeCode || currentUser?.username || 'EMP-USER',
@@ -958,6 +961,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 if (onUpdateUserProfile) {
                   onUpdateUserProfile({ ...currentUser, avatar: newAvatarUrl }, updatedEmp);
                 }
+                try {
+                  const savedUser = localStorage.getItem('attend_auth_user');
+                  if (savedUser) {
+                    const parsed = JSON.parse(savedUser);
+                    localStorage.setItem('attend_auth_user', JSON.stringify({ ...parsed, avatar: newAvatarUrl }));
+                  }
+                } catch (_) {}
                 setShowPhotoModal(false);
               }}
               lang={lang}

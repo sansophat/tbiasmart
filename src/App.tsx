@@ -70,6 +70,10 @@ import {
   testFirestoreConnection,
   getCloudDatabaseState,
   sanitizeForFirestore,
+  saveAttendanceRecordToCloud,
+  saveEmployeeToCloud,
+  saveLeaveRequestToCloud,
+  saveStaffAlertToCloud,
   CloudSystemState 
 } from './utils/firebaseSync';
 
@@ -497,6 +501,31 @@ export default function App() {
         if (bestEmployees && bestEmployees.length > 0) {
           setEmployees(bestEmployees);
           localStorage.setItem('attend_employees', JSON.stringify(bestEmployees));
+          setCurrentUser((curr) => {
+            if (curr && curr.role !== 'admin') {
+              const liveEmp = bestEmployees.find(
+                (e: Employee) =>
+                  e.id === curr.employeeId ||
+                  e.code === curr.employeeCode ||
+                  e.id === curr.id ||
+                  `user_${e.id}` === curr.id ||
+                  (curr.email && e.email && e.email.toLowerCase() === curr.email.toLowerCase())
+              );
+              if (liveEmp) {
+                const updated = {
+                  ...curr,
+                  avatar: liveEmp.avatar || curr.avatar,
+                  branchId: liveEmp.branchId || curr.branchId,
+                  nameKh: liveEmp.nameKh || curr.nameKh,
+                  nameEn: liveEmp.nameEn || curr.nameEn,
+                  roleTitle: liveEmp.role || curr.roleTitle,
+                };
+                localStorage.setItem('attend_auth_user', JSON.stringify(updated));
+                return updated;
+              }
+            }
+            return curr;
+          });
         }
 
         if (bestRecords.length > 0) {
@@ -1485,12 +1514,9 @@ export default function App() {
       }
     }
 
-    let nextRecords: AttendanceRecord[] = [];
-    setAttendanceRecords((prev) => {
-      nextRecords = [newRecord, ...prev.filter((r) => r.id !== newRecord.id)];
-      localStorage.setItem('attend_records', JSON.stringify(nextRecords));
-      return nextRecords;
-    });
+    const newRecordsList = [newRecord, ...attendanceRecords.filter((r) => r.id !== newRecord.id)];
+    setAttendanceRecords(newRecordsList);
+    localStorage.setItem('attend_records', JSON.stringify(newRecordsList));
 
     const empName = lang === 'km' ? (newRecord.employeeNameKh || newRecord.employeeNameEn) : (newRecord.employeeNameEn || newRecord.employeeNameKh);
     const actionType = newRecord.type === 'check_in' 
@@ -1499,7 +1525,7 @@ export default function App() {
 
     const punchTimeMs = newRecord.timestamp ? new Date(newRecord.timestamp).getTime() : Date.now();
 
-    addActionAlert({
+    const punchAlert: ActionAlertItem = {
       id: `alert_att_${newRecord.id}`,
       type: 'punch',
       titleKh: newRecord.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
@@ -1511,8 +1537,10 @@ export default function App() {
       branchId: newRecord.branchId,
       branchName: newRecord.branchNameKh || newRecord.branchNameEn,
       rawTimestamp: punchTimeMs,
+      timestamp: new Date(punchTimeMs).toLocaleTimeString(lang === 'km' ? 'km-KH' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       isUnread: true,
-    });
+    };
+    addActionAlert(punchAlert);
 
     showLiveAlert(
       lang === 'km' ? '🟢 វត្តមានស្កេន GPS ជោគជ័យ' : '🟢 GPS Punch Recorded',
@@ -1520,13 +1548,19 @@ export default function App() {
       'punch'
     );
 
-    // 1. Broadcast to all WebSocket connected peers and BroadcastChannel
+    // 1. Instantly save individual punch record directly to Firestore (real-time broadcast to all devices!)
+    saveAttendanceRecordToCloud(newRecord);
+
+    // 2. Also save action alert to Cloud so Admin alert bell lights up immediately
+    saveStaffAlertToCloud(punchAlert);
+
+    // 3. Broadcast to all WebSocket connected peers and BroadcastChannel
     realtimeService.emit('PUNCH_ATTENDANCE', { record: newRecord });
 
-    // 2. Immediately push to Firestore Cloud Database
-    syncStateToCloudImmediate({ attendanceRecords: sanitizeForFirestore([newRecord, ...attendanceRecords]) });
+    // 4. Background batch sync
+    syncStateToCloudDatabase({ attendanceRecords: newRecordsList });
 
-    // 3. Persist to server system_database.json
+    // 5. Persist to server system_database.json if running
     fetch('/api/attendance/punch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1558,27 +1592,23 @@ export default function App() {
   };
 
   const handleUpdateEmployee = (updatedEmp: Employee) => {
-    let nextEmployees: Employee[] = [];
-    setEmployees((prev) => {
-      nextEmployees = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
-      localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
-      return nextEmployees;
-    });
-    let nextRecords: AttendanceRecord[] = [];
-    setAttendanceRecords((prev) => {
-      nextRecords = prev.map((r) =>
-        r.employeeId === updatedEmp.id
-          ? {
-              ...r,
-              employeeNameKh: updatedEmp.nameKh,
-              employeeNameEn: updatedEmp.nameEn,
-              employeeAvatar: updatedEmp.avatar,
-            }
-          : r
-      );
-      localStorage.setItem('attend_records', JSON.stringify(nextRecords));
-      return nextRecords;
-    });
+    // 1. Synchronously update in-memory and localStorage
+    const nextEmployees = employees.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
+    setEmployees(nextEmployees);
+    localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+
+    const nextRecords = attendanceRecords.map((r) =>
+      r.employeeId === updatedEmp.id
+        ? {
+            ...r,
+            employeeNameKh: updatedEmp.nameKh,
+            employeeNameEn: updatedEmp.nameEn,
+            employeeAvatar: updatedEmp.avatar,
+          }
+        : r
+    );
+    setAttendanceRecords(nextRecords);
+    localStorage.setItem('attend_records', JSON.stringify(nextRecords));
 
     // Also sync currentUser if current session belongs to this employee
     setCurrentUser((curr) => {
@@ -1603,11 +1633,18 @@ export default function App() {
       return curr;
     });
 
+    // 2. Direct single-item Cloud write: immediately persists avatar & info to Firestore!
+    saveEmployeeToCloud(updatedEmp);
+
+    // 3. Realtime event emit
     realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
-    syncStateToCloudImmediate({
+
+    // 4. Background cloud batch sync
+    syncStateToCloudDatabase({
       employees: sanitizeForFirestore(nextEmployees),
       attendanceRecords: sanitizeForFirestore(nextRecords),
     });
+
     fetch('/api/employees/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

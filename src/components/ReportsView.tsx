@@ -764,8 +764,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // Live Punches Raw Log Filter
   const filteredRawRecords = useMemo(() => {
     return attendanceRecords.filter((rec) => {
-      const dateOnly = rec.timestamp.split('T')[0];
-      const matchesDate = dateOnly >= startDate && dateOnly <= endDate;
+      if (!rec || !rec.timestamp) return false;
+      const localDateOnly = new Date(rec.timestamp).toLocaleDateString('en-CA');
+      const rawDateOnly = rec.timestamp.split('T')[0];
+      const matchesDate =
+        (localDateOnly >= startDate && localDateOnly <= endDate) ||
+        (rawDateOnly >= startDate && rawDateOnly <= endDate);
       const matchesBranch = selectedBranchFilter === 'all' || rec.branchId === selectedBranchFilter;
       const matchesEmployee = selectedEmployeeFilter === 'all' || rec.employeeId === selectedEmployeeFilter || rec.employeeCode === selectedEmployeeFilter;
       const matchesStatus =

@@ -7,6 +7,7 @@ import {
   onSnapshot,
   getDoc,
   getDocs,
+  setDoc,
   writeBatch,
   Firestore,
 } from 'firebase/firestore';
@@ -526,10 +527,7 @@ interface WriteOp {
  * this device had already received it and then removed it (never because it was "unknown").
  */
 async function applyDiff(data: Partial<CloudSystemState>, opts: { migrating?: boolean } = {}): Promise<void> {
-  const ready = opts.migrating ? true : await waitForBaseline(10000);
-  if (!ready) {
-    throw new Error('Cloud data has not finished loading yet; write postponed to protect existing data.');
-  }
+  const ready = opts.migrating ? true : await waitForBaseline(4000);
 
   const isReset = Boolean(data.isReset);
   const ops: WriteOp[] = [];
@@ -563,23 +561,30 @@ async function applyDiff(data: Partial<CloudSystemState>, opts: { migrating?: bo
       });
     });
 
-    // Deletions: only items the app had actually received and then removed
-    const prev = delivered[key];
-    let toDelete = Array.from(current.keys()).filter((id) => !next.has(id) && (isReset || prev.has(id)));
-    if (!isReset && prev.size > 10 && toDelete.length > prev.size * 0.5) {
-      console.warn(`[Cloud] Refusing to delete ${toDelete.length}/${prev.size} items from ${key} in one sync (safety guard).`);
-      toDelete = [];
+    // Attendance records and audit logs are append-only; never delete during ordinary sync
+    if (!isReset && (key === 'attendanceRecords' || key === 'auditLogs')) {
+      continue;
     }
-    toDelete.forEach((id) => {
-      ops.push({
-        kind: 'delete',
-        ref: doc(db, collectionName(key), id),
-        after: () => {
-          current.delete(id);
-          delivered[key].delete(id);
-        },
+
+    // Deletions: only items the app had actually received and then removed (only if baseline was ready)
+    if (ready) {
+      const prev = delivered[key];
+      let toDelete = Array.from(current.keys()).filter((id) => !next.has(id) && (isReset || prev.has(id)));
+      if (!isReset && prev.size > 10 && toDelete.length > prev.size * 0.5) {
+        console.warn(`[Cloud] Refusing to delete ${toDelete.length}/${prev.size} items from ${key} in one sync (safety guard).`);
+        toDelete = [];
+      }
+      toDelete.forEach((id) => {
+        ops.push({
+          kind: 'delete',
+          ref: doc(db, collectionName(key), id),
+          after: () => {
+            current.delete(id);
+            delivered[key].delete(id);
+          },
+        });
       });
-    });
+    }
   }
 
   for (const key of OBJECT_KEYS) {
@@ -772,6 +777,130 @@ export async function syncStateToCloudImmediate(data: Partial<CloudSystemState>)
     return true;
   } catch (error) {
     reportFailure(error);
+    return false;
+  }
+}
+
+/**
+ * Direct real-time save for an individual attendance punch record.
+ * Never delayed, never blocked by baseline, instantly triggers Firestore listeners on all devices.
+ */
+export async function saveAttendanceRecordToCloud(record: any): Promise<boolean> {
+  try {
+    if (!record || !record.id) return false;
+    const clean = sanitizeForFirestore(record);
+    const id = String(record.id).replace(/\//g, '_');
+    const now = Date.now();
+    const payload = { ...clean, id, __w: now };
+
+    await setDoc(doc(db, 'ams_attendanceRecords', id), payload, { merge: true });
+
+    // Update config meta to broadcast update timestamp
+    setDoc(doc(db, CONFIG_COLLECTION, META_DOC), { lastUpdated: new Date().toISOString() }, { merge: true }).catch(() => {});
+
+    // Update in-memory cache
+    if (!cache['attendanceRecords']) cache['attendanceRecords'] = new Map();
+    cache['attendanceRecords'].set(id, {
+      fp: stable(clean),
+      data: clean,
+      o: 0,
+      w: now,
+    });
+
+    reportSuccess();
+    return true;
+  } catch (error) {
+    reportFailure(error);
+    return false;
+  }
+}
+
+/**
+ * Direct real-time save for an individual employee record (e.g. photo update, profile edit).
+ * Never delayed by baseline; guarantees photo updates persist immediately to Firestore.
+ */
+export async function saveEmployeeToCloud(employee: any): Promise<boolean> {
+  try {
+    if (!employee || !employee.id) return false;
+    const clean = sanitizeForFirestore(employee);
+    const id = String(employee.id).replace(/\//g, '_');
+    const now = Date.now();
+    const payload = { ...clean, id, __w: now };
+
+    await setDoc(doc(db, 'ams_employees', id), payload, { merge: true });
+
+    setDoc(doc(db, CONFIG_COLLECTION, META_DOC), { lastUpdated: new Date().toISOString() }, { merge: true }).catch(() => {});
+
+    if (!cache['employees']) cache['employees'] = new Map();
+    cache['employees'].set(id, {
+      fp: stable(clean),
+      data: clean,
+      o: 0,
+      w: now,
+    });
+
+    reportSuccess();
+    return true;
+  } catch (error) {
+    reportFailure(error);
+    return false;
+  }
+}
+
+/**
+ * Direct real-time save for an individual leave request.
+ */
+export async function saveLeaveRequestToCloud(request: any): Promise<boolean> {
+  try {
+    if (!request || !request.id) return false;
+    const clean = sanitizeForFirestore(request);
+    const id = String(request.id).replace(/\//g, '_');
+    const now = Date.now();
+    const payload = { ...clean, id, __w: now };
+
+    await setDoc(doc(db, 'ams_leaveRequests', id), payload, { merge: true });
+
+    setDoc(doc(db, CONFIG_COLLECTION, META_DOC), { lastUpdated: new Date().toISOString() }, { merge: true }).catch(() => {});
+
+    if (!cache['leaveRequests']) cache['leaveRequests'] = new Map();
+    cache['leaveRequests'].set(id, {
+      fp: stable(clean),
+      data: clean,
+      o: 0,
+      w: now,
+    });
+
+    reportSuccess();
+    return true;
+  } catch (error) {
+    reportFailure(error);
+    return false;
+  }
+}
+
+/**
+ * Direct real-time save for an action alert item.
+ */
+export async function saveStaffAlertToCloud(alert: any): Promise<boolean> {
+  try {
+    if (!alert || !alert.id) return false;
+    const clean = sanitizeForFirestore(alert);
+    const id = String(alert.id).replace(/\//g, '_');
+    const now = Date.now();
+    const payload = { ...clean, id, __w: now };
+
+    await setDoc(doc(db, 'ams_staffAlerts', id), payload, { merge: true });
+
+    if (!cache['staffAlerts']) cache['staffAlerts'] = new Map();
+    cache['staffAlerts'].set(id, {
+      fp: stable(clean),
+      data: clean,
+      o: 0,
+      w: now,
+    });
+
+    return true;
+  } catch (error) {
     return false;
   }
 }
