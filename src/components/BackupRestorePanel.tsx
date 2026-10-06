@@ -354,10 +354,10 @@ export const BackupRestorePanel: React.FC<BackupRestorePanelProps> = ({
       'success',
       lang === 'km'
         ? target === 'demo_seed'
-          ? 'ប្រព័ន្ធត្រូវបានកំណត់ឡើងវិញទៅទិន្នន័យគំរូដើម ៧ សាខាជោគជ័យ!'
+          ? 'ប្រព័ន្ធត្រូវបានសម្អាតប្រវត្តិវត្តមាន និងសកម្មភាពដោយជោគជ័យ (រក្សាទុកបុគ្គលិក និងសាខា)!'
           : 'ប្រព័ន្ធត្រូវបានសម្អាតទទេរស្អាត (Brand New Start) ជោគជ័យ!'
         : target === 'demo_seed'
-        ? 'System reset to 7-branch official demo seed state!'
+        ? 'Attendance & activity history cleared successfully (staff & branches preserved)!'
         : 'System wiped clean to brand new fresh start!'
     );
   };

@@ -28,7 +28,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { AuthUser, Employee, Language, CompanyBranding, UserRole } from '../types';
-import { DEMO_USERS, DEFAULT_AUTH_USER } from '../data/authUsers';
+import { DEFAULT_AUTH_USER } from '../data/authUsers';
 import { INITIAL_BRANDING } from '../data/initialData';
 
 interface LoginModalProps {
@@ -229,11 +229,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       adminProfile.pinCode,
       linkedEmp?.pinCode,
       linkedEmp?.password,
-      'admin',
-      'admin123',
-      '1234',
-      '1001',
-      '704799',
+      !adminProfile.password && !adminProfile.pinCode ? '1234' : null,
     ]
       .filter(Boolean)
       .map((p) => String(p).trim().toLowerCase());
@@ -260,56 +256,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
     }
 
-    // 2. Check Demo / System Role Users (admin, manager, supervisor, hr, employee)
-    const matchedDemo = DEMO_USERS.find(
-      (u) =>
-        cleanStr(u.username) === query ||
-        cleanStr(u.role) === query ||
-        cleanStr(u.email) === query ||
-        cleanStr(u.email).split('@')[0] === query ||
-        cleanCode(u.employeeCode) === queryCode ||
-        cleanStr(u.nameEn) === query ||
-        cleanStr(u.nameKh) === query ||
-        cleanStr(u.nameEn).replace(/\s+/g, '') === query.replace(/\s+/g, '') ||
-        cleanStr(u.nameKh).replace(/\s+/g, '') === query.replace(/\s+/g, '')
-    );
-
-    if (matchedDemo) {
-      const validDemoPins = [
-        matchedDemo.password,
-        matchedDemo.pinCode,
-        '1234',
-        'admin',
-        'manager',
-        'supervisor',
-        'hr',
-        'employee',
-        '123456',
-        '704799',
-      ]
-        .filter(Boolean)
-        .map((p) => String(p).trim().toLowerCase());
-
-      if (
-        validDemoPins.includes(enteredPass.toLowerCase()) ||
-        validDemoPins.includes(enteredPass)
-      ) {
-        onLogin(matchedDemo);
-        setLoginSuccess(true);
-        setTimeout(() => {
-          setLoginSuccess(false);
-          onClose();
-        }, 400);
-        return;
-      } else {
-        setErrorMsg(
-          lang === 'km'
-            ? `❌ លេខកូដ PIN របស់ ${matchedDemo.roleTitle || matchedDemo.username} មិនត្រឹមត្រូវទេ! (លេខកូដគឺ 1234)`
-            : `❌ Incorrect PIN for ${matchedDemo.roleTitle || matchedDemo.username}! (PIN is 1234)`
-        );
-        return;
-      }
-    }
 
     // 3. Check general employees from directory
     const matchingEmployees = employees.filter((emp) => {
@@ -358,11 +304,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         [
           e.pinCode,
           e.password,
-          '1234', // default universal fallback PIN
-          '123456',
-          'admin',
-          '704799',
-          '12234',
+          !e.pinCode && !e.password ? '1234' : null,
         ]
           .filter(Boolean)
           .map((p) => String(p).trim().toLowerCase());
@@ -383,26 +325,28 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           cleanStr(matchedEmp.code) === 'emp-001'
         ) {
           userRole = 'admin';
-        } else if (matchedEmp.roleType && matchedEmp.roleType !== 'employee') {
+        } else if (matchedEmp.roleType) {
+          // Explicit role set in the staff directory is authoritative (including 'employee')
           userRole = matchedEmp.roleType;
         } else if (
           matchedEmp.role?.toLowerCase().includes('manager') ||
           matchedEmp.roleKh?.includes('គ្រប់គ្រង')
         ) {
+          // Legacy records without roleType: fall back to guessing from the job title
           userRole = 'manager';
         } else if (
           matchedEmp.role?.toLowerCase().includes('supervisor') ||
           matchedEmp.roleKh?.includes('ប្រធានវេន') ||
-          matchedEmp.role?.toLowerCase().includes('lead')
+          /\blead\b/i.test(matchedEmp.role || '')
         ) {
           userRole = 'supervisor';
         } else if (
-          matchedEmp.role?.toLowerCase().includes('hr') ||
+          /\bhr\b/i.test(matchedEmp.role || '') ||
           matchedEmp.departmentKh?.includes('ធនធានមនុស្ស')
         ) {
           userRole = 'hr';
         } else {
-          userRole = matchedEmp.roleType || 'employee';
+          userRole = 'employee';
         }
 
         const authUser: AuthUser = {
@@ -516,65 +460,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 />
               </div>
 
-              {/* System Roles Quick Access */}
-              <div className="space-y-1 mb-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
-                  {lang === 'km' ? 'តួនាទីគំរូប្រព័ន្ធ (System Role Profiles)' : 'System Role Profiles'}
-                </div>
-                {DEMO_USERS.map((u) => {
-                  const roleBadgeColors: Record<string, string> = {
-                    admin: 'bg-amber-500 text-white',
-                    manager: 'bg-blue-600 text-white',
-                    supervisor: 'bg-purple-600 text-white',
-                    hr: 'bg-teal-600 text-white',
-                    employee: 'bg-emerald-600 text-white',
-                  };
-                  return (
-                    <div
-                      key={u.id}
-                      className={`w-full p-2 rounded-xl flex items-center justify-between text-xs transition border ${
-                        isDarkTheme
-                          ? 'border-indigo-500/20 bg-indigo-950/30 hover:bg-indigo-900/30 text-slate-200'
-                          : 'border-indigo-100 bg-indigo-50/50 hover:bg-indigo-50 text-slate-800'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIdentifier(u.username);
-                          setPassword(u.password || '1234');
-                          setShowStaffPicker(false);
-                          setErrorMsg('');
-                        }}
-                        className="flex items-center gap-2 text-left cursor-pointer flex-1 mr-2"
-                      >
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shadow-xs ${roleBadgeColors[u.role] || 'bg-slate-700 text-white'}`}>
-                          {u.role === 'admin' ? '👑' : u.role === 'manager' ? '🏢' : u.role === 'supervisor' ? '📋' : u.role === 'hr' ? '👥' : '☕'}
-                        </div>
-                        <div>
-                          <div className="font-bold text-[11px] flex items-center gap-1.5">
-                            <span>{lang === 'km' ? u.nameKh : u.nameEn}</span>
-                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${roleBadgeColors[u.role] || 'bg-slate-500 text-white'}`}>
-                              {u.role}
-                            </span>
-                          </div>
-                          <div className="text-[10px] opacity-75 font-mono">
-                            {u.username} • PIN: {u.pinCode || '1234'}
-                          </div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDirectLogin(u)}
-                        className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow-xs transition cursor-pointer shrink-0"
-                        title={lang === 'km' ? 'ចូលគណនីនេះភ្លាមៗ' : 'Sign In Now'}
-                      >
-                        ⚡ {lang === 'km' ? 'ចូលភ្លាម' : 'Sign In'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
 
               {/* Staff Directory List */}
               <div className="space-y-1">
@@ -588,13 +473,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     role:
                       emp.code.toLowerCase() === 'emp-001'
                         ? 'admin'
-                        : emp.roleType && emp.roleType !== 'employee'
+                        : emp.roleType
                         ? emp.roleType
                         : emp.role?.toLowerCase().includes('manager')
                         ? 'manager'
                         : emp.role?.toLowerCase().includes('supervisor')
                         ? 'supervisor'
-                        : emp.role?.toLowerCase().includes('hr')
+                        : /\bhr\b/i.test(emp.role || '')
                         ? 'hr'
                         : 'employee',
                     nameKh: emp.nameKh,
@@ -621,7 +506,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                         type="button"
                         onClick={() => {
                           setIdentifier(emp.code);
-                          setPassword(emp.pinCode || '1234');
+                          setPassword('');
                           setShowStaffPicker(false);
                           setErrorMsg('');
                         }}
@@ -640,17 +525,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                         </div>
                       </button>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-indigo-600 font-mono font-bold">
-                          PIN: {emp.pinCode || '1234'}
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                          {emp.code}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDirectLogin(empAuthUser)}
-                          className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow-xs transition cursor-pointer"
-                          title={lang === 'km' ? 'ចូលគណនីភ្លាមៗ' : 'Sign In'}
-                        >
-                          ⚡ {lang === 'km' ? 'ចូល' : 'In'}
-                        </button>
                       </div>
                     </div>
                   );
@@ -698,8 +575,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           }`}>
             {lang === 'km' ? 'លេខកូដ PIN ឬពាក្យសម្ងាត់:' : 'PIN Code or Password:'}
           </label>
-          <span className="text-[10px] text-indigo-500 font-semibold font-mono">
-            {lang === 'km' ? 'លេខទូទៅ: 1234' : 'Default: 1234'}
+          <span className="text-[10px] text-slate-400 font-medium">
+            {lang === 'km' ? 'កូដសម្ងាត់ ៤ ខ្ទង់' : '4-digit secret PIN'}
           </span>
         </div>
         <div className="relative">
@@ -712,7 +589,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               setPassword(e.target.value);
               if (errorMsg) setErrorMsg('');
             }}
-            placeholder="•••• (1234 or your PIN)"
+            placeholder="••••"
             className={`w-full rounded-xl pl-10 pr-10 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono tracking-wider transition ${
               isDarkTheme
                 ? 'bg-slate-950/70 border border-slate-700/80 text-white placeholder-slate-500 focus:border-indigo-500'

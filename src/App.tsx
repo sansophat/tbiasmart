@@ -1003,15 +1003,11 @@ export default function App() {
           if (s.systemSettings) setSystemSettings(s.systemSettings);
           if (Array.isArray(s.auditLogs)) setAuditLogs(s.auditLogs);
         } else if (payload?.resetType === 'demo_seed') {
-          setBranches(INITIAL_BRANCHES);
-          setEmployees(INITIAL_EMPLOYEES);
-          setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
-          setLeaveRequests(INITIAL_LEAVE_REQUESTS);
-          setTransferRecords(INITIAL_TRANSFER_RECORDS);
-          setBranding(INITIAL_BRANDING);
-          setRolePermissions(INITIAL_ROLE_PERMISSIONS);
-          setSystemSettings(INITIAL_SYSTEM_SETTINGS);
-          setAuditLogs(INITIAL_AUDIT_LOGS);
+          // Clear activity records (attendance, leaves, transfers, audit logs) while preserving real branches & staff
+          setAttendanceRecords([]);
+          setLeaveRequests([]);
+          setTransferRecords([]);
+          setAuditLogs([]);
         } else {
           setBranches([DEFAULT_STARTER_BRANCH]);
           setEmployees([]);
@@ -1023,7 +1019,7 @@ export default function App() {
         }
         showLiveAlert(
           lang === 'km' ? '⚡ កំណត់ប្រព័ន្ធឡើងវិញ (Live Sync)' : '⚡ System Reset Executed',
-          `System was reset to ${payload?.resetType === 'demo_seed' ? 'Demo Seed' : 'Blank Fresh State'} by ${senderName || 'Admin'}`,
+          `System was reset by ${senderName || 'Admin'}`,
           'system'
         );
       } else if (type === 'SYSTEM_RESTORE' && payload?.backupData) {
@@ -2207,32 +2203,22 @@ export default function App() {
     let freshTransfers: BranchTransferRecord[] = [];
 
     if (type === 'demo_seed') {
-      freshBranches = INITIAL_BRANCHES;
-      freshEmployees = INITIAL_EMPLOYEES;
-      freshRecords = INITIAL_ATTENDANCE_RECORDS;
-      freshLeaves = INITIAL_LEAVE_REQUESTS;
-      freshTransfers = INITIAL_TRANSFER_RECORDS;
+      // Clear activity records (attendance records, leaves, transfers, audit logs) while preserving real branches & staff
+      freshBranches = branches;
+      freshEmployees = employees;
+      freshRecords = [];
+      freshLeaves = [];
+      freshTransfers = [];
 
-      setBranches(INITIAL_BRANCHES);
-      setEmployees(INITIAL_EMPLOYEES);
-      setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
-      setLeaveRequests(INITIAL_LEAVE_REQUESTS);
-      setTransferRecords(INITIAL_TRANSFER_RECORDS);
-      setBranding(INITIAL_BRANDING);
-      setRolePermissions(INITIAL_ROLE_PERMISSIONS);
-      setSystemSettings(INITIAL_SYSTEM_SETTINGS);
-      setAuditLogs(INITIAL_AUDIT_LOGS);
-      setSelectedBranchId('all');
+      setAttendanceRecords([]);
+      setLeaveRequests([]);
+      setTransferRecords([]);
+      setAuditLogs([]);
 
-      localStorage.setItem('attend_branches', JSON.stringify(INITIAL_BRANCHES));
-      localStorage.setItem('attend_employees', JSON.stringify(INITIAL_EMPLOYEES));
-      localStorage.setItem('attend_records', JSON.stringify(INITIAL_ATTENDANCE_RECORDS));
-      localStorage.setItem('attend_leaves', JSON.stringify(INITIAL_LEAVE_REQUESTS));
-      localStorage.setItem('attend_transfers', JSON.stringify(INITIAL_TRANSFER_RECORDS));
-      localStorage.setItem('attend_branding', JSON.stringify(INITIAL_BRANDING));
-      localStorage.setItem('attend_role_permissions', JSON.stringify(INITIAL_ROLE_PERMISSIONS));
-      localStorage.setItem('attend_system_settings', JSON.stringify(INITIAL_SYSTEM_SETTINGS));
-      localStorage.setItem('attend_audit_logs', JSON.stringify(INITIAL_AUDIT_LOGS));
+      localStorage.setItem('attend_records', JSON.stringify([]));
+      localStorage.setItem('attend_leaves', JSON.stringify([]));
+      localStorage.setItem('attend_transfers', JSON.stringify([]));
+      localStorage.setItem('attend_audit_logs', JSON.stringify([]));
     } else {
       // 100% Blank Brand New Start
       freshBranches = [DEFAULT_STARTER_BRANCH];
