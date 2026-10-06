@@ -1631,6 +1631,18 @@ export default function App() {
     }).catch(() => {});
   };
 
+  const handleUpdateEmployeesList = (nextEmployees: Employee[]) => {
+    setEmployees(nextEmployees);
+    localStorage.setItem('attend_employees', JSON.stringify(nextEmployees));
+    realtimeService.emit('UPDATE_EMPLOYEES_BATCH', nextEmployees);
+    syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
+    fetch('/api/employees/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employees: nextEmployees, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
   const handleUpdateBranch = (updatedBranch: Branch) => {
     let nextBranches: Branch[] = [];
     setBranches((prev) => {
@@ -2556,6 +2568,8 @@ export default function App() {
               branding={branding}
               currentGeo={currentGeo}
               onUpdateBranchLocation={handleUpdateBranchLocation}
+              onUpdateEmployee={handleUpdateEmployee}
+              onUpdateUserProfile={handleUpdateUserProfile}
             />
           )}
 
@@ -2682,7 +2696,7 @@ export default function App() {
               onRestoreBackup={handleRestoreBackup}
               onResetSystem={handleResetSystem}
               onUpdateLeaveRequests={setLeaveRequests}
-              onUpdateEmployeesList={setEmployees}
+              onUpdateEmployeesList={handleUpdateEmployeesList}
               onUpdateEmployee={handleUpdateEmployee}
               isLiveSyncConnected={isLiveSyncConnected}
               onlinePeersCount={onlinePeersCount}
@@ -2707,6 +2721,8 @@ export default function App() {
                 branding={branding}
                 currentGeo={currentGeo}
                 onUpdateBranchLocation={handleUpdateBranchLocation}
+                onUpdateEmployee={handleUpdateEmployee}
+                onUpdateUserProfile={handleUpdateUserProfile}
               />
             ) : (
               <DashboardView

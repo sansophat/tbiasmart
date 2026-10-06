@@ -25,6 +25,7 @@ import {
   ArrowRightLeft,
   Smartphone,
   RotateCcw,
+  RefreshCw,
   Fuel,
   Sun,
   Moon,
@@ -40,6 +41,7 @@ import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
 import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
+import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
 
 export const DEPARTMENT_OPTIONS = [
   { id: 'dept_barista_cafe', nameKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)', nameEn: 'Barista & Coffee Service' },
@@ -64,6 +66,17 @@ export const ROLE_PRESETS: {
   defaultShiftId?: string;
   defaultWeeklyDayOff?: number;
 }[] = [
+  {
+    roleType: 'admin',
+    titleKh: '👑 អ្នកគ្រប់គ្រងជាន់ខ្ពស់ (System Admin)',
+    titleEn: '👑 System Administrator',
+    defaultDeptKh: 'គ្រប់គ្រងសាខា (Branch Management)',
+    defaultDeptEn: 'Branch Management',
+    prefix: 'ADM',
+    badgeClass: 'bg-rose-100 text-rose-800 border-rose-200',
+    defaultShiftId: 'shift_office',
+    defaultWeeklyDayOff: 0,
+  },
   {
     roleType: 'employee',
     titleKh: '☕ បារីស្តា / អ្នកឆុងកាហ្វេ (Barista)',
@@ -537,16 +550,32 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     }
   };
 
+  const handleResetDevice = (emp: Employee) => {
+    if (!onUpdateEmployee) return;
+    const confirmed = window.confirm(
+      lang === 'km'
+        ? `តើអ្នកចង់ដោះសោឧបករណ៍សម្រាប់ ${emp.nameKh} (${emp.code}) មែនទេ? បុគ្គលិកអាចចុះឈ្មោះឧបករណ៍ថ្មីពេលស្កេនលើកក្រោយ។`
+        : `Reset hardware device binding for ${emp.nameEn} (${emp.code})? Staff can register a new phone on their next scan.`
+    );
+    if (!confirmed) return;
+    const unbound = unbindEmployeeDevice(emp);
+    onUpdateEmployee(unbound);
+    if (editingEmp?.id === emp.id) {
+      setEditingEmp(unbound);
+    }
+  };
+
   // Filter employees
   const filteredEmployees = employees.filter((emp) => {
     const matchesBranch = selectedBranchFilter === 'all' || emp.branchId === selectedBranchFilter;
 
     const matchesRole =
       selectedRoleFilter === 'all' ||
+      (selectedRoleFilter === 'admin' && (emp.roleType === 'admin' || emp.role?.toLowerCase().includes('admin'))) ||
       (selectedRoleFilter === 'manager' && (emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager'))) ||
       (selectedRoleFilter === 'supervisor' && (emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor'))) ||
       (selectedRoleFilter === 'hr' && (emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស'))) ||
-      (selectedRoleFilter === 'employee' && (emp.roleType === 'employee' || (!emp.role?.toLowerCase().includes('manager') && !emp.role?.toLowerCase().includes('supervisor') && !emp.role?.toLowerCase().includes('hr'))));
+      (selectedRoleFilter === 'employee' && (emp.roleType === 'employee' || (!emp.role?.toLowerCase().includes('admin') && !emp.role?.toLowerCase().includes('manager') && !emp.role?.toLowerCase().includes('supervisor') && !emp.role?.toLowerCase().includes('hr'))));
 
     const matchesShift = selectedShiftFilter === 'all' || emp.shiftId === selectedShiftFilter;
 
@@ -675,6 +704,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
             className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium shadow-sm"
           >
             <option value="all">{lang === 'km' ? 'គ្រប់តួនាទី' : 'All Roles'}</option>
+            <option value="admin">{lang === 'km' ? '👑 អភិបាល (Admin)' : '👑 System Admin'}</option>
             <option value="manager">{lang === 'km' ? '★ ប្រធានសាខា' : '★ Managers'}</option>
             <option value="supervisor">{lang === 'km' ? '⏱ ប្រធានវេន' : '⏱ Supervisors'}</option>
             <option value="hr">{lang === 'km' ? '👥 ធនធានមនុស្ស' : '👥 HR Officers'}</option>
@@ -736,9 +766,10 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredEmployees.map((emp) => {
               const branch = getBranch(emp.branchId);
-              const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
-              const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
-              const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+              const isAdmin = emp.roleType === 'admin' || emp.role?.toLowerCase().includes('admin');
+              const isManager = !isAdmin && (emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager'));
+              const isSupervisor = !isAdmin && (emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor'));
+              const isHr = !isAdmin && (emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស'));
               const matchedShift = shifts.find((s) => s.id === emp.shiftId);
               const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
               const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
@@ -782,7 +813,9 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                       </h4>
                       <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                         <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
-                          isManager
+                          isAdmin
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : isManager
                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                             : isSupervisor
                             ? 'bg-purple-50 text-purple-700 border-purple-200'
@@ -790,7 +823,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                             ? 'bg-teal-50 text-teal-700 border-teal-200'
                             : 'bg-slate-100 text-slate-700 border-slate-200'
                         }`}>
-                          {emp.role}
+                          {isAdmin ? `👑 ${emp.role}` : emp.role}
                         </span>
                       </div>
                     </div>
@@ -851,12 +884,22 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                         <span>{lang === 'km' ? 'ឧបករណ៍:' : 'Device:'}</span>
                       </span>
                       {emp.trustedDeviceId ? (
-                        <span 
-                          className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 truncate max-w-[140px]" 
-                          title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
-                        >
-                          🔒 {emp.trustedDeviceName || 'Bound Phone'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span 
+                            className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 truncate max-w-[100px]" 
+                            title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                          >
+                            🔒 {emp.trustedDeviceName || 'Bound Phone'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleResetDevice(emp)}
+                            title={lang === 'km' ? 'ដោះសោឧបករណ៍' : 'Reset / Unbind Device'}
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition cursor-pointer"
+                          >
+                            {lang === 'km' ? 'ដោះសោ' : 'Reset'}
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
                           {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
@@ -957,9 +1000,10 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 ) : (
                   filteredEmployees.map((emp) => {
                     const branch = getBranch(emp.branchId);
-                    const isManager = emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager');
-                    const isSupervisor = emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor');
-                    const isHr = emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស');
+                    const isAdmin = emp.roleType === 'admin' || emp.role?.toLowerCase().includes('admin');
+                    const isManager = !isAdmin && (emp.roleType === 'manager' || emp.role?.toLowerCase().includes('manager'));
+                    const isSupervisor = !isAdmin && (emp.roleType === 'supervisor' || emp.role?.toLowerCase().includes('supervisor'));
+                    const isHr = !isAdmin && (emp.roleType === 'hr' || emp.role?.toLowerCase().includes('hr') || emp.departmentKh?.includes('ធនធានមនុស្ស'));
                     const matchedShift = shifts.find((s) => s.id === emp.shiftId);
                     const shiftBadge = getShiftCategoryBadge(emp.shiftId, lang);
                     const workingHoursStr = getEmployeeWorkingHours(emp, matchedShift, lang);
@@ -1016,7 +1060,9 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                         <td className="py-3 px-4">
                           <div className="space-y-1 max-w-[160px]">
                             <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border truncate max-w-full ${
-                              isManager
+                              isAdmin
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : isManager
                                 ? 'bg-blue-50 text-blue-700 border-blue-200'
                                 : isSupervisor
                                 ? 'bg-purple-50 text-purple-700 border-purple-200'
@@ -1024,7 +1070,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                                 ? 'bg-teal-50 text-teal-700 border-teal-200'
                                 : 'bg-slate-100 text-slate-700 border-slate-200'
                             }`}>
-                              {emp.role}
+                              {isAdmin ? `👑 ${emp.role}` : emp.role}
                             </span>
                             <div className="text-[11px] text-slate-500 truncate" title={emp.departmentKh}>
                               {emp.departmentKh}
@@ -1081,12 +1127,22 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                             )}
                             <div>
                               {emp.trustedDeviceId ? (
-                                <span 
-                                  className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block truncate max-w-[130px]" 
-                                  title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
-                                >
-                                  🔒 {emp.trustedDeviceName || 'Bound'}
-                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span 
+                                    className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block truncate max-w-[90px]" 
+                                    title={`${emp.trustedDeviceName} (ID: ${emp.trustedDeviceId})`}
+                                  >
+                                    🔒 {emp.trustedDeviceName || 'Bound'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetDevice(emp)}
+                                    title={lang === 'km' ? 'ដោះសោឧបករណ៍' : 'Reset / Unbind Device'}
+                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition cursor-pointer"
+                                  >
+                                    {lang === 'km' ? 'ដោះសោ' : 'Reset'}
+                                  </button>
+                                </div>
                               ) : (
                                 <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded inline-block">
                                   {lang === 'km' ? 'មិនទាន់ភ្ជាប់' : 'Unbound'}
@@ -1620,6 +1676,35 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                     <option value={-1}>{lang === 'km' ? '🔄 វេនវិលជុំ (Rotating / No Fixed Day Off)' : '🔄 Rotating / No Fixed Day Off'}</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Hardware Device Binding Security Status */}
+              <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{lang === 'km' ? 'សុវត្ថិភាពឧបករណ៍ (Hardware Device Binding):' : 'Hardware Device Binding:'}</span>
+                  </span>
+                  <p className="text-[10px] text-slate-500">
+                    {editingEmp.trustedDeviceId
+                      ? (lang === 'km' ? `ភ្ជាប់ជាមួយ: ${editingEmp.trustedDeviceName || 'ទូរស័ព្ទ'}` : `Bound to: ${editingEmp.trustedDeviceName || 'Phone'}`)
+                      : (lang === 'km' ? 'មិនទាន់មានឧបករណ៍ភ្ជាប់ទេ (អាចចុះឈ្មោះពេលស្កេន)' : 'No device bound (will enroll on first scan)')}
+                  </p>
+                </div>
+                {editingEmp.trustedDeviceId ? (
+                  <button
+                    type="button"
+                    onClick={() => handleResetDevice(editingEmp)}
+                    className="py-1.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>{lang === 'km' ? 'ដោះសោឧបករណ៍' : 'Reset Device'}</span>
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-200 text-slate-600">
+                    {lang === 'km' ? 'រួចរាល់' : 'Unbound'}
+                  </span>
+                )}
               </div>
 
               <div className="flex space-x-2 pt-2 border-t border-slate-100">

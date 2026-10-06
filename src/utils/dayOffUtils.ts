@@ -205,8 +205,8 @@ export function getEmployeeLeaveOnDate(
       (emp.id && lr.employeeId === emp.id) || 
       (emp.code && lr.employeeCode === emp.code);
     if (!isSameEmp) return false;
-    // Consider approved or pending/submitted leaves
-    if (lr.status !== 'approved' && lr.status !== 'pending') return false;
+    // Only officially approved leaves should prevent punches (pending requests are not yet active)
+    if (lr.status !== 'approved') return false;
 
     const start = lr.startDate.slice(0, 10);
     const end = lr.endDate.slice(0, 10);

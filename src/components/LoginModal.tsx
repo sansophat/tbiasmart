@@ -327,8 +327,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           userRole = 'employee';
         }
 
+        const isMasterAdmin =
+          matchedEmp.id === adminProfile.employeeId ||
+          cleanCode(matchedEmp.code) === cleanCode(adminProfile.employeeCode) ||
+          cleanStr(matchedEmp.code) === 'emp-001';
+
         const authUser: AuthUser = {
-          id: userRole === 'admin' ? (adminProfile.id || 'user_admin') : `user_${matchedEmp.id}`,
+          id: isMasterAdmin ? (adminProfile.id || 'user_admin') : `user_${matchedEmp.id}`,
           username: matchedEmp.code.toLowerCase(),
           role: userRole,
           nameKh: matchedEmp.nameKh,

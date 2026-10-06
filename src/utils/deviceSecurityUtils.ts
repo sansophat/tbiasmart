@@ -205,7 +205,7 @@ export function validateEmployeeDevice(
     // If setting preventDeviceSharing is ON, verify no OTHER employee is already bound to this device
     if (settings?.preventDeviceSharing !== false) {
       const otherBoundEmp = allEmployees.find(
-        (e) => e.id !== employee.id && e.trustedDeviceId === currentDevice.deviceId
+        (e) => e.id !== employee.id && !!e.trustedDeviceId && e.trustedDeviceId.trim() !== '' && e.trustedDeviceId === currentDevice.deviceId
       );
 
       if (otherBoundEmp) {
@@ -284,10 +284,11 @@ export function bindEmployeeToCurrentDevice(
  * Admin action: Reset / Unbind employee device (e.g. employee bought new phone or lost old phone)
  */
 export function unbindEmployeeDevice(employee: Employee): Employee {
-  const updated = { ...employee };
-  delete updated.trustedDeviceId;
-  delete updated.trustedDeviceName;
-  delete updated.trustedDeviceBoundAt;
-  updated.deviceBindingLocked = false;
-  return updated;
+  return {
+    ...employee,
+    trustedDeviceId: '',
+    trustedDeviceName: '',
+    trustedDeviceBoundAt: '',
+    deviceBindingLocked: false,
+  };
 }

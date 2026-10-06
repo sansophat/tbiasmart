@@ -122,6 +122,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             const compressed = canvas.toDataURL('image/jpeg', 0.85);
             setAvatar(compressed);
             setErrorMsg('');
+            handleApplyAvatar(compressed);
           }
         };
         img.src = uploadEvt.target?.result as string;
@@ -130,9 +131,33 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
     }
   };
 
+  const handleApplyAvatar = (newAvatarUrl: string) => {
+    setAvatar(newAvatarUrl);
+    const updatedUser: AuthUser = {
+      ...currentUser,
+      avatar: newAvatarUrl,
+    };
+    const updatedEmp: Employee | undefined = currentEmp
+      ? {
+          ...currentEmp,
+          avatar: newAvatarUrl,
+        }
+      : undefined;
+    onUpdateUserProfile(updatedUser, updatedEmp);
+    setSuccessMsg(
+      lang === 'km'
+        ? '✅ រូបភាពតំណាងត្រូវបានធ្វើបច្ចុប្បន្នភាព និងរក្សាទុកជោគជ័យ!'
+        : '✅ Profile photo updated and saved successfully!'
+    );
+    setTimeout(() => setSuccessMsg(''), 3500);
+  };
+
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameEn.trim() || !nameKh.trim()) {
+    const resolvedNameKh = isEmployee ? (currentEmp?.nameKh || currentUser.nameKh || nameKh.trim()) : nameKh.trim();
+    const resolvedNameEn = isEmployee ? (currentEmp?.nameEn || currentUser.nameEn || nameEn.trim()) : nameEn.trim();
+
+    if (!resolvedNameEn || !resolvedNameKh) {
       setErrorMsg(lang === 'km' ? 'សូមបំពេញឈ្មោះជាភាសាខ្មែរ និងអង់គ្លេស' : 'Please fill in both Khmer and English names');
       return;
     }
@@ -298,7 +323,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
               <button
                 key={idx}
                 type="button"
-                onClick={() => setAvatar(presetUrl)}
+                onClick={() => handleApplyAvatar(presetUrl)}
                 className={`relative rounded-2xl overflow-hidden aspect-square border-2 transition-all group ${
                   avatar === presetUrl
                     ? 'border-indigo-600 ring-2 ring-indigo-400 scale-105 shadow-md'

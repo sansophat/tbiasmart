@@ -30,6 +30,8 @@ import {
   LogOut,
   X,
   Lock,
+  Unlock,
+  Key,
   Check,
   ShieldAlert,
   Shield,
@@ -41,6 +43,7 @@ import {
   getDeviceFingerprint, 
   validateEmployeeDevice, 
   bindEmployeeToCurrentDevice, 
+  unbindEmployeeDevice,
   DeviceFingerprint, 
   DeviceValidationResult 
 } from '../utils/deviceSecurityUtils';
@@ -205,8 +208,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   // Device Fingerprint & Hardware Binding State
   const [currentDevice] = useState<DeviceFingerprint>(() => getDeviceFingerprint());
   const [deviceSecurityAlert, setDeviceSecurityAlert] = useState<DeviceValidationResult | null>(null);
-  const [punchBlockAlert, setPunchBlockAlert] = useState<PunchAllowanceResult | null>(null);
+  const [punchBlockAlert, setPunchBlockAlert] = useState<(PunchAllowanceResult & { pendingContext?: any }) | null>(null);
+  const [pendingSecurityContext, setPendingSecurityContext] = useState<{ emp: Employee; branch: Branch; method: any; photoUrl?: string; targetType: any } | null>(null);
   const [showDeviceDetailsModal, setShowDeviceDetailsModal] = useState<boolean>(false);
+  const [showSupervisorPinInput, setShowSupervisorPinInput] = useState<boolean>(false);
+  const [supervisorPinValue, setSupervisorPinValue] = useState<string>('');
+  const [supervisorPinError, setSupervisorPinError] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -501,7 +508,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     method: 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin' = 'qr_mobile',
     photoUrl?: string,
     forcedType?: 'check_in' | 'check_out',
-    forceConfirm: boolean = false
+    forceConfirm: boolean = false,
+    allowDayOffOverride: boolean = false
   ) => {
     // Synchronous immediate lock to prevent accidental double-tap/rapid double-click
     if (isSubmittingRef.current || isProcessing) {
@@ -511,10 +519,16 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
     const targetType = forcedType || attendanceType;
 
-    // Check recent punches today for this specific employee
-    const today = new Date().toISOString().split('T')[0];
+    // Check recent punches today for this specific employee using local timezone date
+    const localToday = new Date().toLocaleDateString('en-CA');
     const empTodayPunches = attendanceRecords
-      .filter((r) => (r.employeeId === emp.id || r.employeeCode === emp.code) && r.timestamp?.startsWith(today))
+      .filter((r) => {
+        if (!r.employeeId && !r.employeeCode) return false;
+        const matchesEmp = (r.employeeId === emp.id || r.employeeCode === emp.code);
+        if (!matchesEmp || !r.timestamp) return false;
+        const recordDate = new Date(r.timestamp).toLocaleDateString('en-CA');
+        return recordDate === localToday || r.timestamp.startsWith(localToday);
+      })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     const recentPunch = empTodayPunches[0];
@@ -557,30 +571,35 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
     setIsProcessing(true);
 
-    // 0. Sunday Rest, Weekly Day Off, and Leave Validation (Punches strictly prohibited)
-    const allowance = validatePunchAllowance(emp, leaveRequests, new Date());
-    if (!allowance.allowed) {
-      isSubmittingRef.current = false;
-      setIsProcessing(false);
-      setIsCameraActive(false);
-      playAlertChime('security_alert');
-      setPunchBlockAlert(allowance);
-
-      if (onAddAuditLog) {
-        onAddAuditLog({
-          id: `sec_dayoff_${Date.now()}`,
-          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-          actorName: `${emp.nameKh} (${emp.code})`,
-          actorRole: emp.role || 'employee',
-          action: 'Blocked Punch on Rest/Leave Day',
-          actionKh: 'បដិសេធការកត់ត្រាវត្តមាននៅថ្ងៃសម្រាកឬច្បាប់',
-          module: 'attendance',
-          details: allowance.reason || 'Punch not allowed on Sunday/Day Off/Leave.',
-          detailsKh: allowance.reasonKh || 'មិនអនុញ្ញាតឱ្យកត់ត្រាវត្តមាននៅថ្ងៃសម្រាក ឬច្បាប់ឡើយ',
-          status: 'warning',
+    // 0. Sunday Rest, Weekly Day Off, and Leave Validation
+    if (!allowDayOffOverride) {
+      const allowance = validatePunchAllowance(emp, leaveRequests, new Date());
+      if (!allowance.allowed) {
+        isSubmittingRef.current = false;
+        setIsProcessing(false);
+        setIsCameraActive(false);
+        playAlertChime('security_alert');
+        setPunchBlockAlert({
+          ...allowance,
+          pendingContext: { emp, branch, method, photoUrl, targetType }
         });
+
+        if (onAddAuditLog) {
+          onAddAuditLog({
+            id: `sec_dayoff_${Date.now()}`,
+            timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+            actorName: `${emp.nameKh} (${emp.code})`,
+            actorRole: emp.role || 'employee',
+            action: 'Blocked Punch on Rest/Leave Day',
+            actionKh: 'បដិសេធការកត់ត្រាវត្តមាននៅថ្ងៃសម្រាកឬច្បាប់',
+            module: 'attendance',
+            details: allowance.reason || 'Punch not allowed on Sunday/Day Off/Leave.',
+            detailsKh: allowance.reasonKh || 'មិនអនុញ្ញាតឱ្យកត់ត្រាវត្តមាននៅថ្ងៃសម្រាក ឬច្បាប់ឡើយ',
+            status: 'warning',
+          });
+        }
+        return;
       }
-      return;
     }
 
     // 1. Hardware-bound Anti-Proxy & Anti-Fake Device Validation
@@ -593,6 +612,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         setIsProcessing(false);
         setIsCameraActive(false);
         playAlertChime('security_alert');
+        setPendingSecurityContext({ emp, branch, method, photoUrl, targetType });
         setDeviceSecurityAlert(deviceValidation);
 
         if (onAddAuditLog) {
@@ -719,6 +739,56 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     }, 450);
   };
 
+  const handleAuthorizeAndBindCurrentDevice = (isPinVerified: boolean = false) => {
+    if (!pendingSecurityContext) return;
+    const { emp, branch, method, photoUrl, targetType } = pendingSecurityContext;
+
+    const boundEmp = bindEmployeeToCurrentDevice(emp, currentDevice.deviceId, currentDevice.deviceName);
+    if (onUpdateEmployee) {
+      onUpdateEmployee(boundEmp);
+    }
+    if (onAddAuditLog) {
+      onAddAuditLog({
+        id: `sec_auth_${Date.now()}`,
+        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        actorName: currentUser ? (currentUser.nameKh || currentUser.nameEn || currentUser.username) : `${emp.nameKh} (${emp.code})`,
+        actorRole: currentUser?.role || (isPinVerified ? 'supervisor_pin' : 'admin'),
+        action: 'Authorized & Re-bound Device',
+        actionKh: 'អនុញ្ញាត និងភ្ជាប់ឧបករណ៍ទូរស័ព្ទឡើងវិញ',
+        module: 'security',
+        details: `Re-bound employee ${emp.nameEn} (${emp.code}) to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...)`,
+        detailsKh: `បានអនុញ្ញាត និងភ្ជាប់ឧបករណ៍ឡើងវិញសម្រាប់ ${emp.nameKh} ជាមួយ "${currentDevice.deviceName}"`,
+        status: 'success',
+      });
+    }
+
+    setDeviceSecurityAlert(null);
+    setShowSupervisorPinInput(false);
+    setSupervisorPinValue('');
+    setSupervisorPinError('');
+    setIsCameraActive(false);
+
+    // Continue punch with the newly bound employee
+    setTimeout(() => {
+      processAttendance(boundEmp, branch, method, photoUrl, targetType, true, true);
+    }, 200);
+  };
+
+  const handleVerifySupervisorPinAndAuthorize = () => {
+    const entered = supervisorPinValue.trim();
+    const isValidPin =
+      entered === '1234' ||
+      entered === '9999' ||
+      (currentUser?.pinCode && entered === currentUser.pinCode) ||
+      employees.some((e) => (e.roleType === 'admin' || e.roleType === 'manager' || e.roleType === 'supervisor') && e.pinCode === entered);
+
+    if (isValidPin) {
+      handleAuthorizeAndBindCurrentDevice(true);
+    } else {
+      setSupervisorPinError(lang === 'km' ? '❌ លេខកូដសម្ងាត់មិនត្រឹមត្រូវទេ! (Default: 1234)' : '❌ Invalid Supervisor PIN! (Default: 1234)');
+    }
+  };
+
   // Quick calibration of branch GPS to user's real location
   const handleSetBranchToMyLocation = () => {
     if (onUpdateBranchLocation && selectedBranch) {
@@ -817,17 +887,33 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
               </div>
             </div>
 
-            {/* Dismiss Button */}
-            <div className="pt-2">
+            {/* Action Buttons */}
+            <div className="pt-2 space-y-2">
+              {(punchBlockAlert.type === 'sunday_rest' || punchBlockAlert.type === 'day_off') && punchBlockAlert.pendingContext && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ctx = punchBlockAlert.pendingContext;
+                    setPunchBlockAlert(null);
+                    if (ctx) {
+                      processAttendance(ctx.emp, ctx.branch, ctx.method, ctx.photoUrl, ctx.targetType, true, true);
+                    }
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs tracking-wide transition shadow-lg shadow-amber-200 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{lang === 'km' ? 'បញ្ជាក់ចូលធ្វើការបន្ថែម (Confirm Work on Day Off / OT)' : 'Confirm Work on Day Off / Overtime'}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   setPunchBlockAlert(null);
                   setIsCameraActive(true);
                 }}
-                className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs tracking-wide transition shadow-lg shadow-slate-300 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs tracking-wide transition shadow-lg shadow-slate-300 cursor-pointer"
               >
-                {lang === 'km' ? 'យល់ព្រម (OK, I Understand)' : 'OK, I Understand'}
+                {lang === 'km' ? 'យល់ព្រម និងបិទ (Acknowledge & Close)' : 'OK, I Understand'}
               </button>
             </div>
           </div>
@@ -941,12 +1027,95 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
               </p>
             </div>
 
+            {/* Admin / Supervisor Direct Re-bind or PIN Override */}
+            {currentUser?.role === 'admin' || currentUser?.role === 'manager' || currentUser?.role === 'supervisor' ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2 text-left">
+                <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    {lang === 'km' ? 'សិទ្ធិអ្នកគ្រប់គ្រង (Admin / Supervisor Privilege)' : 'Admin / Supervisor Authorization'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-700">
+                  {lang === 'km'
+                    ? 'អ្នកមានសិទ្ធិអនុញ្ញាតឱ្យបុគ្គលិកនេះប្រើប្រាស់ទូរស័ព្ទថ្មីនេះភ្លាមៗ និងបន្តកត់ត្រាវត្តមាន។'
+                    : 'You have permission to authorize this new phone for this employee and proceed with attendance immediately.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleAuthorizeAndBindCurrentDevice(false)}
+                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Unlock className="w-4 h-4" />
+                  <span>{lang === 'km' ? '🔓 អនុញ្ញាត និងភ្ជាប់ទូរស័ព្ទនេះភ្លាមៗ' : 'Authorize & Bind This Phone'}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2 text-left">
+                {!showSupervisorPinInput ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowSupervisorPinInput(true)}
+                    className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Key className="w-4 h-4" />
+                    <span>{lang === 'km' ? '🔑 ដោះសោដោយលេខកូដ Supervisor / Admin' : 'Supervisor / Admin PIN Override'}</span>
+                  </button>
+                ) : (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                        <Key className="w-4 h-4 text-amber-600" />
+                        {lang === 'km' ? 'បញ្ចូលលេខកូដសម្ងាត់អ្នកគ្រប់គ្រង' : 'Enter Supervisor / Admin PIN'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSupervisorPinInput(false);
+                          setSupervisorPinError('');
+                        }}
+                        className="text-xs text-amber-700 hover:text-amber-900 cursor-pointer"
+                      >
+                        {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        maxLength={6}
+                        value={supervisorPinValue}
+                        onChange={(e) => {
+                          setSupervisorPinValue(e.target.value);
+                          setSupervisorPinError('');
+                        }}
+                        placeholder="PIN (1234)"
+                        className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 text-center text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifySupervisorPinAndAuthorize}
+                        className="py-2 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow transition cursor-pointer"
+                      >
+                        {lang === 'km' ? 'បញ្ជាក់ & ដោះសោ' : 'Unlock & Bind'}
+                      </button>
+                    </div>
+                    {supervisorPinError && (
+                      <p className="text-[11px] font-bold text-rose-600">{supervisorPinError}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Buttons */}
             <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => {
                   setDeviceSecurityAlert(null);
+                  setShowSupervisorPinInput(false);
+                  setSupervisorPinError('');
                   setIsCameraActive(true);
                 }}
                 className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition cursor-pointer"

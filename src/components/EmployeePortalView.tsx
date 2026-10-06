@@ -32,6 +32,8 @@ import { AuthUser, Employee, Branch, LeaveRequest, AttendanceRecord, Language, C
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
 import { StaffRosterTable } from './StaffRosterTable';
+import { EmployeeImageUploader } from './EmployeeImageUploader';
+import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 
 interface EmployeePortalViewProps {
   currentUser: AuthUser;
@@ -51,6 +53,8 @@ interface EmployeePortalViewProps {
     lng: number,
     employeeId?: string
   ) => { success: boolean; message: string } | void;
+  onUpdateEmployee?: (emp: Employee) => void;
+  onUpdateUserProfile?: (user: AuthUser, emp?: Employee) => void;
 }
 
 export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
@@ -66,6 +70,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   branding = INITIAL_BRANDING,
   currentGeo,
   onUpdateBranchLocation,
+  onUpdateEmployee,
+  onUpdateUserProfile,
 }) => {
   // Find full employee object for current user safely
   const safeEmployees = Array.isArray(employees) ? employees : [];
@@ -111,6 +117,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Modals state
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showBadgeModal, setShowBadgeModal] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [badgeQrUrl, setBadgeQrUrl] = useState<string>('');
   const [requestTab, setRequestTab] = useState<'leave' | 'sick' | 'overtime' | 'permission'>('leave');
 
@@ -246,15 +253,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* Top Employee Profile Card Banner */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-7 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center space-x-4 sm:space-x-5">
-          <div className="relative shrink-0">
+          <div className="relative shrink-0 group">
             <img
-              src={currentEmp.avatar}
+              src={resolveAvatar(currentEmp.avatar, null, currentEmp.nameEn || currentEmp.nameKh)}
               alt={currentEmp.nameEn}
-              className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl object-cover border-2 border-indigo-100 shadow-md"
+              referrerPolicy="no-referrer"
+              onError={(e) => handleAvatarError(e, currentEmp.nameEn || currentEmp.nameKh)}
+              className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl object-cover border-2 border-indigo-100 shadow-md group-hover:ring-2 group-hover:ring-indigo-400 transition bg-slate-100"
             />
-            <span className="absolute -bottom-1 -right-1 p-1.5 rounded-xl bg-emerald-500 text-white shadow-sm ring-2 ring-white">
-              <Check className="w-3.5 h-3.5" />
-            </span>
+            <button
+              type="button"
+              onClick={() => setShowPhotoModal(true)}
+              title={lang === 'km' ? 'ប្តូររូបថតផ្ទាល់ខ្លួន (Change Photo)' : 'Change Profile Photo'}
+              className="absolute -bottom-1 -right-1 p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5" />
+            </button>
           </div>
 
           <div className="space-y-1">
@@ -912,6 +926,44 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           lang={lang}
           onClose={() => setShowBadgeModal(false)}
         />
+      )}
+
+      {/* Upload / Change Profile Photo Modal for Employee */}
+      {showPhotoModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Camera className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-bold text-slate-800 text-base">
+                  {lang === 'km' ? 'ប្តូររូបថតផ្ទាល់ខ្លួន (Update Profile Photo)' : 'Update Profile Photo'}
+                </h3>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowPhotoModal(false)} 
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <EmployeeImageUploader
+              currentAvatar={currentEmp.avatar}
+              onAvatarChange={(newAvatarUrl) => {
+                const updatedEmp: Employee = { ...(currentEmp as Employee), avatar: newAvatarUrl };
+                if (onUpdateEmployee) {
+                  onUpdateEmployee(updatedEmp);
+                }
+                if (onUpdateUserProfile) {
+                  onUpdateUserProfile({ ...currentUser, avatar: newAvatarUrl }, updatedEmp);
+                }
+                setShowPhotoModal(false);
+              }}
+              lang={lang}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
