@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Building2, 
   MapPin, 
@@ -53,6 +53,11 @@ import {
   Fuel,
   Sun,
   Moon,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ArrowUp,
+  SlidersHorizontal,
   X
 } from 'lucide-react';
 import { 
@@ -240,6 +245,212 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
   // Success / Feedback Alerts
   const [toastMessage, setToastMessage] = useState<string>('');
+
+  // Navigation helpers & responsive layout controls
+  type SettingsTabId = 'branches' | 'shifts' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
+  type SettingsCategory = 'all' | 'operations' | 'branding' | 'security' | 'system';
+
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('all');
+  const [viewMode, setViewMode] = useState<'slider' | 'grid'>('slider');
+  const [showScrollTop, setShowScrollTop] = useState<boolean>(false);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const activeTabBtnRef = useRef<HTMLButtonElement>(null);
+
+  const categoryOptions = [
+    { id: 'all' as SettingsCategory, labelKh: 'ទាំងអស់ (All 9)', labelEn: 'All Menus (9)', icon: Sliders },
+    { id: 'operations' as SettingsCategory, labelKh: '🏢 សាខា & វេនការងារ', labelEn: '🏢 Branches & Shifts', icon: Building2 },
+    { id: 'branding' as SettingsCategory, labelKh: '🎨 ស្លាកយីហោ & ពុម្ពអក្សរ', labelEn: '🎨 Branding & Fonts', icon: Palette },
+    { id: 'security' as SettingsCategory, labelKh: '🛡️ សិទ្ធិ & ច្បាប់សម្រាក', labelEn: '🛡️ Roles & Leaves', icon: Shield },
+    { id: 'system' as SettingsCategory, labelKh: '⚙️ ប្រព័ន្ធ & ស្តារទិន្នន័យ', labelEn: '⚙️ System & Backup', icon: Database },
+  ];
+
+  const tabDefinitions = useMemo(() => [
+    {
+      id: 'branches' as SettingsTabId,
+      num: '1',
+      category: 'operations' as SettingsCategory,
+      labelKh: '១. ទីតាំង & Geofence ៧ សាខា',
+      labelEn: '1. Branch Locations & Geofences',
+      shortKh: 'ទីតាំង & Geofence',
+      shortEn: 'Branches & Geofences',
+      icon: MapPin,
+      badge: `${branches.length}`,
+      badgeColor: 'bg-indigo-100 text-indigo-700',
+      descKh: 'កំណត់ទីតាំង GPS, រង្វង់ Geofence, ប្រភេទសាខា ៧ កន្លែង',
+      descEn: 'Configure GPS coordinates, geofence radius & 7 branch profiles',
+    },
+    {
+      id: 'shifts' as SettingsTabId,
+      num: '2',
+      category: 'operations' as SettingsCategory,
+      labelKh: '២. វេនការងារ & ម៉ោងបំពេញ',
+      labelEn: '2. Work Shifts & Hours',
+      shortKh: 'វេនការងារ',
+      shortEn: 'Work Shifts',
+      icon: Clock,
+      badge: `${shiftsList.length} Shifts`,
+      badgeColor: 'bg-amber-100 text-amber-900 border border-amber-200',
+      descKh: 'វេនព្រឹក/រសៀល បារីស្តា, ស្ថានីយប្រេង, ការិយាល័យ & ថ្ងៃឈប់សម្រាក',
+      descEn: 'Cafe Barista, Gas Station, and Office shift schedules & day-offs',
+    },
+    {
+      id: 'branding' as SettingsTabId,
+      num: '3',
+      category: 'branding' as SettingsCategory,
+      labelKh: '៣. ស្លាកយីហោ & Logo ក្រុមហ៊ុន',
+      labelEn: '3. Branding & Corporate Logo',
+      shortKh: 'ស្លាកយីហោ & Logo',
+      shortEn: 'Branding & Logo',
+      icon: Palette,
+      badge: undefined,
+      badgeColor: undefined,
+      descKh: 'ផ្លាស់ប្តូរ Logo, ឈ្មោះក្រុមហ៊ុនជាភាសាខ្មែរ/អង់គ្លេស, ពណ៌ & Portal',
+      descEn: 'Corporate logo, Khmer/English company names & visual themes',
+    },
+    {
+      id: 'typography' as SettingsTabId,
+      num: '4',
+      category: 'branding' as SettingsCategory,
+      labelKh: '៤. អក្សរ & Visual (Khmer Fonts)',
+      labelEn: '4. Khmer Typography & Visual',
+      shortKh: 'ពុម្ពអក្សរខ្មែរ',
+      shortEn: 'Khmer Typography',
+      icon: Type,
+      badge: 'ADMIN ONLY',
+      badgeColor: 'bg-amber-100 text-amber-900 border border-amber-200',
+      descKh: 'ជ្រើសរើសពុម្ពអក្សរ Kantumruy Pro, Battambang, Scale & Contrast',
+      descEn: 'System font family, typography scale & high-contrast mode',
+    },
+    {
+      id: 'roles' as SettingsTabId,
+      num: '5',
+      category: 'security' as SettingsCategory,
+      labelKh: '៥. សិទ្ធិតួនាទី (RBAC Permissions)',
+      labelEn: '5. RBAC Role Permissions',
+      shortKh: 'សិទ្ធិតួនាទី RBAC',
+      shortEn: 'RBAC Roles',
+      icon: Shield,
+      badge: `${rolesForm.length} Roles`,
+      badgeColor: 'bg-indigo-100 text-indigo-700',
+      descKh: 'កំណត់សិទ្ធិមើល, កែប្រែ, អនុម័ត និងចូលកាន់ផ្ទាំងតាមមុខតំណែង',
+      descEn: 'Granular privileges for Admin, Supervisor, Manager & Staff',
+    },
+    {
+      id: 'leaves' as SettingsTabId,
+      num: '6',
+      category: 'security' as SettingsCategory,
+      labelKh: '៦. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត',
+      labelEn: '6. Leave & Quota Controls',
+      shortKh: 'ច្បាប់ & កូតាសម្រាក',
+      shortEn: 'Leave & Quotas',
+      icon: CalendarCheck,
+      badge: `${leaveRequests.length}`,
+      badgeColor: 'bg-emerald-100 text-emerald-800',
+      descKh: 'កូតាច្បាប់ប្រចាំឆ្នាំ, ច្បាប់ឈឺ, បន្ទាន់, ការកាត់ប្រាក់ & នីតិវិធី',
+      descEn: 'Annual, sick and emergency quotas, allowance limits & rules',
+    },
+    {
+      id: 'system' as SettingsTabId,
+      num: '7',
+      category: 'system' as SettingsCategory,
+      labelKh: '៧. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស',
+      labelEn: '7. System Rules & Broadcast',
+      shortKh: 'ច្បាប់វត្តមាន & ប្រកាស',
+      shortEn: 'System Rules',
+      icon: Zap,
+      badge: undefined,
+      badgeColor: undefined,
+      descKh: 'ច្បាប់យឺតយ៉ាវ Grace Period, កាត់ប្រាក់, Marquee ប្រកាសដំណឹង',
+      descEn: 'Late tolerance grace period, absent deductions & broadcast notice',
+    },
+    {
+      id: 'audit' as SettingsTabId,
+      num: '8',
+      category: 'system' as SettingsCategory,
+      labelKh: '៨. កំណត់ត្រាសវនកម្ម (Audit Trail)',
+      labelEn: '8. Audit Trail & Logs',
+      shortKh: 'កំណត់ត្រាសវនកម្ម',
+      shortEn: 'Audit Trail',
+      icon: History,
+      badge: undefined,
+      badgeColor: undefined,
+      descKh: 'ប្រវត្តិកែប្រែទិន្នន័យ, សកម្មភាព Admin & កំណត់ត្រាប្រតិបត្តិការ',
+      descEn: 'Administrative activity trail, login logs & data modification records',
+    },
+    {
+      id: 'backup' as SettingsTabId,
+      num: '9',
+      category: 'system' as SettingsCategory,
+      labelKh: '៩. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)',
+      labelEn: '9. Backup, Restore & Sync',
+      shortKh: 'បម្រុងទុក & Sync',
+      shortEn: 'Backup & Sync',
+      icon: Database,
+      badge: 'LIVE SYNC',
+      badgeColor: 'bg-emerald-100 text-emerald-800',
+      descKh: 'ទាញយកទិន្នន័យ JSON, ស្តារទិន្នន័យ, Cloud Sync & Storage',
+      descEn: 'Download JSON snapshots, cloud database sync & data recovery',
+    },
+  ], [branches.length, shiftsList.length, rolesForm.length, leaveRequests.length]);
+
+  const displayedTabs = useMemo(() => {
+    if (activeCategory === 'all') return tabDefinitions;
+    return tabDefinitions.filter((t) => t.category === activeCategory);
+  }, [activeCategory, tabDefinitions]);
+
+  const activeTabMeta = useMemo(() => {
+    return tabDefinitions.find((t) => t.id === activeTab) || tabDefinitions[0];
+  }, [activeTab, tabDefinitions]);
+
+  // Smooth scroll tabs horizontally
+  const handleScrollTabs = (direction: 'left' | 'right') => {
+    if (!tabsScrollRef.current) return;
+    const scrollAmount = direction === 'left' ? -320 : 320;
+    tabsScrollRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+  };
+
+  // Convert mouse wheel vertical scroll to horizontal scroll on the tabs strip
+  const handleTabsWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!tabsScrollRef.current) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      tabsScrollRef.current.scrollLeft += e.deltaY * 1.3;
+    }
+  };
+
+  // Auto-center active tab
+  useEffect(() => {
+    if (activeTabBtnRef.current && tabsScrollRef.current) {
+      activeTabBtnRef.current.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }
+  }, [activeTab]);
+
+  // Back to top listener
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 350);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSelectCategory = (catId: SettingsCategory) => {
+    setActiveCategory(catId);
+    if (catId !== 'all') {
+      const match = tabDefinitions.find((t) => t.category === catId);
+      if (match && !tabDefinitions.filter(t => t.category === catId).some(t => t.id === activeTab)) {
+        setActiveTab(match.id);
+      }
+    }
+  };
 
   // Sync selected branch to form when changed
   const handleSelectBranch = (b: Branch) => {
@@ -800,140 +1011,223 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
         </div>
       )}
 
-      {/* Tabs Menu Bar */}
-      <div className="flex items-center space-x-2 overflow-x-auto pb-1 border-b border-slate-200">
-        <button
-          type="button"
-          onClick={() => setActiveTab('branches')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'branches'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <MapPin className="w-4 h-4" />
-          <span>{lang === 'km' ? '១. ទីតាំង & Geofence ៧ សាខា' : '1. Branch Locations & Geofences'}</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'branches' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
-            {branches.length}
+      {/* ========================================================================= */}
+      {/* ENHANCED STICKY ADMIN NAVIGATION & MANAGEMENT MENU BAR */}
+      {/* ========================================================================= */}
+      <div className="sticky top-16 sm:top-[72px] z-30 bg-slate-50/95 backdrop-blur-md pt-3 pb-3 border-y border-slate-200/90 shadow-xs -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 space-y-3">
+        {/* Top Control Strip: Category Filter Chips + View Mode Toggle + Mobile Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Category Filter Chips */}
+          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0 custom-scrollbar max-w-full">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden md:inline shrink-0 mr-1">
+              {lang === 'km' ? 'ផ្នែក:' : 'Group:'}
+            </span>
+            {categoryOptions.map((cat) => {
+              const isSelected = activeCategory === cat.id;
+              const CatIcon = cat.icon;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => handleSelectCategory(cat.id)}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs whitespace-nowrap transition flex items-center space-x-1.5 cursor-pointer shrink-0 ${
+                    isSelected
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+                  }`}
+                >
+                  <CatIcon className={`w-3.5 h-3.5 ${isSelected ? 'text-indigo-400' : 'text-slate-400'}`} />
+                  <span>{lang === 'km' ? cat.labelKh : cat.labelEn}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Right Action Tools: Grid Toggle & Mobile Quick Dropdown */}
+          <div className="flex items-center space-x-2 shrink-0 ml-auto">
+            {/* Mobile / Tablet Quick Select Dropdown */}
+            <div className="sm:hidden relative">
+              <select
+                value={activeTab}
+                onChange={(e) => setActiveTab(e.target.value as SettingsTabId)}
+                aria-label={lang === 'km' ? 'ជ្រើសរើសផ្នែកកំណត់' : 'Jump to section'}
+                className="bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 shadow-xs focus:ring-2 focus:ring-indigo-500 pr-7 appearance-none cursor-pointer"
+              >
+                {tabDefinitions.map((tab) => (
+                  <option key={tab.id} value={tab.id}>
+                    {tab.num}. {lang === 'km' ? tab.shortKh : tab.shortEn}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
+            </div>
+
+            {/* Slider vs Grid Overview Toggle */}
+            <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setViewMode('slider')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
+                  viewMode === 'slider'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+                title={lang === 'km' ? 'របៀបរមូរ (Scroll Slider)' : 'Horizontal Slider'}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{lang === 'km' ? 'រមូរ' : 'Scroll'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
+                  viewMode === 'grid'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+                title={lang === 'km' ? 'បង្ហាញទាំងអស់ (Overview Grid)' : 'Overview Grid (All in View)'}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{lang === 'km' ? 'មើលទាំងអស់' : 'Grid'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* View Mode 1: Slider Mode with Left/Right Arrows & Wheel Support */}
+        {viewMode === 'slider' ? (
+          <div className="relative flex items-center gap-1.5">
+            {/* Scroll Left Button */}
+            <button
+              type="button"
+              onClick={() => handleScrollTabs('left')}
+              className="hidden sm:flex p-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200 shadow-xs transition shrink-0 cursor-pointer items-center justify-center"
+              title={lang === 'km' ? 'រមូរទៅឆ្វេង' : 'Scroll left'}
+              aria-label="Scroll tabs left"
+            >
+              <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
+            </button>
+
+            {/* Horizontal Scrollable Tabs Strip */}
+            <div
+              ref={tabsScrollRef}
+              onWheel={handleTabsWheel}
+              className="flex-1 flex items-center space-x-2 overflow-x-auto pb-1 scroll-smooth custom-scrollbar select-none"
+            >
+              {displayedTabs.map((tab) => {
+                const isActive = activeTab === tab.id;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    ref={isActive ? activeTabBtnRef : null}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center space-x-2 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer shrink-0 ${
+                      isActive
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
+                    <span>{lang === 'km' ? tab.labelKh : tab.labelEn}</span>
+                    {tab.badge && (
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          isActive
+                            ? 'bg-indigo-700 text-white'
+                            : tab.badgeColor || 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Scroll Right Button */}
+            <button
+              type="button"
+              onClick={() => handleScrollTabs('right')}
+              className="hidden sm:flex p-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200 shadow-xs transition shrink-0 cursor-pointer items-center justify-center"
+              title={lang === 'km' ? 'រមូរទៅស្តាំ' : 'Scroll right'}
+              aria-label="Scroll tabs right"
+            >
+              <ChevronRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+          </div>
+        ) : (
+          /* View Mode 2: Grid Overview (All 9 tabs visible at a glance without scrolling!) */
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+            {tabDefinitions.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                  }}
+                  className={`p-3.5 rounded-2xl border text-left transition cursor-pointer flex items-start space-x-3 ${
+                    isActive
+                      ? 'bg-indigo-50/90 border-indigo-600 ring-2 ring-indigo-500 shadow-sm'
+                      : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-300 shadow-2xs'
+                  }`}
+                >
+                  <div
+                    className={`p-2.5 rounded-xl shrink-0 ${
+                      isActive ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4
+                        className={`font-black text-xs sm:text-sm truncate ${
+                          isActive ? 'text-indigo-950 font-black' : 'text-slate-800'
+                        }`}
+                      >
+                        {lang === 'km' ? tab.labelKh : tab.labelEn}
+                      </h4>
+                      {tab.badge && (
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full shrink-0 ${
+                            isActive
+                              ? 'bg-indigo-600 text-white'
+                              : tab.badgeColor || 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {tab.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                      {lang === 'km' ? tab.descKh : tab.descEn}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Current Active Tab Context Bar */}
+        <div className="flex items-center justify-between text-xs px-2 pt-0.5 text-slate-500">
+          <div className="flex items-center space-x-1.5 truncate">
+            <span className="font-semibold text-slate-400">{lang === 'km' ? 'កំពុងជ្រើសរើស:' : 'Active Menu:'}</span>
+            <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100 truncate">
+              {lang === 'km' ? activeTabMeta.labelKh : activeTabMeta.labelEn}
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">
+            {tabDefinitions.findIndex((t) => t.id === activeTab) + 1} / {tabDefinitions.length}
           </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('shifts')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'shifts'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Clock className="w-4 h-4 text-amber-300" />
-          <span>{lang === 'km' ? '២. វេនការងារ & ម៉ោងបំពេញ' : '2. Work Shifts & Hours'}</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === 'shifts' ? 'bg-indigo-700 text-white' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
-            {shiftsList.length} Shifts
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('branding')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'branding'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Palette className="w-4 h-4" />
-          <span>{lang === 'km' ? '៣. ស្លាកយីហោ & Logo ក្រុមហ៊ុន' : '3. Branding & Corporate Logo'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('typography')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'typography'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Type className="w-4 h-4 text-amber-300" />
-          <span>{lang === 'km' ? '៤. អក្សរ & Visual (Khmer Fonts)' : '4. Khmer Typography & Visual'}</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === 'typography' ? 'bg-indigo-700 text-white' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
-            ADMIN ONLY
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('roles')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'roles'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Shield className="w-4 h-4" />
-          <span>{lang === 'km' ? '៥. សិទ្ធិតួនាទី (RBAC Permissions)' : '5. RBAC Role Permissions'}</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'roles' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
-            {rolesForm.length} Roles
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('leaves')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'leaves'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <CalendarCheck className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៦. គ្រប់គ្រងច្បាប់ & សិទ្ធិអនុញ្ញាត' : '6. Leave & Quota Controls'}</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'leaves' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
-            {leaveRequests.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('system')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'system'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Zap className="w-4 h-4" />
-          <span>{lang === 'km' ? '៧. ប៉ារ៉ាម៉ែត្រប្រព័ន្ធ & ការប្រកាស' : '7. System Rules & Broadcast'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('audit')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'audit'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          <span>{lang === 'km' ? '៨. កំណត់ត្រាសវនកម្ម (Audit Trail)' : '8. Audit Trail & Logs'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('backup')}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm whitespace-nowrap transition cursor-pointer ${
-            activeTab === 'backup'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-              : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
-          }`}
-        >
-          <Database className="w-4 h-4 text-emerald-500" />
-          <span>{lang === 'km' ? '៩. បម្រុងទុក & ស្តារទិន្នន័យ (Backup & Sync)' : '9. Backup, Restore & Sync'}</span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-        </button>
+        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -3576,6 +3870,20 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Floating Scroll to Top Quick Action Button */}
+      {showScrollTop && (
+        <button
+          type="button"
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-40 p-3 rounded-2xl bg-slate-900/90 hover:bg-indigo-600 text-white shadow-xl shadow-slate-900/30 border border-slate-700 hover:border-indigo-400 transition-all duration-200 hover:scale-105 flex items-center space-x-1.5 text-xs font-bold cursor-pointer backdrop-blur-md animate-in fade-in"
+          title={lang === 'km' ? 'រមូរទៅលើបង្អស់' : 'Scroll to top'}
+          aria-label="Scroll to top"
+        >
+          <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+          <span className="hidden sm:inline font-battambang">{lang === 'km' ? 'ទៅលើ' : 'Top'}</span>
+        </button>
       )}
     </div>
   );
