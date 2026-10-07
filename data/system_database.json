@@ -155,6 +155,34 @@
   ],
   "employees": [
     {
+      "id": "emp_1791348982075",
+      "code": "EMP-9999",
+      "nameKh": "SAM",
+      "nameEn": "PHEAKDEY",
+      "branchId": "br_main_hq",
+      "department": "General Services",
+      "departmentKh": "សេវាកម្មទូទៅ (General Services)",
+      "role": "HR",
+      "roleKh": "HR",
+      "roleType": "employee",
+      "shiftId": "shift_cafe_morning",
+      "shiftStartTime": "08:00",
+      "shiftEndTime": "17:00",
+      "scheduledDailyHours": 8,
+      "workingHoursText": "08:00 - 17:00 (8h)",
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80",
+      "phone": "0966644046",
+      "email": "pheakdey@enterprise.com.kh",
+      "status": "active",
+      "pinCode": "7047",
+      "weeklyDayOff": 0,
+      "hasSundayRest": true,
+      "annualLeaveQuota": 18,
+      "annualLeaveUsed": 0,
+      "sickLeaveQuota": 7,
+      "sickLeaveUsed": 0
+    },
+    {
       "status": "active",
       "role": "Driver",
       "roleKh": "Driver",
@@ -1954,7 +1982,7 @@
       "timestamp": "9/23/2026, 2:50:37 PM"
     }
   ],
-  "lastUpdated": "2026-10-07T03:54:48.585Z",
+  "lastUpdated": "2026-10-07T04:56:22.106Z",
   "isReset": false,
   "staffAlerts": [
     {
