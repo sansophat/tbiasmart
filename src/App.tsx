@@ -903,6 +903,7 @@ export default function App() {
           isUnread: true,
         });
 
+        playAlertChime('punch');
         showLiveAlert(
           lang === 'km' ? '🟢 វត្តមានស្កេន GPS ថ្មី (Live Sync)' : '🟢 Real-time GPS Punch Synced',
           `${empName} ${actionType} - ${record.branchNameEn || ''}`,

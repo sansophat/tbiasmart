@@ -801,6 +801,19 @@
   ],
   "attendanceRecords": [
     {
+      "id": "att_test_1791345288143",
+      "employeeId": "emp_1790150117850",
+      "employeeNameKh": "សាន្ត សុផាត",
+      "employeeNameEn": "San Sophat",
+      "type": "check_in",
+      "timestamp": "2026-10-07T03:54:48.143Z",
+      "branchId": "br_main_hq",
+      "branchNameKh": "ការិយាល័យកណ្តាល (Head Office)",
+      "branchNameEn": "Head Office",
+      "isWithinGeofence": true,
+      "distanceToBranch": 12
+    },
+    {
       "distanceToBranch": 14,
       "employeeNameEn": "San Sophat",
       "id": "att_1790562127708",
@@ -1941,9 +1954,23 @@
       "timestamp": "9/23/2026, 2:50:37 PM"
     }
   ],
-  "lastUpdated": "2026-10-06T02:33:33.414Z",
+  "lastUpdated": "2026-10-07T03:54:48.585Z",
   "isReset": false,
   "staffAlerts": [
+    {
+      "id": "alert_att_att_test_1791345288143",
+      "type": "punch",
+      "titleKh": "វត្តមានស្កេន GPS ថ្មី",
+      "titleEn": "Real-time GPS Scan Punch",
+      "detailKh": "សាន្ត សុផាត បានចូលធ្វើការ (Check-In) - ការិយាល័យកណ្តាល (Head Office) (ក្នុងរង្វង់ GPS)",
+      "detailEn": "សាន្ត សុផាត Check-In - Head Office (Within GPS Geofence)",
+      "timestamp": "10:54:48 AM",
+      "rawTimestamp": 1791345288143,
+      "actorName": "សាន្ត សុផាត",
+      "branchId": "br_main_hq",
+      "branchName": "ការិយាល័យកណ្តាល (Head Office)",
+      "isUnread": true
+    },
     {
       "id": "alert_login_user_admin_1791254013111",
       "type": "login",
