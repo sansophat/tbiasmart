@@ -2,6 +2,9 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   collection,
   onSnapshot,
@@ -37,17 +40,39 @@ export function getSafeAuthUser() {
   }
 }
 
-// Initialize Firestore safely with database ID support
+// Initialize Firestore safely with persistent IndexedDB multi-tab cache and database ID support
 let firestoreInstance: Firestore;
 try {
-  if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
-    firestoreInstance = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+  const dbId =
+    firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+      ? firebaseConfig.firestoreDatabaseId
+      : undefined;
+
+  if (typeof window !== 'undefined') {
+    firestoreInstance = initializeFirestore(
+      firebaseApp,
+      {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      },
+      dbId
+    );
   } else {
-    firestoreInstance = getFirestore(firebaseApp);
+    firestoreInstance = dbId ? getFirestore(firebaseApp, dbId) : getFirestore(firebaseApp);
   }
 } catch (err) {
-  console.warn('Failed to initialize with specific database ID, falling back to default:', err);
-  firestoreInstance = getFirestore(firebaseApp);
+  // If already initialized (e.g. during fast refresh or re-import), fallback gracefully
+  try {
+    const dbId =
+      firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+        ? firebaseConfig.firestoreDatabaseId
+        : undefined;
+    firestoreInstance = dbId ? getFirestore(firebaseApp, dbId) : getFirestore(firebaseApp);
+  } catch (err2) {
+    console.warn('Fallback getFirestore notice:', err2);
+    firestoreInstance = getFirestore(firebaseApp);
+  }
 }
 
 export const db = firestoreInstance;
@@ -152,12 +177,16 @@ export interface CloudSystemState {
 type StatusListener = (status: CloudSyncStatus) => void;
 const statusListeners = new Set<StatusListener>();
 let currentStatus: CloudSyncStatus = 'connected';
-let recoveryTimeout: any = null;
 let lastSyncError: string | null = null;
+let isQuotaExceeded = false;
 
 /** Last cloud write error message (null when the last write succeeded). */
 export function getLastCloudSyncError() {
   return lastSyncError;
+}
+
+export function isCloudQuotaExceeded(): boolean {
+  return isQuotaExceeded;
 }
 
 function notifyStatus(status: CloudSyncStatus) {
@@ -169,21 +198,6 @@ function notifyStatus(status: CloudSyncStatus) {
       console.warn('Status listener error:', e);
     }
   });
-
-  // If status is 'error', schedule an auto-recovery check to avoid getting permanently stuck
-  if (status === 'error') {
-    if (recoveryTimeout) clearTimeout(recoveryTimeout);
-    recoveryTimeout = setTimeout(async () => {
-      try {
-        const isOnline = await testFirestoreConnection();
-        if (isOnline) {
-          notifyStatus('connected');
-        }
-      } catch {
-        notifyStatus('connected');
-      }
-    }, 1500);
-  }
 }
 
 export function subscribeCloudConnectionStatus(listener: StatusListener) {
@@ -195,20 +209,10 @@ export function subscribeCloudConnectionStatus(listener: StatusListener) {
 }
 
 /**
- * Validate Firestore connectivity on startup
+ * Validate network connectivity without burning Firestore read quota
  */
 export async function testFirestoreConnection(): Promise<boolean> {
-  try {
-    const docRef = doc(db, MAIN_COLLECTION, APP_DATA_DOC);
-    const fetchPromise = getDoc(docRef);
-    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 3000));
-    await Promise.race([fetchPromise, timeoutPromise]);
-    notifyStatus('connected');
-    return true;
-  } catch (error) {
-    notifyStatus('connected');
-    return true;
-  }
+  return typeof navigator !== 'undefined' ? navigator.onLine : true;
 }
 
 // ======================================================================
@@ -450,13 +454,20 @@ function ensureListeners() {
         const map = new Map<string, Entry>();
         snap.docs.forEach((d) => map.set(d.id, entryFromDoc(key, d.data())));
         cache[key] = map;
+        isQuotaExceeded = false;
         notifyStatus('connected');
         markReady(key);
         scheduleNotify();
       },
-      (error) => {
+      (error: any) => {
         handleFirestoreError(error, OperationType.LIST, collectionName(key));
+        if (error?.code === 'resource-exhausted' || (error?.message || '').includes('Quota limit exceeded')) {
+          isQuotaExceeded = true;
+          console.warn(`[CloudSync] Firestore read quota exceeded on collection "${collectionName(key)}". Operating safely from local cache.`);
+        }
         notifyStatus('error');
+        // Unblock baseline so existing cache/offline data is delivered to app subscribers
+        markReady(key);
       }
     );
   });
@@ -476,13 +487,19 @@ function ensureListeners() {
       OBJECT_KEYS.forEach((k) => {
         objCache[k] = next[k];
       });
+      isQuotaExceeded = false;
       notifyStatus('connected');
       markReady('config');
       scheduleNotify();
     },
-    (error) => {
+    (error: any) => {
       handleFirestoreError(error, OperationType.LIST, CONFIG_COLLECTION);
+      if (error?.code === 'resource-exhausted' || (error?.message || '').includes('Quota limit exceeded')) {
+        isQuotaExceeded = true;
+        console.warn('[CloudSync] Firestore read quota exceeded on config collection. Operating safely from local cache.');
+      }
       notifyStatus('error');
+      markReady('config');
     }
   );
 }
@@ -641,6 +658,9 @@ function reportSuccess() {
 
 function reportFailure(error: unknown) {
   lastSyncError = error instanceof Error ? error.message : String(error);
+  if ((error as any)?.code === 'resource-exhausted' || lastSyncError.includes('Quota limit exceeded')) {
+    isQuotaExceeded = true;
+  }
   handleFirestoreError(error, OperationType.WRITE, 'ams_*');
   notifyStatus('error');
 }

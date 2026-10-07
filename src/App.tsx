@@ -1326,6 +1326,21 @@ export default function App() {
           setShifts(cloudData.shifts);
           safeSetJson('attend_shifts', JSON.stringify(cloudData.shifts));
         }
+        if (Array.isArray(cloudData.staffAlerts) && cloudData.staffAlerts.length > 0) {
+          const clearedTime = alertsClearedAt || Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+          setActionAlerts((prev) => {
+            const prevIds = new Set(prev.map((a) => a.id));
+            const newAlerts = cloudData.staffAlerts!.filter(
+              (a: any) => !prevIds.has(a.id) && (a.rawTimestamp || 0) > clearedTime
+            );
+            if (newAlerts.length > 0) {
+              const merged = [...newAlerts, ...prev];
+              merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+              return merged.slice(0, 50);
+            }
+            return prev;
+          });
+        }
 
         if (!isInitialCloudLoad) {
           setLiveToast({
@@ -1369,11 +1384,16 @@ export default function App() {
     };
   }, [lang]);
 
-  // Periodic background fallback sync (every 4 seconds) to guarantee real-time staff alerts across all devices
+  // Periodic background fallback sync (every 5 seconds) to guarantee real-time staff alerts across all devices
   useEffect(() => {
     const pollInterval = setInterval(() => {
       fetch('/api/system/state')
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) return null;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) return null;
+          return res.json();
+        })
         .then((data) => {
           if (data && data.success && data.state) {
             const serverState = data.state;
