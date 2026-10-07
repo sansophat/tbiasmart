@@ -84,6 +84,7 @@ import {
   syncStateToSupabase,
   subscribeToSupabaseRealtime,
   broadcastSupabaseEvent,
+  startSupabasePollingSync,
 } from './utils/supabaseSync';
 
 const DEFAULT_STARTER_BRANCH: Branch = {
@@ -1213,49 +1214,57 @@ export default function App() {
       }
     });
 
-    // 4. Subscribe to Supabase Realtime (Instant broadcast across devices on Vercel)
+    // 4. Handle incoming punch alert with deduplication
+    const alertedPunchIds = new Set<string>();
+
+    const triggerAdminPunchAlert = (record: AttendanceRecord) => {
+      if (!record || !record.id) return;
+      if (alertedPunchIds.has(record.id)) return;
+      alertedPunchIds.add(record.id);
+
+      setAttendanceRecords((prev) => {
+        if (prev.some((r) => r.id === record.id)) return prev;
+        const next = [record, ...prev];
+        try {
+          safeSetJson('attend_records', JSON.stringify(next));
+        } catch (_) {}
+        return next;
+      });
+
+      const empName = lang === 'km' 
+        ? (record.employeeNameKh || record.employeeNameEn) 
+        : (record.employeeNameEn || record.employeeNameKh);
+      const actionType = record.type === 'check_in' 
+        ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
+        : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
+      const punchTimeMs = record.timestamp ? new Date(record.timestamp).getTime() : Date.now();
+
+      addActionAlert({
+        type: 'punch',
+        titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
+        titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
+        detailKh: `${empName} ${actionType} - ${record.branchNameKh || record.branchNameEn || ''} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
+        detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
+        actorName: empName,
+        actorAvatar: record.employeeAvatar,
+        branchId: record.branchId,
+        branchName: record.branchNameKh || record.branchNameEn,
+        rawTimestamp: punchTimeMs,
+        isUnread: true,
+      });
+
+      playAlertChime('punch');
+      showLiveAlert(
+        lang === 'km' ? '🟢 វត្តមានស្កេន GPS ថ្មី (Live Sync)' : '🟢 Real-time GPS Punch Synced',
+        `${empName} ${actionType} - ${record.branchNameEn || ''}`,
+        'punch'
+      );
+    };
+
+    // Subscribe to Supabase Realtime (Instant push across devices on Vercel)
     const unsubSupabase = subscribeToSupabaseRealtime((event, payload) => {
       if (event === 'PUNCH_ATTENDANCE' && payload?.record) {
-        const record: AttendanceRecord = payload.record;
-        if (!record || !record.id) return;
-
-        setAttendanceRecords((prev) => {
-          if (prev.some((r) => r.id === record.id)) return prev;
-          const next = [record, ...prev];
-          try {
-            safeSetJson('attend_records', JSON.stringify(next));
-          } catch (_) {}
-          return next;
-        });
-
-        const empName = lang === 'km' 
-          ? (record.employeeNameKh || record.employeeNameEn) 
-          : (record.employeeNameEn || record.employeeNameKh);
-        const actionType = record.type === 'check_in' 
-          ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
-          : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
-        const punchTimeMs = record.timestamp ? new Date(record.timestamp).getTime() : Date.now();
-
-        addActionAlert({
-          type: 'punch',
-          titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
-          titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
-          detailKh: `${empName} ${actionType} - ${record.branchNameKh || record.branchNameEn || ''} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
-          detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
-          actorName: empName,
-          actorAvatar: record.employeeAvatar,
-          branchId: record.branchId,
-          branchName: record.branchNameKh || record.branchNameEn,
-          rawTimestamp: punchTimeMs,
-          isUnread: true,
-        });
-
-        playAlertChime('punch');
-        showLiveAlert(
-          lang === 'km' ? '🟢 វត្តមានស្កេន GPS ថ្មី (Live Sync)' : '🟢 Real-time GPS Punch Synced',
-          `${empName} ${actionType} - ${record.branchNameEn || ''}`,
-          'punch'
-        );
+        triggerAdminPunchAlert(payload.record);
       } else if (event === 'ACTION_ALERT' && payload?.alert) {
         addActionAlert(payload.alert);
       } else if (event === 'UPDATE_EMPLOYEE' && payload) {
@@ -1303,12 +1312,19 @@ export default function App() {
       }
     });
 
+    // 5. Start background Supabase Polling Sync as fallback (guarantees alert even if socket sleeps)
+    const unsubPolling = startSupabasePollingSync(
+      (newPunch) => triggerAdminPunchAlert(newPunch),
+      (newAlert) => addActionAlert(newAlert)
+    );
+
     return () => {
       unsubCloud();
       unsubConnection();
       unsubPresence();
       unsubSync();
       unsubSupabase();
+      unsubPolling();
     };
   }, [lang]);
 

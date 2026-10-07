@@ -654,87 +654,102 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     }
 
     setTimeout(() => {
-      const now = new Date();
-      // Ensure punch is credited to the employee's assigned branch
-      const assignedBranch = emp.branchId ? branches.find((b) => b.id === emp.branchId) : undefined;
-      const effectiveBranch = (method !== 'qr_kiosk' && assignedBranch) ? assignedBranch : branch;
+      try {
+        const now = new Date();
+        // Ensure punch is credited to the employee's assigned branch safely
+        const assignedBranch = emp.branchId ? branches.find((b) => b.id === emp.branchId) : undefined;
+        const effectiveBranch = (method !== 'qr_kiosk' && assignedBranch) ? assignedBranch : branch || branches[0];
 
-      const currentDistance = calculateDistanceMeters(
-        currentGeo.lat,
-        currentGeo.lng,
-        effectiveBranch.lat,
-        effectiveBranch.lng
-      );
-      const withinRadius = currentDistance <= effectiveBranch.radiusMeters;
-
-      // Determine Status (On-Time / Late / Geofence violation)
-      let status: 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' = 'on_time';
-      
-      if (!withinRadius) {
-        status = 'geofence_violation';
-      } else {
-        const hour = now.getHours();
-        const mins = now.getMinutes();
-        const currentMins = hour * 60 + mins;
-
-        // Office starts at 08:00 (480 mins) with 15 mins grace period
-        if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && targetType === 'check_in') {
-          status = 'late';
-        } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && targetType === 'check_in') {
-          status = 'late';
-        } else if (targetType === 'check_out' && hour >= 18) {
-          status = 'overtime';
+        if (!effectiveBranch) {
+          throw new Error('Branch location not configured.');
         }
-      }
 
-      const newRecord: AttendanceRecord = {
-        id: `att_${Date.now()}`,
-        employeeId: emp.id,
-        employeeNameKh: emp.nameKh,
-        employeeNameEn: emp.nameEn,
-        employeeCode: emp.code,
-        employeeAvatar: emp.avatar,
-        branchId: effectiveBranch.id,
-        branchNameKh: effectiveBranch.nameKh,
-        branchNameEn: effectiveBranch.nameEn,
-        type: targetType,
-        timestamp: now.toISOString(),
-        lat: currentGeo.lat,
-        lng: currentGeo.lng,
-        distanceToBranch: currentDistance,
-        isWithinGeofence: withinRadius,
-        accuracyMeters: currentGeo.accuracy || 5,
-        method: method,
-        selfieUrl: photoUrl || emp.avatar,
-        status: status,
-        deviceId: currentDevice.deviceId,
-        deviceName: currentDevice.deviceName,
-        deviceVerified: true,
-        notes: withinRadius
-          ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${currentGeo.accuracy || 5}m)`
-          : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${effectiveBranch.radiusMeters}m`,
-      };
+        const safeGeo = currentGeo && typeof currentGeo.lat === 'number' && typeof currentGeo.lng === 'number'
+          ? currentGeo
+          : { lat: effectiveBranch.lat, lng: effectiveBranch.lng, accuracy: 10 };
 
-      onAddAttendanceRecord(newRecord);
-      setLastSuccessRecord(newRecord);
-      setScanSuccessModalRecord(newRecord);
-      setIsProcessing(false);
+        const currentDistance = calculateDistanceMeters(
+          safeGeo.lat,
+          safeGeo.lng,
+          effectiveBranch.lat,
+          effectiveBranch.lng
+        );
+        const withinRadius = currentDistance <= (effectiveBranch.radiusMeters || 100);
 
-      setTimeout(() => {
+        // Determine Status (On-Time / Late / Geofence violation)
+        let status: 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' = 'on_time';
+        
+        if (!withinRadius) {
+          status = 'geofence_violation';
+        } else {
+          const hour = now.getHours();
+          const mins = now.getMinutes();
+          const currentMins = hour * 60 + mins;
+
+          // Office starts at 08:00 (480 mins) with 15 mins grace period
+          if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && targetType === 'check_in') {
+            status = 'late';
+          } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && targetType === 'check_in') {
+            status = 'late';
+          } else if (targetType === 'check_out' && hour >= 18) {
+            status = 'overtime';
+          }
+        }
+
+        const newRecord: AttendanceRecord = {
+          id: `att_${Date.now()}`,
+          employeeId: emp.id,
+          employeeNameKh: emp.nameKh,
+          employeeNameEn: emp.nameEn,
+          employeeCode: emp.code,
+          employeeAvatar: emp.avatar,
+          branchId: effectiveBranch.id,
+          branchNameKh: effectiveBranch.nameKh,
+          branchNameEn: effectiveBranch.nameEn,
+          type: targetType,
+          timestamp: now.toISOString(),
+          lat: safeGeo.lat,
+          lng: safeGeo.lng,
+          distanceToBranch: currentDistance,
+          isWithinGeofence: withinRadius,
+          accuracyMeters: safeGeo.accuracy || 5,
+          method: method,
+          selfieUrl: photoUrl || emp.avatar,
+          status: status,
+          deviceId: currentDevice.deviceId,
+          deviceName: currentDevice.deviceName,
+          deviceVerified: true,
+          notes: withinRadius
+            ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${safeGeo.accuracy || 5}m)`
+            : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${effectiveBranch.radiusMeters}m`,
+        };
+
+        onAddAttendanceRecord(newRecord);
+        setLastSuccessRecord(newRecord);
+        setScanSuccessModalRecord(newRecord);
+        setIsProcessing(false);
+
+        setTimeout(() => {
+          isSubmittingRef.current = false;
+        }, 1500);
+
+        if (withinRadius) {
+          try {
+            confetti({
+              particleCount: 90,
+              spread: 70,
+              origin: { y: 0.55 },
+              colors: ['#10b981', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899'],
+            });
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (err: any) {
+        console.error('Punch execution error:', err);
+        setIsProcessing(false);
         isSubmittingRef.current = false;
-      }, 1500);
-
-      if (withinRadius) {
-        try {
-          confetti({
-            particleCount: 90,
-            spread: 70,
-            origin: { y: 0.55 },
-            colors: ['#10b981', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899'],
-          });
-        } catch (e) {
-          // ignore
-        }
+        alert(lang === 'km' ? `កំហុសក្នុងការកត់ត្រាវត្តមាន: ${err?.message || 'សូមព្យាយាមម្តងទៀត'}` : `Error recording attendance: ${err?.message || 'Please try again'}`);
       }
     }, 450);
   };

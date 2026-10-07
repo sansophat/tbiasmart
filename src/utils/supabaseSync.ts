@@ -198,19 +198,20 @@ export async function syncStateToSupabase(stateData: Partial<SupabaseSystemData>
 }
 
 // ==========================================
-// Realtime Broadcast Channel (Sub-50ms latency across any device on Vercel)
+// Realtime Broadcast Channel & PostgreSQL Polling Sync
 // ==========================================
 let liveChannel: any = null;
 const liveListeners = new Set<(event: string, payload: any) => void>();
 
-function getOrCreateChannel() {
+export function getOrCreateChannel() {
   if (!liveChannel) {
     liveChannel = supabase.channel('ams_live_feed', {
-      config: { broadcast: { ack: false } },
+      config: { broadcast: { ack: true } },
     });
 
     liveChannel
       .on('broadcast', { event: '*' }, ({ event, payload }: any) => {
+        console.info('[Supabase Realtime] Inbound broadcast:', event, payload);
         liveListeners.forEach((fn) => {
           try {
             fn(event, payload);
@@ -220,24 +221,25 @@ function getOrCreateChannel() {
         });
       })
       .subscribe((status: string) => {
-        if (status === 'SUBSCRIBED') {
-          console.info('[Supabase Realtime] Connected and listening on channel "ams_live_feed"');
-        }
+        console.info('[Supabase Realtime] Channel status:', status);
       });
   }
   return liveChannel;
 }
 
-export function broadcastSupabaseEvent(event: string, payload: any) {
+export async function broadcastSupabaseEvent(event: string, payload: any): Promise<boolean> {
   try {
     const ch = getOrCreateChannel();
-    ch.send({
+    const res = await ch.send({
       type: 'broadcast',
       event,
       payload,
     });
+    console.info(`[Supabase Broadcast] Sent ${event}:`, res);
+    return res === 'ok';
   } catch (err) {
     console.warn('[Supabase] Broadcast send error:', err);
+    return false;
   }
 }
 
@@ -246,5 +248,69 @@ export function subscribeToSupabaseRealtime(callback: (event: string, payload: a
   liveListeners.add(callback);
   return () => {
     liveListeners.delete(callback);
+  };
+}
+
+/**
+ * Bulletproof Background Polling Sync (Runs every 3.5 seconds):
+ * Ensures Admin ALWAYS receives new punches and alerts from Supabase PostgreSQL,
+ * even if a mobile browser's WebSocket was sleeping or disconnected.
+ */
+export function startSupabasePollingSync(
+  onNewPunch: (record: AttendanceRecord) => void,
+  onNewAlert: (alert: ActionAlertItem) => void
+): () => void {
+  let isMounted = true;
+  // Initialize baseline cutoff to 2 minutes ago
+  let lastSeenTimestamp = Date.now() - 120000;
+
+  const pollInterval = setInterval(async () => {
+    if (!isMounted) return;
+    try {
+      // 1. Fetch latest punches from Postgres
+      const { data: punchRows, error: punchErr } = await supabase
+        .from('attendance_records')
+        .select('record, created_at')
+        .order('created_at', { ascending: false })
+        .limit(8);
+
+      if (!punchErr && Array.isArray(punchRows)) {
+        punchRows.forEach((row) => {
+          if (row?.record && row.record.id) {
+            const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+            if (rowTime > lastSeenTimestamp) {
+              onNewPunch(row.record);
+            }
+          }
+        });
+      }
+
+      // 2. Fetch latest alerts from Postgres
+      const { data: alertRows, error: alertErr } = await supabase
+        .from('staff_alerts')
+        .select('alert, created_at')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!alertErr && Array.isArray(alertRows)) {
+        alertRows.forEach((row) => {
+          if (row?.alert && row.alert.id) {
+            const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+            if (rowTime > lastSeenTimestamp) {
+              onNewAlert(row.alert);
+            }
+          }
+        });
+      }
+
+      lastSeenTimestamp = Math.max(lastSeenTimestamp, Date.now() - 2000);
+    } catch (e) {
+      // silent background ignore
+    }
+  }, 3500);
+
+  return () => {
+    isMounted = false;
+    clearInterval(pollInterval);
   };
 }
