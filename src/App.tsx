@@ -76,6 +76,15 @@ import {
   saveStaffAlertToCloud,
   CloudSystemState 
 } from './utils/firebaseSync';
+import {
+  fetchInitialSupabaseData,
+  saveAttendancePunchToSupabase,
+  saveStaffAlertToSupabase,
+  saveEmployeeToSupabase,
+  syncStateToSupabase,
+  subscribeToSupabaseRealtime,
+  broadcastSupabaseEvent,
+} from './utils/supabaseSync';
 
 const DEFAULT_STARTER_BRANCH: Branch = {
   id: 'br_main_hq',
@@ -491,64 +500,89 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // Fetch both Cloud Firestore and Local Server state concurrently to guarantee complete data
-        const [cloudStateRes, serverRes] = await Promise.allSettled([
+        // Fetch Cloud Firestore, Local Server state, and Supabase PostgreSQL concurrently
+        const [cloudStateRes, serverRes, supabaseRes] = await Promise.allSettled([
           getCloudDatabaseState(),
           fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetchInitialSupabaseData(),
         ]);
 
         const cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
         const sState = (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.state)
           ? serverRes.value.state
           : null;
+        const suState = (supabaseRes.status === 'fulfilled' && supabaseRes.value)
+          ? supabaseRes.value
+          : null;
 
         if (!isMounted) return;
 
         // Prioritize populated datasets to ensure no empty overwrites
-        const bestBranches = (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
-          ? cState.branches
-          : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
-            ? sState.branches
-            : null;
+        const bestBranches = (suState && Array.isArray(suState.branches) && suState.branches.length > 0)
+          ? suState.branches
+          : (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
+            ? cState.branches
+            : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
+              ? sState.branches
+              : null;
 
-        const bestEmployees = (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
-          ? cState.employees
-          : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
-            ? sState.employees
-            : null;
+        const bestEmployees = (suState && Array.isArray(suState.employees) && suState.employees.length > 0)
+          ? suState.employees
+          : (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
+            ? cState.employees
+            : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
+              ? sState.employees
+              : null;
 
         const bestRecords = mergeDatasets(
-          (cState?.attendanceRecords || []),
-          (sState?.attendanceRecords || [])
+          (suState?.attendanceRecords || []),
+          mergeDatasets(
+            (cState?.attendanceRecords || []),
+            (sState?.attendanceRecords || [])
+          )
         );
 
-        const bestLeaves = (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
-          ? cState.leaveRequests
-          : (sState?.leaveRequests || []);
+        const bestLeaves = (suState && Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0)
+          ? suState.leaveRequests
+          : (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
+            ? cState.leaveRequests
+            : (sState?.leaveRequests || []);
 
-        const bestTransfers = (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
-          ? cState.transferRecords
-          : (sState?.transferRecords || []);
+        const bestTransfers = (suState && Array.isArray(suState.transferRecords) && suState.transferRecords.length > 0)
+          ? suState.transferRecords
+          : (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
+            ? cState.transferRecords
+            : (sState?.transferRecords || []);
 
-        const bestBranchTypes = (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
-          ? cState.branchTypes
-          : (sState?.branchTypes || []);
+        const bestBranchTypes = (suState && Array.isArray(suState.branchTypes) && suState.branchTypes.length > 0)
+          ? suState.branchTypes
+          : (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
+            ? cState.branchTypes
+            : (sState?.branchTypes || []);
 
-        const bestBranding = cState?.branding || sState?.branding;
-        const bestRolePerms = (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
-          ? cState.rolePermissions
-          : (sState?.rolePermissions || []);
-        const bestSettings = cState?.systemSettings || sState?.systemSettings;
-        const bestAdmin = cState?.adminProfile || sState?.adminProfile;
-        const bestAudit = (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
-          ? cState.auditLogs
-          : (sState?.auditLogs || []);
-        const bestShifts = (cState && Array.isArray(cState.shifts) && cState.shifts.length > 0)
-          ? cState.shifts
-          : (sState?.shifts || []);
-        const bestAlerts = (cState && Array.isArray(cState.staffAlerts) && cState.staffAlerts.length > 0)
-          ? cState.staffAlerts
-          : (sState?.staffAlerts || []);
+        const bestBranding = suState?.branding || cState?.branding || sState?.branding;
+        const bestRolePerms = (suState && Array.isArray(suState.rolePermissions) && suState.rolePermissions.length > 0)
+          ? suState.rolePermissions
+          : (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
+            ? cState.rolePermissions
+            : (sState?.rolePermissions || []);
+        const bestSettings = suState?.systemSettings || cState?.systemSettings || sState?.systemSettings;
+        const bestAdmin = suState?.adminProfile || cState?.adminProfile || sState?.adminProfile;
+        const bestAudit = (suState && Array.isArray(suState.auditLogs) && suState.auditLogs.length > 0)
+          ? suState.auditLogs
+          : (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
+            ? cState.auditLogs
+            : (sState?.auditLogs || []);
+        const bestShifts = (suState && Array.isArray(suState.shifts) && suState.shifts.length > 0)
+          ? suState.shifts
+          : (cState && Array.isArray(cState.shifts) && cState.shifts.length > 0)
+            ? cState.shifts
+            : (sState?.shifts || []);
+        const bestAlerts = (suState && Array.isArray(suState.staffAlerts) && suState.staffAlerts.length > 0)
+          ? suState.staffAlerts
+          : (cState && Array.isArray(cState.staffAlerts) && cState.staffAlerts.length > 0)
+            ? cState.staffAlerts
+            : (sState?.staffAlerts || []);
 
         isReceivingCloudUpdate.current = true;
 
@@ -687,6 +721,11 @@ export default function App() {
           // Re-sync Firestore if Firestore had 0 emps
           if (!cState || !Array.isArray(cState.employees) || cState.employees.length === 0) {
             syncStateToCloudImmediate(reconciledPayload);
+          }
+
+          // Re-sync Supabase if Supabase had 0 emps
+          if (!suState || !Array.isArray(suState.employees) || suState.employees.length === 0) {
+            syncStateToSupabase(reconciledPayload);
           }
         }
 
@@ -1174,10 +1213,102 @@ export default function App() {
       }
     });
 
+    // 4. Subscribe to Supabase Realtime (Instant broadcast across devices on Vercel)
+    const unsubSupabase = subscribeToSupabaseRealtime((event, payload) => {
+      if (event === 'PUNCH_ATTENDANCE' && payload?.record) {
+        const record: AttendanceRecord = payload.record;
+        if (!record || !record.id) return;
+
+        setAttendanceRecords((prev) => {
+          if (prev.some((r) => r.id === record.id)) return prev;
+          const next = [record, ...prev];
+          try {
+            safeSetJson('attend_records', JSON.stringify(next));
+          } catch (_) {}
+          return next;
+        });
+
+        const empName = lang === 'km' 
+          ? (record.employeeNameKh || record.employeeNameEn) 
+          : (record.employeeNameEn || record.employeeNameKh);
+        const actionType = record.type === 'check_in' 
+          ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
+          : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
+        const punchTimeMs = record.timestamp ? new Date(record.timestamp).getTime() : Date.now();
+
+        addActionAlert({
+          type: 'punch',
+          titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
+          titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
+          detailKh: `${empName} ${actionType} - ${record.branchNameKh || record.branchNameEn || ''} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
+          detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
+          actorName: empName,
+          actorAvatar: record.employeeAvatar,
+          branchId: record.branchId,
+          branchName: record.branchNameKh || record.branchNameEn,
+          rawTimestamp: punchTimeMs,
+          isUnread: true,
+        });
+
+        playAlertChime('punch');
+        showLiveAlert(
+          lang === 'km' ? '🟢 វត្តមានស្កេន GPS ថ្មី (Live Sync)' : '🟢 Real-time GPS Punch Synced',
+          `${empName} ${actionType} - ${record.branchNameEn || ''}`,
+          'punch'
+        );
+      } else if (event === 'ACTION_ALERT' && payload?.alert) {
+        addActionAlert(payload.alert);
+      } else if (event === 'UPDATE_EMPLOYEE' && payload) {
+        const updatedEmp: Employee = payload;
+        setEmployees((prev) => {
+          const next = prev.map((e) => (e.id === updatedEmp.id ? { ...e, ...updatedEmp } : e));
+          safeSetJson('attend_employees', JSON.stringify(next));
+          return next;
+        });
+        if (updatedEmp.avatar) {
+          setAttendanceRecords((prev) => {
+            const next = prev.map((r) =>
+              r.employeeId === updatedEmp.id
+                ? {
+                    ...r,
+                    employeeAvatar: updatedEmp.avatar,
+                    employeeNameKh: updatedEmp.nameKh || r.employeeNameKh,
+                    employeeNameEn: updatedEmp.nameEn || r.employeeNameEn,
+                  }
+                : r
+            );
+            safeSetJson('attend_records', JSON.stringify(next));
+            return next;
+          });
+        }
+      } else if ((event === 'SUBMIT_LEAVE' || event === 'SUBMIT_LEAVE_REQUEST') && payload) {
+        const cleanRequest = payload;
+        setLeaveRequests((prev) => {
+          if (prev.some((l) => l.id === cleanRequest.id)) return prev;
+          return [cleanRequest, ...prev];
+        });
+        playAlertChime('leave');
+        addActionAlert({
+          type: 'leave_submit',
+          titleKh: 'សំណើសុំច្បាប់ថ្មី',
+          titleEn: 'New Staff Leave Request',
+          detailKh: `${cleanRequest.employeeNameKh || cleanRequest.employeeNameEn || 'បុគ្គលិក'}: ${cleanRequest.reason || ''} (${cleanRequest.typeKh || cleanRequest.category || 'ច្បាប់'})`,
+          detailEn: `${cleanRequest.employeeNameEn || 'Staff'}: ${cleanRequest.reason || ''} (${cleanRequest.startDate} → ${cleanRequest.endDate})`,
+          leaveRequestId: cleanRequest.id,
+          actorName: cleanRequest.employeeNameKh || cleanRequest.employeeNameEn,
+          actorAvatar: cleanRequest.employeeAvatar,
+        });
+      } else if (event === 'STAFF_LOGIN' && payload?.alert) {
+        addActionAlert(payload.alert);
+      }
+    });
+
     return () => {
+      unsubCloud();
       unsubConnection();
       unsubPresence();
       unsubSync();
+      unsubSupabase();
     };
   }, [lang]);
 
@@ -1561,6 +1692,19 @@ export default function App() {
       adminProfile,
       auditLogs,
     });
+
+    syncStateToSupabase({
+      branches,
+      employees,
+      leaveRequests,
+      transferRecords,
+      branchTypes,
+      branding,
+      rolePermissions,
+      systemSettings,
+      adminProfile,
+      auditLogs,
+    });
   }, [
     branches,
     employees,
@@ -1628,10 +1772,12 @@ export default function App() {
       'punch'
     );
 
-    // 1. Instantly save individual punch record directly to Firestore (real-time broadcast to all devices!)
-    saveAttendanceRecordToCloud(newRecord);
+    // 1. Instantly save individual punch record directly to Supabase & broadcast in real-time
+    saveAttendancePunchToSupabase(newRecord);
+    saveStaffAlertToSupabase(punchAlert);
 
-    // 2. Also save action alert to Cloud so Admin alert bell lights up immediately
+    // 2. Also save individual punch record directly to Firestore
+    saveAttendanceRecordToCloud(newRecord);
     saveStaffAlertToCloud(punchAlert);
 
     // 3. Broadcast to all WebSocket connected peers and BroadcastChannel
@@ -2039,6 +2185,9 @@ export default function App() {
       auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
 
+    syncStateToSupabase({ leaveRequests: nextLeaves });
+    broadcastSupabaseEvent('SUBMIT_LEAVE', cleanRequest);
+
     fetch('/api/leaves/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2163,6 +2312,9 @@ export default function App() {
       employees: sanitizeForFirestore(nextEmployees),
       auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
+
+    syncStateToSupabase({ leaveRequests: nextLeaves, employees: nextEmployees });
+    broadcastSupabaseEvent('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
 
     realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
 
@@ -2538,6 +2690,16 @@ export default function App() {
       status: 'success',
     };
     handleAddAuditLog(auditLog);
+
+    // Broadcast to Supabase Realtime
+    saveStaffAlertToSupabase(loginAlert as ActionAlertItem);
+    broadcastSupabaseEvent('STAFF_LOGIN', {
+      user,
+      employee: matchedEmp,
+      branch: empBranch,
+      alert: loginAlert,
+      auditLog,
+    });
 
     // Broadcast to WebSocket and cross-tab BroadcastChannel
     realtimeService.emit('STAFF_LOGIN', {
