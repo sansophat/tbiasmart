@@ -828,17 +828,61 @@ app.post("/api/branches/delete", (req, res) => {
   if (!branchId) {
     return res.status(400).json({ error: "Missing branchId" });
   }
+  if (!Array.isArray(serverDb.deletedBranchIds)) serverDb.deletedBranchIds = [];
+  if (!serverDb.deletedBranchIds.includes(branchId)) {
+    serverDb.deletedBranchIds.push(branchId);
+  }
   serverDb.branches = (serverDb.branches || []).filter((b) => b.id !== branchId);
   persistDatabase();
-  syncToFirestore({ branches: serverDb.branches });
+  syncToFirestore({ branches: serverDb.branches, deletedBranchIds: serverDb.deletedBranchIds });
   const eventPayload = {
     type: "DELETE_BRANCH",
-    payload: { branchId },
+    payload: { id: branchId, branchId },
     senderId: senderId || "admin_client",
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
   broadcastToClients(eventPayload);
   res.json({ success: true });
+});
+app.post("/api/leaves/delete", (req, res) => {
+  const { requestId, senderId } = req.body;
+  if (!requestId) {
+    return res.status(400).json({ error: "Missing requestId" });
+  }
+  if (!Array.isArray(serverDb.deletedLeaveIds)) serverDb.deletedLeaveIds = [];
+  if (!serverDb.deletedLeaveIds.includes(requestId)) {
+    serverDb.deletedLeaveIds.push(requestId);
+  }
+  serverDb.leaveRequests = (serverDb.leaveRequests || []).filter((l) => l.id !== requestId);
+  persistDatabase();
+  syncToFirestore({ leaveRequests: serverDb.leaveRequests, deletedLeaveIds: serverDb.deletedLeaveIds });
+  const eventPayload = {
+    type: "DELETE_LEAVE",
+    payload: { id: requestId, requestId },
+    senderId: senderId || "admin_client",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  broadcastToClients(eventPayload);
+  res.json({ success: true });
+});
+app.post("/api/leaves/clear", (req, res) => {
+  const { scope, senderId } = req.body;
+  const currentLeaves = serverDb.leaveRequests || [];
+  const leavesToDelete = scope === "all" ? currentLeaves : currentLeaves.filter((l) => l.status === "approved" || l.status === "rejected");
+  const idsToDelete = leavesToDelete.map((l) => l.id);
+  if (!Array.isArray(serverDb.deletedLeaveIds)) serverDb.deletedLeaveIds = [];
+  serverDb.deletedLeaveIds = Array.from(/* @__PURE__ */ new Set([...serverDb.deletedLeaveIds, ...idsToDelete]));
+  serverDb.leaveRequests = currentLeaves.filter((l) => !idsToDelete.includes(l.id));
+  persistDatabase();
+  syncToFirestore({ leaveRequests: serverDb.leaveRequests, deletedLeaveIds: serverDb.deletedLeaveIds });
+  const eventPayload = {
+    type: "CLEAR_LEAVES",
+    payload: { scope, deletedIds: idsToDelete },
+    senderId: senderId || "admin_client",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  broadcastToClients(eventPayload);
+  res.json({ success: true, deletedCount: idsToDelete.length });
 });
 app.post("/api/system/branding", (req, res) => {
   const { branding, senderId } = req.body;

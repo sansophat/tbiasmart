@@ -45,6 +45,9 @@ export interface SupabaseSystemData {
   staffAlerts?: ActionAlertItem[];
   shifts?: ShiftConfig[];
   deletedEmployeeIds?: string[];
+  deletedBranchIds?: string[];
+  deletedLeaveIds?: string[];
+  alertsClearedAt?: number;
 }
 
 /**
@@ -148,6 +151,45 @@ export async function saveStaffAlertToSupabase(alert: ActionAlertItem): Promise<
     return true;
   } catch (err) {
     console.warn('[Supabase] Error saving alert:', err);
+    return false;
+  }
+}
+
+/**
+ * Permanently clear all alerts from Supabase PostgreSQL and broadcast instantly
+ */
+export async function clearStaffAlertsFromSupabase(clearedAt: number): Promise<boolean> {
+  try {
+    // 1. Delete rows from staff_alerts table
+    await supabase.from('staff_alerts').delete().neq('id', 'keep_system_placeholder');
+
+    // 2. Persist alertsClearedAt in app_state
+    await supabase.from('app_state').upsert({
+      key: 'alertsClearedAt',
+      value: clearedAt,
+      updated_at: new Date().toISOString(),
+    });
+
+    // 3. Broadcast CLEAR_ALL event over Realtime channel
+    broadcastSupabaseEvent('ACTION_ALERT', { action: 'CLEAR_ALL', clearedAt });
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Error clearing staff alerts:', err);
+    return false;
+  }
+}
+
+/**
+ * Delete or dismiss a single alert from Supabase
+ */
+export async function deleteSingleStaffAlertFromSupabase(alertId: string): Promise<boolean> {
+  try {
+    if (!alertId) return false;
+    await supabase.from('staff_alerts').delete().eq('id', alertId);
+    broadcastSupabaseEvent('ACTION_ALERT', { action: 'DISMISS_ONE', alertId });
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Error deleting single alert:', err);
     return false;
   }
 }
@@ -303,7 +345,8 @@ export function startSupabasePollingSync(
         alertRows.forEach((row) => {
           if (row?.alert && row.alert.id) {
             const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
-            if (rowTime > lastSeenTimestamp) {
+            const clearedCutoff = Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+            if (rowTime > lastSeenTimestamp && rowTime > clearedCutoff) {
               onNewAlert(row.alert);
             }
           }

@@ -32,7 +32,8 @@ import {
   Layers,
   ArrowRightLeft,
   Search,
-  ExternalLink
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
 import { Branch, BranchTypeConfig, BranchTransferRecord, Employee, Language } from '../types';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
@@ -207,6 +208,7 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
   const [showAddBranchModal, setShowAddBranchModal] = useState<boolean>(false);
   const [showAddTypeModal, setShowAddTypeModal] = useState<boolean>(false);
   const [showImagePickerModal, setShowImagePickerModal] = useState<boolean>(false);
+  const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
 
   // New Branch Type Form State
   const [newTypeId, setNewTypeId] = useState<string>('');
@@ -583,9 +585,24 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5 shrink-0">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${typeConf.badgeBg} ${typeConf.badgeText} ${typeConf.badgeBorder}`}>
-                          {lang === 'km' ? typeConf.nameKh.split(' ')[0] : typeConf.nameEn.split(' ')[0]}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${typeConf.badgeBg} ${typeConf.badgeText} ${typeConf.badgeBorder}`}>
+                            {lang === 'km' ? typeConf.nameKh.split(' ')[0] : typeConf.nameEn.split(' ')[0]}
+                          </span>
+                          {onDeleteBranch && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setBranchToDelete(branch);
+                              }}
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                              title={lang === 'km' ? 'លុបសាខា' : 'Delete Branch'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                         {isSelected && (
                           <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded">
                             Active
@@ -631,13 +648,28 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setShowImagePickerModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center space-x-1.5 border border-slate-200 transition shrink-0"
-                >
-                  <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>{lang === 'km' ? 'កែប្រែរូបភាពសាខា' : 'Update Photo'}</span>
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowImagePickerModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center space-x-1.5 border border-slate-200 transition cursor-pointer"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{lang === 'km' ? 'កែប្រែរូបភាពសាខា' : 'Update Photo'}</span>
+                  </button>
+
+                  {onDeleteBranch && selectedBranch && (
+                    <button
+                      type="button"
+                      onClick={() => setBranchToDelete(selectedBranch)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center space-x-1.5 border border-rose-200 transition cursor-pointer"
+                      title={lang === 'km' ? 'លុបសាខានេះ' : 'Delete Branch'}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>{lang === 'km' ? 'លុបសាខានេះ' : 'Delete Branch'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Editable Fields */}
@@ -838,15 +870,27 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                   </div>
                 </div>
 
-                {/* Save Button */}
+                {/* Actions: Save & Delete */}
                 <div className="pt-2 flex items-center gap-3">
                   <button
                     onClick={handleSave}
-                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md shadow-indigo-200 transition"
+                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md shadow-indigo-200 transition cursor-pointer"
                   >
                     <Save className="w-4 h-4" />
                     <span>{lang === 'km' ? 'រក្សាទុកការកំណត់សាខា' : 'Save Branch Settings'}</span>
                   </button>
+
+                  {onDeleteBranch && selectedBranch && (
+                    <button
+                      type="button"
+                      onClick={() => setBranchToDelete(selectedBranch)}
+                      className="px-4 py-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center justify-center space-x-1.5 border border-rose-200 transition cursor-pointer"
+                      title={lang === 'km' ? 'លុបសាខានេះ' : 'Delete Branch'}
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      <span>{lang === 'km' ? 'លុបសាខា' : 'Delete'}</span>
+                    </button>
+                  )}
 
                   {saveSuccess && (
                     <span className="text-emerald-600 font-bold text-xs flex items-center gap-1 animate-bounce">
@@ -1379,6 +1423,57 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Deleting Branch */}
+      {branchToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden transform transition-all scale-100">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4 text-rose-600">
+                <Trash2 className="w-7 h-7" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">
+                {lang === 'km' ? 'តើអ្នកប្រាកដថាចង់លុបសាខានេះ?' : 'Delete Branch Confirmation'}
+              </h3>
+              <p className="text-sm text-slate-600 mb-2">
+                {lang === 'km'
+                  ? `អ្នកកំពុងរៀបចំលុបសាខា "${branchToDelete.nameKh || branchToDelete.name}" (${branchToDelete.code || branchToDelete.id})។`
+                  : `Are you sure you want to delete branch "${branchToDelete.name}" (${branchToDelete.code || branchToDelete.id})?`}
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mb-6 text-left flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  {lang === 'km'
+                    ? 'ការលុបនេះនឹងដកសាខានេះចេញពីប្រព័ន្ធរហូត និងមិនអាចត្រឡប់វិញបានទេ។'
+                    : 'This action will permanently delete this branch and sync across all devices.'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setBranchToDelete(null)}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer text-xs"
+                >
+                  {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onDeleteBranch && branchToDelete) {
+                      onDeleteBranch(branchToDelete.id);
+                    }
+                    setBranchToDelete(null);
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-sm cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{lang === 'km' ? 'បាទ/ចាស, លុបសាខា' : 'Yes, Delete Branch'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

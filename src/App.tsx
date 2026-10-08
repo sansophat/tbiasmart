@@ -80,6 +80,8 @@ import {
   fetchInitialSupabaseData,
   saveAttendancePunchToSupabase,
   saveStaffAlertToSupabase,
+  clearStaffAlertsFromSupabase,
+  deleteSingleStaffAlertFromSupabase,
   saveEmployeeToSupabase,
   syncStateToSupabase,
   subscribeToSupabaseRealtime,
@@ -313,9 +315,25 @@ export default function App() {
     return new Set([...initialList, ...KNOWN_DELETED_EMPLOYEE_IDS]);
   });
 
+  // Tombstone Deletion Tracking: ensures deleted branches stay deleted and never resurrect
+  const [deletedBranchIds, setDeletedBranchIds] = useState<Set<string>>(() => {
+    const saved = safeGetJson<string[]>('attend_deleted_branch_ids', []);
+    return new Set(Array.isArray(saved) ? saved : []);
+  });
+
+  // Tombstone Deletion Tracking: ensures deleted leaves stay deleted and never resurrect
+  const [deletedLeaveIds, setDeletedLeaveIds] = useState<Set<string>>(() => {
+    const saved = safeGetJson<string[]>('attend_deleted_leave_ids', []);
+    return new Set(Array.isArray(saved) ? saved : []);
+  });
+
   // Persistent Core Data
   const [branches, setBranches] = useState<Branch[]>(() => {
-    return safeGetJson('attend_branches', INITIAL_BRANCHES);
+    const saved = safeGetJson('attend_branches', INITIAL_BRANCHES);
+    const tombstoneArr = safeGetJson<string[]>('attend_deleted_branch_ids', []);
+    const tombstones = new Set(Array.isArray(tombstoneArr) ? tombstoneArr : []);
+    const filtered = (Array.isArray(saved) ? saved : []).filter((b: Branch) => !tombstones.has(b.id));
+    return filtered.length > 0 ? filtered : INITIAL_BRANCHES.filter((b) => !tombstones.has(b.id));
   });
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
@@ -334,7 +352,10 @@ export default function App() {
   });
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
-    return safeGetJson('attend_leaves', INITIAL_LEAVE_REQUESTS);
+    const saved = safeGetJson('attend_leaves', INITIAL_LEAVE_REQUESTS);
+    const tombstoneArr = safeGetJson<string[]>('attend_deleted_leave_ids', []);
+    const tombstones = new Set(Array.isArray(tombstoneArr) ? tombstoneArr : []);
+    return (Array.isArray(saved) ? saved : []).filter((l: LeaveRequest) => !tombstones.has(l.id));
   });
 
   const [transferRecords, setTransferRecords] = useState<BranchTransferRecord[]>(() => {
@@ -417,8 +438,19 @@ export default function App() {
       safeSetJson('attend_staff_alerts', JSON.stringify([]));
     } catch {}
     setActionAlerts([]);
+    clearStaffAlertsFromSupabase(now);
     fetch('/api/staff/alerts', { method: 'DELETE' }).catch(() => {});
     realtimeService.emit('ACTION_ALERT', { action: 'CLEAR_ALL', clearedAt: now });
+  };
+
+  const handleDismissAlert = (alertId: string) => {
+    setActionAlerts((prev) => {
+      const nextAlerts = prev.filter((a) => a.id !== alertId);
+      safeSetJson('attend_staff_alerts', JSON.stringify(nextAlerts));
+      return nextAlerts;
+    });
+    deleteSingleStaffAlertFromSupabase(alertId);
+    realtimeService.emit('ACTION_ALERT', { action: 'DISMISS_ONE', alertId });
   };
 
   const showLiveAlert = (title: string, message: string, type: 'punch' | 'leave' | 'transfer' | 'system') => {
@@ -666,11 +698,29 @@ export default function App() {
             ? cState.staffAlerts
             : (sState?.staffAlerts || []);
 
-        isReceivingCloudUpdate.current = true;
+        const effectiveClearedAt = Math.max(
+          alertsClearedAt,
+          Number(localStorage.getItem('attend_alerts_cleared_at') || 0),
+          Number((suState as any)?.alertsClearedAt || 0)
+        );
+        if (effectiveClearedAt > alertsClearedAt) {
+          setAlertsClearedAt(effectiveClearedAt);
+          try { safeSetJson('attend_alerts_cleared_at', String(effectiveClearedAt)); } catch (_) {}
+        }
+
+        const branchTombstones = new Set([
+          ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+          ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
+        ]);
+
+        const leaveTombstones = new Set([
+          ...safeGetJson<string[]>('attend_deleted_leave_ids', []),
+          ...(Array.isArray((suState as any)?.deletedLeaveIds) ? (suState as any).deletedLeaveIds : []),
+        ]);
 
         if (bestBranches && bestBranches.length > 0) {
           setBranches((prev) => {
-            const merged = mergeDatasets(prev, bestBranches);
+            const merged = mergeDatasets(prev, bestBranches).filter((b: Branch) => !branchTombstones.has(b.id));
             safeSetJson('attend_branches', JSON.stringify(merged));
             return merged;
           });
@@ -724,8 +774,9 @@ export default function App() {
         }
 
         if (bestLeaves.length > 0) {
-          setLeaveRequests(bestLeaves);
-          safeSetJson('attend_leaves', JSON.stringify(bestLeaves));
+          const validLeaves = bestLeaves.filter((l: LeaveRequest) => !leaveTombstones.has(l.id));
+          setLeaveRequests(validLeaves);
+          safeSetJson('attend_leaves', JSON.stringify(validLeaves));
         }
 
         if (bestTransfers.length > 0) {
@@ -777,10 +828,11 @@ export default function App() {
         }
 
         if (bestAlerts.length > 0) {
+          const freshAlerts = bestAlerts.filter((a: any) => (a.rawTimestamp || 0) > effectiveClearedAt);
           setActionAlerts((prev) => {
             const prevIds = new Set(prev.map((a) => a.id));
-            const newIncoming = bestAlerts.filter((a: any) => !prevIds.has(a.id));
-            const merged = [...newIncoming, ...prev];
+            const newIncoming = freshAlerts.filter((a: any) => !prevIds.has(a.id));
+            const merged = [...newIncoming, ...prev].filter((a: any) => (a.rawTimestamp || 0) > effectiveClearedAt);
             merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
             return merged.slice(0, 50);
           });
@@ -789,10 +841,10 @@ export default function App() {
         // Auto-heal any store that had missing/empty data
         if (bestEmployees && bestEmployees.length > 0 && bestBranches && bestBranches.length > 0) {
           const reconciledPayload = {
-            branches: bestBranches,
+            branches: bestBranches.filter((b: Branch) => !branchTombstones.has(b.id)),
             employees: bestEmployees,
             attendanceRecords: bestRecords,
-            leaveRequests: bestLeaves,
+            leaveRequests: bestLeaves.filter((l: LeaveRequest) => !leaveTombstones.has(l.id)),
             transferRecords: bestTransfers,
             branchTypes: bestBranchTypes,
             branding: bestBranding,
@@ -1083,6 +1135,12 @@ export default function App() {
             safeSetJson('attend_staff_alerts', JSON.stringify([]));
           } catch {}
           setActionAlerts([]);
+        } else if (payload.action === 'DISMISS_ONE' && payload.alertId) {
+          setActionAlerts((prev) => {
+            const next = prev.filter((a) => a.id !== payload.alertId);
+            safeSetJson('attend_staff_alerts', JSON.stringify(next));
+            return next;
+          });
         }
       } else if ((type === 'SUBMIT_LEAVE' || type === 'SUBMIT_LEAVE_REQUEST') && payload) {
         // If message was originated by this client, skip duplicate toast and chime
@@ -1252,7 +1310,36 @@ export default function App() {
         });
       } else if (type === 'DELETE_BRANCH' && payload) {
         const idToDelete = payload.id || payload.branchId;
+        setDeletedBranchIds((prev) => {
+          const next = new Set(prev);
+          next.add(idToDelete);
+          safeSetJson('attend_deleted_branch_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
         setBranches((prev) => prev.filter((b) => b.id !== idToDelete));
+      } else if (type === 'DELETE_LEAVE' && payload) {
+        const idToDelete = payload.id || payload.requestId;
+        setDeletedLeaveIds((prev) => {
+          const next = new Set(prev);
+          next.add(idToDelete);
+          safeSetJson('attend_deleted_leave_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
+        setLeaveRequests((prev) => prev.filter((l) => l.id !== idToDelete));
+        setActionAlerts((prev) => prev.filter((a) => a.leaveRequestId !== idToDelete && a.id !== `alert_leave_${idToDelete}`));
+      } else if (type === 'CLEAR_LEAVES' && payload) {
+        const scope = payload.scope || 'processed';
+        const deletedIds: string[] = payload.deletedIds || [];
+        setDeletedLeaveIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((id) => next.add(id));
+          safeSetJson('attend_deleted_leave_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
+        setLeaveRequests((prev) => (scope === 'all' ? [] : prev.filter((l) => l.status === 'pending')));
+        if (scope === 'all') {
+          setActionAlerts((prev) => prev.filter((a) => !a.leaveRequestId && !a.id.startsWith('alert_leave_')));
+        }
       } else if (type === 'UPDATE_BRANDING' && payload) {
         setBranding(payload);
       } else if (type === 'UPDATE_SETTINGS' || type === 'UPDATE_SYSTEM_SETTINGS') {
@@ -1445,16 +1532,74 @@ export default function App() {
         });
       } else if (event === 'UPDATE_BRANCH' && payload) {
         setBranches((prev) => {
+          const tombstones = new Set(safeGetJson<string[]>('attend_deleted_branch_ids', []));
+          if (tombstones.has(payload.id)) return prev;
           const next = mergeDatasets(prev, [payload]);
           safeSetJson('attend_branches', JSON.stringify(next));
           return next;
         });
       } else if (event === 'DELETE_BRANCH' && payload?.id) {
+        const delId = payload.id;
+        setDeletedBranchIds((prev) => {
+          const next = new Set(prev);
+          next.add(delId);
+          safeSetJson('attend_deleted_branch_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
         setBranches((prev) => {
-          const next = prev.filter((b) => b.id !== payload.id);
+          const next = prev.filter((b) => b.id !== delId);
           safeSetJson('attend_branches', JSON.stringify(next));
           return next;
         });
+      } else if (event === 'DELETE_LEAVE' && payload?.id) {
+        const delId = payload.id;
+        setDeletedLeaveIds((prev) => {
+          const next = new Set(prev);
+          next.add(delId);
+          safeSetJson('attend_deleted_leave_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
+        setLeaveRequests((prev) => {
+          const next = prev.filter((l) => l.id !== delId);
+          safeSetJson('attend_leaves', JSON.stringify(next));
+          return next;
+        });
+        setActionAlerts((prev) => prev.filter((a) => a.leaveRequestId !== delId && a.id !== `alert_leave_${delId}`));
+      } else if (event === 'CLEAR_LEAVES' && payload) {
+        const scope = payload.scope || 'processed';
+        const deletedIds: string[] = payload.deletedIds || [];
+        setDeletedLeaveIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((id) => next.add(id));
+          safeSetJson('attend_deleted_leave_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
+        setLeaveRequests((prev) => {
+          const next = scope === 'all' ? [] : prev.filter((l) => l.status === 'pending');
+          safeSetJson('attend_leaves', JSON.stringify(next));
+          return next;
+        });
+        if (scope === 'all') {
+          setActionAlerts((prev) => prev.filter((a) => !a.leaveRequestId && !a.id.startsWith('alert_leave_')));
+        }
+      } else if (event === 'ACTION_ALERT' && payload) {
+        if (payload.action === 'CLEAR_ALL') {
+          const clearedTime = payload.clearedAt || Date.now();
+          setAlertsClearedAt(clearedTime);
+          try {
+            safeSetJson('attend_alerts_cleared_at', String(clearedTime));
+            safeSetJson('attend_staff_alerts', JSON.stringify([]));
+          } catch {}
+          setActionAlerts([]);
+        } else if (payload.action === 'DISMISS_ONE' && payload.alertId) {
+          setActionAlerts((prev) => {
+            const next = prev.filter((a) => a.id !== payload.alertId);
+            safeSetJson('attend_staff_alerts', JSON.stringify(next));
+            return next;
+          });
+        } else if (payload.alert) {
+          addActionAlert(payload.alert);
+        }
       } else if (event === 'UPDATE_LEAVE_STATUS' && payload?.requestId) {
         setLeaveRequests((prev) =>
           prev.map((r) =>
@@ -1528,17 +1673,34 @@ export default function App() {
             }
             if (Array.isArray(suState.branches) && suState.branches.length > 0) {
               setBranches((prev) => {
-                const merged = mergeDatasets(prev, suState.branches!);
+                const tombstones = new Set([
+                  ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+                  ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
+                ]);
+                const merged = mergeDatasets(prev, suState.branches!).filter((b: Branch) => !tombstones.has(b.id));
                 try { safeSetJson('attend_branches', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
             }
             if (Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0) {
               setLeaveRequests((prev) => {
-                const merged = mergeDatasets(prev, suState.leaveRequests!);
+                const tombstones = new Set([
+                  ...safeGetJson<string[]>('attend_deleted_leave_ids', []),
+                  ...(Array.isArray((suState as any)?.deletedLeaveIds) ? (suState as any).deletedLeaveIds : []),
+                ]);
+                const merged = mergeDatasets(prev, suState.leaveRequests!).filter((l: LeaveRequest) => !tombstones.has(l.id));
                 try { safeSetJson('attend_leaves', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
+            }
+            if ((suState as any)?.alertsClearedAt) {
+              const suClearedAt = Number((suState as any).alertsClearedAt);
+              const localClearedAt = Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+              if (suClearedAt > localClearedAt) {
+                setAlertsClearedAt(suClearedAt);
+                try { safeSetJson('attend_alerts_cleared_at', String(suClearedAt)); } catch (_) {}
+                setActionAlerts((prev) => prev.filter((a) => (a.rawTimestamp || 0) > suClearedAt));
+              }
             }
           }
         } catch (e) {
@@ -1568,7 +1730,9 @@ export default function App() {
 
         if (Array.isArray(cloudData.branches) && (cloudData.branches.length > 0 || cloudData.isReset)) {
           setBranches((prev) => {
-            const next = cloudData.isReset ? cloudData.branches! : mergeDatasets(prev, cloudData.branches!);
+            const tombstones = new Set(safeGetJson<string[]>('attend_deleted_branch_ids', []));
+            const raw = cloudData.isReset ? cloudData.branches! : mergeDatasets(prev, cloudData.branches!);
+            const next = raw.filter((b: Branch) => !tombstones.has(b.id));
             safeSetJson('attend_branches', JSON.stringify(next));
             return next;
           });
@@ -1675,9 +1839,11 @@ export default function App() {
                 );
               });
             }
-            const merged = cloudData.isReset
+            const leaveTombstones = new Set(safeGetJson<string[]>('attend_deleted_leave_ids', []));
+            const raw = cloudData.isReset
               ? cloudData.leaveRequests!
               : mergeDatasets(prevLeaves, cloudData.leaveRequests!);
+            const merged = raw.filter((l: LeaveRequest) => !leaveTombstones.has(l.id));
             safeSetJson('attend_leaves', JSON.stringify(merged));
             return merged;
           });
@@ -2355,6 +2521,12 @@ export default function App() {
   };
 
   const handleDeleteBranch = (branchId: string) => {
+    const nextDeleted = new Set(deletedBranchIds);
+    nextDeleted.add(branchId);
+    setDeletedBranchIds(nextDeleted);
+    const deletedArr = Array.from(nextDeleted);
+    safeSetJson('attend_deleted_branch_ids', JSON.stringify(deletedArr));
+
     let nextBranches: Branch[] = [];
     setBranches((prev) => {
       nextBranches = prev.filter((b) => b.id !== branchId);
@@ -2363,7 +2535,7 @@ export default function App() {
     });
 
     // Supabase Sync & Broadcast
-    syncStateToSupabase({ branches: nextBranches });
+    syncStateToSupabase({ branches: nextBranches, deletedBranchIds: deletedArr } as any);
     broadcastSupabaseEvent('DELETE_BRANCH', { id: branchId });
 
     realtimeService.emit('DELETE_BRANCH', { id: branchId });
@@ -2630,6 +2802,85 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId, status: newStatus, approvedBy: approver, comment, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleDeleteLeaveRequest = (requestId: string) => {
+    const nextDeleted = new Set(deletedLeaveIds);
+    nextDeleted.add(requestId);
+    setDeletedLeaveIds(nextDeleted);
+    const deletedArr = Array.from(nextDeleted);
+    safeSetJson('attend_deleted_leave_ids', JSON.stringify(deletedArr));
+
+    let nextLeaves: LeaveRequest[] = [];
+    setLeaveRequests((prev) => {
+      nextLeaves = prev.filter((l) => l.id !== requestId);
+      safeSetJson('attend_leaves', JSON.stringify(nextLeaves));
+      return nextLeaves;
+    });
+
+    // Remove any alert referencing this leave request
+    setActionAlerts((prev) => {
+      const nextAlerts = prev.filter((a) => a.leaveRequestId !== requestId && a.id !== `alert_leave_${requestId}`);
+      safeSetJson('attend_staff_alerts', JSON.stringify(nextAlerts));
+      return nextAlerts;
+    });
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr } as any);
+    broadcastSupabaseEvent('DELETE_LEAVE', { id: requestId });
+
+    realtimeService.emit('DELETE_LEAVE', { id: requestId });
+    syncStateToCloudImmediate({ leaveRequests: sanitizeForFirestore(nextLeaves) });
+    fetch('/api/leaves/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, senderId: realtimeService.getClientId() }),
+    }).catch(() => {});
+  };
+
+  const handleClearLeaveApprovals = (scope: 'processed' | 'all' = 'processed') => {
+    let idsToDelete: string[] = [];
+    let nextLeaves: LeaveRequest[] = [];
+
+    setLeaveRequests((prev) => {
+      if (scope === 'all') {
+        idsToDelete = prev.map((l) => l.id);
+        nextLeaves = [];
+      } else {
+        idsToDelete = prev.filter((l) => l.status === 'approved' || l.status === 'rejected').map((l) => l.id);
+        nextLeaves = prev.filter((l) => l.status === 'pending');
+      }
+      safeSetJson('attend_leaves', JSON.stringify(nextLeaves));
+      return nextLeaves;
+    });
+
+    if (idsToDelete.length === 0) return;
+
+    const nextDeleted = new Set(deletedLeaveIds);
+    idsToDelete.forEach((id) => nextDeleted.add(id));
+    setDeletedLeaveIds(nextDeleted);
+    const deletedArr = Array.from(nextDeleted);
+    safeSetJson('attend_deleted_leave_ids', JSON.stringify(deletedArr));
+
+    if (scope === 'all') {
+      setActionAlerts((prev) => {
+        const nextAlerts = prev.filter((a) => !a.leaveRequestId && !a.id.startsWith('alert_leave_'));
+        safeSetJson('attend_staff_alerts', JSON.stringify(nextAlerts));
+        return nextAlerts;
+      });
+    }
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr } as any);
+    broadcastSupabaseEvent('CLEAR_LEAVES', { scope, deletedIds: idsToDelete });
+
+    realtimeService.emit('CLEAR_LEAVES', { scope, deletedIds: idsToDelete });
+    syncStateToCloudImmediate({ leaveRequests: sanitizeForFirestore(nextLeaves) });
+    fetch('/api/leaves/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
 
@@ -3130,8 +3381,11 @@ export default function App() {
               transferRecords={transferRecords}
               leaveRequests={leaveRequests}
               onUpdateLeaveStatus={handleUpdateLeaveStatus}
+              onDeleteLeaveRequest={handleDeleteLeaveRequest}
+              onClearLeaveRequests={handleClearLeaveApprovals}
               actionAlerts={actionAlerts}
               onClearAlerts={handleClearAlerts}
+              onDismissAlert={handleDismissAlert}
               currentUser={currentUser}
               selectedBranchId={selectedBranchId}
               setSelectedBranchId={setSelectedBranchId}
@@ -3241,6 +3495,8 @@ export default function App() {
               employees={employees}
               leaveRequests={leaveRequests}
               onUpdateLeaveStatus={handleUpdateLeaveStatus}
+              onDeleteLeaveRequest={handleDeleteLeaveRequest}
+              onClearLeaveRequests={handleClearLeaveApprovals}
               lang={lang}
               branding={branding}
             />

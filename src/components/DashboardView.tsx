@@ -41,8 +41,11 @@ interface DashboardViewProps {
   transferRecords?: BranchTransferRecord[];
   leaveRequests?: LeaveRequest[];
   onUpdateLeaveStatus?: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
+  onDeleteLeaveRequest?: (requestId: string) => void;
+  onClearLeaveRequests?: (scope: 'processed' | 'all') => void;
   actionAlerts?: ActionAlertItem[];
   onClearAlerts?: () => void;
+  onDismissAlert?: (alertId: string) => void;
   currentUser?: AuthUser | null;
   selectedBranchId: string;
   setSelectedBranchId: (id: string) => void;
@@ -58,8 +61,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   transferRecords = [],
   leaveRequests = [],
   onUpdateLeaveStatus,
+  onDeleteLeaveRequest,
+  onClearLeaveRequests,
   actionAlerts = [],
   onClearAlerts,
+  onDismissAlert,
   currentUser,
   selectedBranchId,
   setSelectedBranchId,
@@ -547,6 +553,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         alerts={actionAlerts}
         pendingLeavesCount={leaveRequests.filter((r) => r.status === 'pending').length}
         onClearAlerts={onClearAlerts}
+        onDismissAlert={onDismissAlert}
         onApproveLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'approved') : undefined}
         onRejectLeave={onUpdateLeaveStatus ? (id) => onUpdateLeaveStatus(id, 'rejected') : undefined}
         onNavigateToLeaves={() => {
@@ -566,6 +573,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             branches={branches}
             currentUser={currentUser}
             onUpdateLeaveStatus={onUpdateLeaveStatus}
+            onDeleteLeaveRequest={onDeleteLeaveRequest}
+            onClearLeaveRequests={onClearLeaveRequests}
             onNavigateToLeavesTab={() => onNavigateTab('settings')}
             lang={lang}
           />

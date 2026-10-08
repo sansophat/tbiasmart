@@ -47,6 +47,7 @@ interface RealtimeActionAlertCenterProps {
   alerts: ActionAlertItem[];
   pendingLeavesCount: number;
   onClearAlerts?: () => void;
+  onDismissAlert?: (id: string) => void;
   onApproveLeave?: (id: string) => void;
   onRejectLeave?: (id: string) => void;
   onNavigateToLeaves?: () => void;
@@ -58,6 +59,7 @@ export const RealtimeActionAlertCenter: React.FC<RealtimeActionAlertCenterProps>
   alerts,
   pendingLeavesCount,
   onClearAlerts,
+  onDismissAlert,
   onApproveLeave,
   onRejectLeave,
   onNavigateToLeaves,
@@ -390,6 +392,18 @@ export const RealtimeActionAlertCenter: React.FC<RealtimeActionAlertCenterProps>
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
+                      )}
+
+                      {/* Dismiss Single Alert */}
+                      {onDismissAlert && (
+                        <button
+                          type="button"
+                          onClick={() => onDismissAlert(item.id)}
+                          title={lang === 'km' ? 'លុបការជូនដំណឹងនេះ' : 'Dismiss Alert'}
+                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 transition cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       )}
                     </div>
                   </div>

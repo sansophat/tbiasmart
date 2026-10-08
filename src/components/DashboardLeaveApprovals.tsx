@@ -20,7 +20,9 @@ import {
   ChevronUp,
   Filter,
   Send,
-  Zap
+  Zap,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { LeaveRequest, Employee, Branch, Language, AuthUser } from '../types';
 import { toKhmerNumeral } from '../utils/geoUtils';
@@ -32,6 +34,8 @@ interface DashboardLeaveApprovalsProps {
   branches: Branch[];
   currentUser?: AuthUser | null;
   onUpdateLeaveStatus: (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => void;
+  onDeleteLeaveRequest?: (id: string) => void;
+  onClearLeaveRequests?: (scope: 'processed' | 'all') => void;
   onNavigateToLeavesTab?: () => void;
   lang: Language;
 }
@@ -42,6 +46,8 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
   branches,
   currentUser,
   onUpdateLeaveStatus,
+  onDeleteLeaveRequest,
+  onClearLeaveRequests,
   onNavigateToLeavesTab,
   lang,
 }) => {
@@ -55,6 +61,8 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectComment, setRejectComment] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [leaveToDelete, setLeaveToDelete] = useState<LeaveRequest | null>(null);
+  const [clearScopeToConfirm, setClearScopeToConfirm] = useState<'processed' | 'all' | null>(null);
   // Keep recently acted upon requests visible in real-time so table never suddenly goes empty
   const [justProcessedIds, setJustProcessedIds] = useState<Set<string>>(new Set());
 
@@ -186,6 +194,31 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
 
         {/* Action Controls & Navigation */}
         <div className="flex flex-wrap items-center gap-2">
+          {onClearLeaveRequests && leaveRequests.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {leaveRequests.some((r) => r.status === 'approved' || r.status === 'rejected') && (
+                <button
+                  type="button"
+                  onClick={() => setClearScopeToConfirm('processed')}
+                  className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-rose-300 hover:text-rose-200 text-xs font-bold transition flex items-center space-x-1.5 border border-rose-500/30 cursor-pointer"
+                  title={lang === 'km' ? 'សម្អាតច្បាប់ដែលបានអនុម័ត/បដិសេធ' : 'Clear Processed Leaves'}
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>{lang === 'km' ? 'សម្អាតច្បាប់អនុម័តរួច' : 'Clear Processed'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setClearScopeToConfirm('all')}
+                className="px-3 py-2 rounded-xl bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 text-xs font-bold transition flex items-center space-x-1.5 border border-rose-400/40 cursor-pointer"
+                title={lang === 'km' ? 'សម្អាតច្បាប់ទាំងអស់' : 'Clear All Leaves'}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-300" />
+                <span>{lang === 'km' ? 'សម្អាតទាំងអស់' : 'Clear All'}</span>
+              </button>
+            </div>
+          )}
+
           {onNavigateToLeavesTab && (
             <button
               type="button"
@@ -549,6 +582,18 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
                           </button>
                         </div>
                       )}
+
+                      {/* Delete Leave Request Button */}
+                      {onDeleteLeaveRequest && (
+                        <button
+                          type="button"
+                          onClick={() => setLeaveToDelete(req)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition cursor-pointer self-center lg:self-end"
+                          title={lang === 'km' ? 'លុបពាក្យសុំច្បាប់នេះ' : 'Delete Leave Request'}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -557,6 +602,114 @@ export const DashboardLeaveApprovals: React.FC<DashboardLeaveApprovalsProps> = (
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal for Deleting Single Leave Request */}
+      {leaveToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden transform transition-all">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4 text-rose-600">
+                <Trash2 className="w-7 h-7" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">
+                {lang === 'km' ? 'តើអ្នកប្រាកដថាចង់លុបពាក្យសុំច្បាប់នេះ?' : 'Delete Leave Request Confirmation'}
+              </h3>
+              <p className="text-sm text-slate-600 mb-2">
+                {lang === 'km'
+                  ? `អ្នកកំពុងរៀបចំលុបពាក្យសុំច្បាប់របស់ "${leaveToDelete.employeeNameKh || leaveToDelete.employeeNameEn || 'បុគ្គលិក'}" (${leaveToDelete.startDate} → ${leaveToDelete.endDate})។`
+                  : `Are you sure you want to delete leave request for "${leaveToDelete.employeeNameEn || 'Staff'}" (${leaveToDelete.startDate} → ${leaveToDelete.endDate})?`}
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mb-6 text-left flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  {lang === 'km'
+                    ? 'កំណត់ត្រានេះនឹងត្រូវលុបចេញពីប្រព័ន្ធរហូត និងមិនអាចត្រឡប់វិញបានទេ។'
+                    : 'This record will be permanently deleted and synced across all devices.'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setLeaveToDelete(null)}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer text-xs"
+                >
+                  {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onDeleteLeaveRequest && leaveToDelete) {
+                      onDeleteLeaveRequest(leaveToDelete.id);
+                    }
+                    setLeaveToDelete(null);
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-sm cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{lang === 'km' ? 'បាទ/ចាស, លុបចោល' : 'Yes, Delete Request'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Clearing Leave Approvals Batch */}
+      {clearScopeToConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden transform transition-all">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4 text-rose-600">
+                <Trash2 className="w-7 h-7" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">
+                {clearScopeToConfirm === 'processed'
+                  ? (lang === 'km' ? 'សម្អាតច្បាប់ដែលបានអនុម័ត/បដិសេធរួច?' : 'Clear Processed Leaves?')
+                  : (lang === 'km' ? 'សម្អាតពាក្យសុំច្បាប់ទាំងអស់?' : 'Clear All Leave Requests?')}
+              </h3>
+              <p className="text-sm text-slate-600 mb-2">
+                {clearScopeToConfirm === 'processed'
+                  ? (lang === 'km'
+                      ? 'ពាក្យស្នើសុំច្បាប់ដែលបានអនុម័ត (Approved) និងបដិសេធ (Rejected) ទាំងអស់នឹងត្រូវសម្អាតចេញពីប្រព័ន្ធរហូត។ ពាក្យសុំរង់ចាំ (Pending) នឹងនៅដដែល។'
+                      : 'All approved and rejected leave requests will be permanently cleared from the system. Pending requests will be kept.')
+                  : (lang === 'km'
+                      ? 'ពាក្យស្នើសុំច្បាប់ទាំងអស់ (រួមទាំងរង់ចាំ អនុម័ត និងបដិសេធ) នឹងត្រូវសម្អាតចេញពីរាល់ឧបករណ៍។'
+                      : 'All leave requests (pending, approved, and rejected) will be permanently cleared across all devices.')}
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mb-6 text-left flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  {lang === 'km'
+                    ? 'កំណត់ត្រាទាំងនេះនឹងមិនបង្ហាញឡើងវិញក្រោយ refresh ឡើយ។'
+                    : 'Cleared requests are tombstoned and will never reappear upon page refresh.'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setClearScopeToConfirm(null)}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer text-xs"
+                >
+                  {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onClearLeaveRequests && clearScopeToConfirm) {
+                      onClearLeaveRequests(clearScopeToConfirm);
+                    }
+                    setClearScopeToConfirm(null);
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition shadow-sm cursor-pointer text-xs flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{lang === 'km' ? 'បាទ/ចាស, សម្អាតចេញ' : 'Yes, Clear Records'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
