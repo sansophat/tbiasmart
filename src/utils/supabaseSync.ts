@@ -258,7 +258,8 @@ export function subscribeToSupabaseRealtime(callback: (event: string, payload: a
  */
 export function startSupabasePollingSync(
   onNewPunch: (record: AttendanceRecord) => void,
-  onNewAlert: (alert: ActionAlertItem) => void
+  onNewAlert: (alert: ActionAlertItem) => void,
+  onBatchSync?: (records: AttendanceRecord[]) => void
 ): () => void {
   let isMounted = true;
   // Initialize baseline cutoff to 2 minutes ago
@@ -272,17 +273,22 @@ export function startSupabasePollingSync(
         .from('attendance_records')
         .select('record, created_at')
         .order('created_at', { ascending: false })
-        .limit(8);
+        .limit(25);
 
       if (!punchErr && Array.isArray(punchRows)) {
+        const batch: AttendanceRecord[] = [];
         punchRows.forEach((row) => {
           if (row?.record && row.record.id) {
+            batch.push(row.record);
             const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
             if (rowTime > lastSeenTimestamp) {
               onNewPunch(row.record);
             }
           }
         });
+        if (onBatchSync && batch.length > 0) {
+          onBatchSync(batch);
+        }
       }
 
       // 2. Fetch latest alerts from Postgres
@@ -290,7 +296,7 @@ export function startSupabasePollingSync(
         .from('staff_alerts')
         .select('alert, created_at')
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
 
       if (!alertErr && Array.isArray(alertRows)) {
         alertRows.forEach((row) => {

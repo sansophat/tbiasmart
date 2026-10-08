@@ -49,6 +49,7 @@ import {
 } from '../utils/deviceSecurityUtils';
 import { playAlertChime } from '../utils/soundUtils';
 import { validatePunchAllowance, PunchAllowanceResult } from '../utils/dayOffUtils';
+import { isSameLocalDate } from '../utils/dateUtils';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -256,14 +257,13 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   );
   const isWithinGeofence = distanceToBranch <= selectedBranch.radiusMeters;
 
-  // Auto-detect check-in vs check-out recommendation based on today's logs
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  // Auto-detect check-in vs check-out recommendation based on today's logs (Timezone-safe)
   const selectedEmpTodayRecords = (attendanceRecords || [])
     .filter(
       (r) =>
         (r.employeeId === selectedEmp.id || r.employeeCode === selectedEmp.code) &&
         r.timestamp &&
-        r.timestamp.startsWith(todayDateStr)
+        isSameLocalDate(r.timestamp)
     )
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
@@ -520,14 +520,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     const targetType = forcedType || attendanceType;
 
     // Check recent punches today for this specific employee using local timezone date
-    const localToday = new Date().toLocaleDateString('en-CA');
     const empTodayPunches = attendanceRecords
       .filter((r) => {
         if (!r.employeeId && !r.employeeCode) return false;
         const matchesEmp = (r.employeeId === emp.id || r.employeeCode === emp.code);
         if (!matchesEmp || !r.timestamp) return false;
-        const recordDate = new Date(r.timestamp).toLocaleDateString('en-CA');
-        return recordDate === localToday || r.timestamp.startsWith(localToday);
+        return isSameLocalDate(r.timestamp);
       })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 

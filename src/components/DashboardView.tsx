@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest } from '../types';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
+import { isSameLocalDate } from '../utils/dateUtils';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { RealtimeActionAlertCenter, ActionAlertItem } from './RealtimeActionAlertCenter';
 
@@ -94,8 +95,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ? employees
     : employees.filter((e) => e.branchId === selectedBranchId);
 
-  // Calculate KPIs for Today
-  const todayRecords = relevantRecords.filter((r) => r.timestamp && r.timestamp.startsWith(today));
+  // Calculate KPIs for Today (Timezone-safe)
+  const todayRecords = relevantRecords.filter((r) => isSameLocalDate(r.timestamp, now));
   const checkInRecords = todayRecords.filter((r) => r.type === 'check_in');
   
   const presentCount = new Set(checkInRecords.map((r) => r.employeeId)).size;
@@ -105,7 +106,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Real-Time Attendance Feed: ONLY show punches recorded TODAY
   const todayFeedRecords = relevantRecords
-    .filter((r) => r.timestamp && r.timestamp.startsWith(today))
+    .filter((r) => isSameLocalDate(r.timestamp, now))
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   
   const geofenceValidCount = todayRecords.filter((r) => r.isWithinGeofence).length;
@@ -135,10 +136,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Roll call: Currently on-site employees (checked in today and haven't checked out yet)
   const currentlyOnSiteList = employees.map((emp) => {
-    const empToday = attendanceRecords.filter(
-      (r) => r.employeeId === emp.id && r.timestamp.startsWith(today)
-    );
-    const lastRec = empToday[0]; // assuming sorted latest first
+    const empToday = attendanceRecords
+      .filter((r) => r.employeeId === emp.id && isSameLocalDate(r.timestamp, now))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const lastRec = empToday[0]; // sorted latest first
     const isOnSite = lastRec && lastRec.type === 'check_in';
     const branch = branches.find((b) => b.id === emp.branchId);
     return {
@@ -156,7 +157,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // If viewing as an Employee, render the dedicated Employee Home View
   if (isEmployee) {
     const myTodayRecords = attendanceRecords.filter(
-      (r) => (r.employeeId === currentEmp?.id || r.employeeCode === currentUser?.employeeCode) && r.timestamp.startsWith(today)
+      (r) => (r.employeeId === currentEmp?.id || r.employeeCode === currentUser?.employeeCode) && isSameLocalDate(r.timestamp, now)
     );
     const hasCheckedIn = myTodayRecords.some((r) => r.type === 'check_in');
     const hasCheckedOut = myTodayRecords.some((r) => r.type === 'check_out');
@@ -164,7 +165,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     // Teammates at my assigned branch
     const branchTeammates = employees.filter((e) => e.branchId === employeeAssignedBranch.id);
     const teammatesOnDuty = branchTeammates.filter((e) => {
-      const empToday = attendanceRecords.filter((r) => r.employeeId === e.id && r.timestamp.startsWith(today));
+      const empToday = attendanceRecords
+        .filter((r) => r.employeeId === e.id && isSameLocalDate(r.timestamp, now))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       return empToday.length > 0 && empToday[0].type === 'check_in';
     });
 
@@ -618,7 +621,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {filteredBranches.map((branch) => {
             const branchEmps = employees.filter((e) => e.branchId === branch.id);
             const branchActiveCheckIns = attendanceRecords.filter(
-              (r) => r.branchId === branch.id && r.timestamp.startsWith(today) && r.type === 'check_in'
+              (r) => r.branchId === branch.id && isSameLocalDate(r.timestamp, now) && r.type === 'check_in'
             );
             const isSelected = branch.id === selectedBranchId;
 

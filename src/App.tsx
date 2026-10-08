@@ -588,13 +588,19 @@ export default function App() {
         isReceivingCloudUpdate.current = true;
 
         if (bestBranches && bestBranches.length > 0) {
-          setBranches(bestBranches);
-          safeSetJson('attend_branches', JSON.stringify(bestBranches));
+          setBranches((prev) => {
+            const merged = mergeDatasets(prev, bestBranches);
+            safeSetJson('attend_branches', JSON.stringify(merged));
+            return merged;
+          });
         }
 
         if (bestEmployees && bestEmployees.length > 0) {
-          setEmployees(bestEmployees);
-          safeSetJson('attend_employees', JSON.stringify(bestEmployees));
+          setEmployees((prev) => {
+            const merged = mergeDatasets(prev, bestEmployees);
+            safeSetJson('attend_employees', JSON.stringify(merged));
+            return merged;
+          });
           setCurrentUser((curr) => {
             if (curr && curr.role !== 'admin') {
               const liveEmp = bestEmployees.find(
@@ -1307,6 +1313,53 @@ export default function App() {
           actorName: cleanRequest.employeeNameKh || cleanRequest.employeeNameEn,
           actorAvatar: cleanRequest.employeeAvatar,
         });
+      } else if (event === 'ADD_EMPLOYEE' && payload) {
+        const newEmp: Employee = payload;
+        setEmployees((prev) => {
+          if (prev.some((e) => e.id === newEmp.id || e.code === newEmp.code)) {
+            return prev.map((e) => (e.id === newEmp.id ? { ...e, ...newEmp } : e));
+          }
+          const next = [newEmp, ...prev];
+          safeSetJson('attend_employees', JSON.stringify(next));
+          return next;
+        });
+      } else if (event === 'DELETE_EMPLOYEE' && payload?.id) {
+        setEmployees((prev) => {
+          const next = prev.filter((e) => e.id !== payload.id);
+          safeSetJson('attend_employees', JSON.stringify(next));
+          return next;
+        });
+      } else if (event === 'UPDATE_EMPLOYEES_BATCH' && Array.isArray(payload)) {
+        setEmployees((prev) => {
+          const next = mergeDatasets(prev, payload);
+          safeSetJson('attend_employees', JSON.stringify(next));
+          return next;
+        });
+      } else if (event === 'UPDATE_BRANCH' && payload) {
+        setBranches((prev) => {
+          const next = mergeDatasets(prev, [payload]);
+          safeSetJson('attend_branches', JSON.stringify(next));
+          return next;
+        });
+      } else if (event === 'DELETE_BRANCH' && payload?.id) {
+        setBranches((prev) => {
+          const next = prev.filter((b) => b.id !== payload.id);
+          safeSetJson('attend_branches', JSON.stringify(next));
+          return next;
+        });
+      } else if (event === 'UPDATE_LEAVE_STATUS' && payload?.requestId) {
+        setLeaveRequests((prev) =>
+          prev.map((r) =>
+            r.id === payload.requestId
+              ? {
+                  ...r,
+                  status: payload.status,
+                  approvedBy: payload.approvedBy,
+                  adminComment: payload.comment || r.adminComment,
+                }
+              : r
+          )
+        );
       } else if (event === 'STAFF_LOGIN' && payload?.alert) {
         addActionAlert(payload.alert);
       }
@@ -1315,7 +1368,13 @@ export default function App() {
     // 5. Start background Supabase Polling Sync as fallback (guarantees alert even if socket sleeps)
     const unsubPolling = startSupabasePollingSync(
       (newPunch) => triggerAdminPunchAlert(newPunch),
-      (newAlert) => addActionAlert(newAlert)
+      (newAlert) => addActionAlert(newAlert),
+      (records) => {
+        setAttendanceRecords((prev) => {
+          const merged = mergeDatasets(prev, records);
+          return merged;
+        });
+      }
     );
 
     return () => {
@@ -1328,6 +1387,62 @@ export default function App() {
     };
   }, [lang]);
 
+  // Proactive Tab Visibility & Focus Sync
+  // When Admin unlocks mobile device, wakes PC, or switches back to tab after being offline overnight,
+  // immediately pulls canonical records, leaves, employees, and branches from Supabase PostgreSQL.
+  useEffect(() => {
+    let isFetching = false;
+    const handleVisibilityOrFocus = async () => {
+      if (document.visibilityState === 'visible' && !isFetching) {
+        isFetching = true;
+        try {
+          const suState = await fetchInitialSupabaseData();
+          if (suState) {
+            if (Array.isArray(suState.attendanceRecords) && suState.attendanceRecords.length > 0) {
+              setAttendanceRecords((prev) => {
+                const merged = mergeDatasets(prev, suState.attendanceRecords!);
+                try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
+                return merged;
+              });
+            }
+            if (Array.isArray(suState.employees) && suState.employees.length > 0) {
+              setEmployees((prev) => {
+                const merged = mergeDatasets(prev, suState.employees!);
+                try { safeSetJson('attend_employees', JSON.stringify(merged)); } catch (_) {}
+                return merged;
+              });
+            }
+            if (Array.isArray(suState.branches) && suState.branches.length > 0) {
+              setBranches((prev) => {
+                const merged = mergeDatasets(prev, suState.branches!);
+                try { safeSetJson('attend_branches', JSON.stringify(merged)); } catch (_) {}
+                return merged;
+              });
+            }
+            if (Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0) {
+              setLeaveRequests((prev) => {
+                const merged = mergeDatasets(prev, suState.leaveRequests!);
+                try { safeSetJson('attend_leaves', JSON.stringify(merged)); } catch (_) {}
+                return merged;
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('[FocusSync] Error syncing on focus:', e);
+        } finally {
+          isFetching = false;
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, []);
+
   // Sync with Firebase Cloud Firestore Database in real-time
   useEffect(() => {
     let isInitialCloudLoad = true;
@@ -1338,12 +1453,18 @@ export default function App() {
         isReceivingCloudUpdate.current = true;
 
         if (Array.isArray(cloudData.branches) && (cloudData.branches.length > 0 || cloudData.isReset)) {
-          setBranches(cloudData.branches);
-          safeSetJson('attend_branches', JSON.stringify(cloudData.branches));
+          setBranches((prev) => {
+            const next = cloudData.isReset ? cloudData.branches! : mergeDatasets(prev, cloudData.branches!);
+            safeSetJson('attend_branches', JSON.stringify(next));
+            return next;
+          });
         }
         if (Array.isArray(cloudData.employees) && (cloudData.employees.length > 0 || cloudData.isReset)) {
-          setEmployees(cloudData.employees);
-          safeSetJson('attend_employees', JSON.stringify(cloudData.employees));
+          setEmployees((prev) => {
+            const next = cloudData.isReset ? cloudData.employees! : mergeDatasets(prev, cloudData.employees!);
+            safeSetJson('attend_employees', JSON.stringify(next));
+            return next;
+          });
           setCurrentUser((curr) => {
             if (curr) {
               const liveEmp = cloudData.employees!.find(
@@ -1400,9 +1521,12 @@ export default function App() {
                 );
               });
             }
-            return cloudData.attendanceRecords!;
+            const merged = cloudData.isReset
+              ? cloudData.attendanceRecords!
+              : mergeDatasets(prevRecords, cloudData.attendanceRecords!);
+            safeSetJson('attend_records', JSON.stringify(merged));
+            return merged;
           });
-          safeSetJson('attend_records', JSON.stringify(cloudData.attendanceRecords));
         }
         if (Array.isArray(cloudData.leaveRequests)) {
           setLeaveRequests((prevLeaves) => {
@@ -1430,9 +1554,12 @@ export default function App() {
                 );
               });
             }
-            return cloudData.leaveRequests!;
+            const merged = cloudData.isReset
+              ? cloudData.leaveRequests!
+              : mergeDatasets(prevLeaves, cloudData.leaveRequests!);
+            safeSetJson('attend_leaves', JSON.stringify(merged));
+            return merged;
           });
-          safeSetJson('attend_leaves', JSON.stringify(cloudData.leaveRequests));
         }
         if (Array.isArray(cloudData.transferRecords)) {
           setTransferRecords(cloudData.transferRecords);
@@ -1824,6 +1951,13 @@ export default function App() {
       safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
+
+    // 1. Supabase Persistence & Instant Realtime Broadcast
+    saveEmployeeToSupabase(preparedEmp, nextEmployees);
+    syncStateToSupabase({ employees: nextEmployees });
+    broadcastSupabaseEvent('ADD_EMPLOYEE', preparedEmp);
+
+    // 2. Realtime socket & fallback
     realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/save', {
@@ -1875,13 +2009,18 @@ export default function App() {
       return curr;
     });
 
-    // 2. Direct single-item Cloud write: immediately persists avatar & info to Firestore!
+    // 2. Supabase Persistence & Instant Broadcast
+    saveEmployeeToSupabase(updatedEmp, nextEmployees);
+    syncStateToSupabase({ employees: nextEmployees });
+    broadcastSupabaseEvent('UPDATE_EMPLOYEE', updatedEmp);
+
+    // 3. Direct single-item Cloud write: immediately persists avatar & info to Firestore!
     saveEmployeeToCloud(updatedEmp);
 
-    // 3. Realtime event emit
+    // 4. Realtime event emit
     realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
 
-    // 4. Background cloud batch sync
+    // 5. Background cloud batch sync
     syncStateToCloudDatabase({
       employees: sanitizeForFirestore(nextEmployees),
       attendanceRecords: sanitizeForFirestore(nextRecords),
@@ -1901,6 +2040,11 @@ export default function App() {
       safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ employees: nextEmployees });
+    broadcastSupabaseEvent('DELETE_EMPLOYEE', { id });
+
     realtimeService.emit('DELETE_EMPLOYEE', { id });
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/delete', {
@@ -1913,6 +2057,11 @@ export default function App() {
   const handleUpdateEmployeesList = (nextEmployees: Employee[]) => {
     setEmployees(nextEmployees);
     safeSetJson('attend_employees', JSON.stringify(nextEmployees));
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ employees: nextEmployees });
+    broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', nextEmployees);
+
     realtimeService.emit('UPDATE_EMPLOYEES_BATCH', nextEmployees);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
     fetch('/api/employees/batch', {
@@ -1929,6 +2078,11 @@ export default function App() {
       safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ branches: nextBranches });
+    broadcastSupabaseEvent('UPDATE_BRANCH', updatedBranch);
+
     realtimeService.emit('UPDATE_BRANCH', updatedBranch);
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/save', {
@@ -2058,6 +2212,11 @@ export default function App() {
       safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ branches: nextBranches });
+    broadcastSupabaseEvent('UPDATE_BRANCH', newBranch);
+
     realtimeService.emit('UPDATE_BRANCH', newBranch);
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/save', {
@@ -2074,6 +2233,11 @@ export default function App() {
       safeSetJson('attend_branches', JSON.stringify(nextBranches));
       return nextBranches;
     });
+
+    // Supabase Sync & Broadcast
+    syncStateToSupabase({ branches: nextBranches });
+    broadcastSupabaseEvent('DELETE_BRANCH', { id: branchId });
+
     realtimeService.emit('DELETE_BRANCH', { id: branchId });
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
     fetch('/api/branches/delete', {

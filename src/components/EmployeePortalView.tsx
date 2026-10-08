@@ -34,6 +34,7 @@ import { DigitalIdCardModal } from './DigitalIdCardModal';
 import { StaffRosterTable } from './StaffRosterTable';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
+import { getLocalDateString } from '../utils/dateUtils';
 
 interface EmployeePortalViewProps {
   currentUser: AuthUser;
@@ -127,8 +128,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Form State
   const [leaveCategory, setLeaveCategory] = useState<'leave' | 'sick' | 'overtime' | 'permission'>('leave');
   const [leaveType, setLeaveType] = useState<'annual' | 'sick' | 'urgent' | 'unpaid' | 'overtime' | 'half_day'>('annual');
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(getLocalDateString());
+  const [endDate, setEndDate] = useState(getLocalDateString());
   const [otHours, setOtHours] = useState(2);
   const [otMultiplier, setOtMultiplier] = useState<number>(1.5);
   const [reason, setReason] = useState('');
@@ -197,7 +198,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       endDate,
       reason: reason.trim(),
       status: 'pending',
-      appliedAt: new Date().toISOString().split('T')[0],
+      appliedAt: getLocalDateString(),
       ...(leaveCategory === 'overtime' || leaveCategory === 'permission' ? { hours: Number(otHours) || 0 } : {}),
       ...(leaveCategory === 'overtime' && otMultiplier ? { otRateMultiplier: otMultiplier } : {}),
       ...(attachmentNote.trim() ? { attachmentUrl: attachmentNote.trim() } : {}),

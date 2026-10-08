@@ -19,6 +19,7 @@ import {
 import { Branch, Employee, AttendanceRecord, Language, LeaveRequest } from '../types';
 import { generateBranchDynamicQrToken, toKhmerNumeral } from '../utils/geoUtils';
 import { validatePunchAllowance } from '../utils/dayOffUtils';
+import { isSameLocalDate } from '../utils/dateUtils';
 
 interface BranchKioskViewProps {
   branches: Branch[];
@@ -60,12 +61,11 @@ export const BranchKioskView: React.FC<BranchKioskViewProps> = ({
   const selectedBranch = branches.find((b) => b.id === selectedBranchId) || branches[0];
   const branchEmployees = employees.filter((e) => e.branchId === selectedBranch.id);
 
-  // Calculate checked-in count for this branch today
-  const today = new Date().toISOString().split('T')[0];
+  // Calculate checked-in count for this branch today (Timezone-safe)
   const activeCheckIns = attendanceRecords.filter((r) => {
     return (
       r.branchId === selectedBranch.id &&
-      r.timestamp.startsWith(today) &&
+      isSameLocalDate(r.timestamp) &&
       r.type === 'check_in' &&
       r.isWithinGeofence
     );
