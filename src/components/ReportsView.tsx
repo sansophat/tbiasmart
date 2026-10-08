@@ -515,13 +515,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         }
         return (
           <span className={`inline-block px-2 py-0.5 rounded-full text-[0.82em] font-bold whitespace-nowrap ${
-            row.status.toLowerCase().includes('on-time')
+            (row.status || '').toLowerCase().includes('on-time')
               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : row.status.toLowerCase().includes('late')
+              : (row.status || '').toLowerCase().includes('late')
               ? 'bg-amber-50 text-amber-700 border border-amber-200'
-              : row.status.toLowerCase().includes('overtime')
+              : (row.status || '').toLowerCase().includes('overtime')
               ? 'bg-purple-50 text-purple-700 border border-purple-200'
-              : row.status.toLowerCase().includes('absent')
+              : (row.status || '').toLowerCase().includes('absent')
               ? 'bg-rose-100 text-rose-800 border border-rose-200'
               : 'bg-slate-100 text-slate-600 border border-slate-200'
           }`}>
@@ -710,32 +710,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // Filtered Timesheet Rows (via search query)
   const filteredTimesheetRows = useMemo(() => {
-    if (!searchQuery.trim()) return timesheetRows;
-    const q = searchQuery.toLowerCase();
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return timesheetRows;
     return timesheetRows.filter(
       (r) =>
         r.isSunday ||
-        r.nameEn.toLowerCase().includes(q) ||
-        r.nameKh.toLowerCase().includes(q) ||
-        r.enrollId.toLowerCase().includes(q) ||
-        r.branchNameEn.toLowerCase().includes(q) ||
-        r.department.toLowerCase().includes(q) ||
-        r.remark.toLowerCase().includes(q)
+        (r.nameEn || '').toLowerCase().includes(q) ||
+        (r.nameKh || '').toLowerCase().includes(q) ||
+        (r.enrollId || '').toLowerCase().includes(q) ||
+        (r.branchNameEn || '').toLowerCase().includes(q) ||
+        (r.department || '').toLowerCase().includes(q) ||
+        (r.remark || '').toLowerCase().includes(q)
     );
   }, [timesheetRows, searchQuery]);
 
   // Filtered Merged Summaries (via search query)
   const filteredMergedSummaries = useMemo(() => {
-    if (!searchQuery.trim()) return mergedEmployeeSummaries;
-    const q = searchQuery.toLowerCase();
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return mergedEmployeeSummaries;
     return mergedEmployeeSummaries.filter(
       (s) =>
-        s.nameEn.toLowerCase().includes(q) ||
-        s.nameKh.toLowerCase().includes(q) ||
-        s.enrollId.toLowerCase().includes(q) ||
-        s.department.toLowerCase().includes(q) ||
-        s.branchNameEn.toLowerCase().includes(q) ||
-        s.role.toLowerCase().includes(q)
+        (s.nameEn || '').toLowerCase().includes(q) ||
+        (s.nameKh || '').toLowerCase().includes(q) ||
+        (s.enrollId || '').toLowerCase().includes(q) ||
+        (s.department || '').toLowerCase().includes(q) ||
+        (s.branchNameEn || '').toLowerCase().includes(q) ||
+        (s.role || '').toLowerCase().includes(q)
     );
   }, [mergedEmployeeSummaries, searchQuery]);
 
@@ -777,11 +777,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         (selectedStatusFilter === 'valid' && rec.isWithinGeofence) ||
         (selectedStatusFilter === 'violation' && !rec.isWithinGeofence) ||
         rec.status === selectedStatusFilter;
+      const q = (searchQuery || '').trim().toLowerCase();
       const matchesSearch =
-        rec.employeeNameKh.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        rec.employeeNameEn.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        rec.employeeCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        rec.branchNameEn.toLowerCase().includes(searchQuery.toLowerCase());
+        !q ||
+        (rec.employeeNameKh || '').toLowerCase().includes(q) ||
+        (rec.employeeNameEn || '').toLowerCase().includes(q) ||
+        (rec.employeeCode || '').toLowerCase().includes(q) ||
+        (rec.branchNameEn || '').toLowerCase().includes(q) ||
+        (rec.branchNameKh || '').toLowerCase().includes(q);
 
       return matchesDate && matchesBranch && matchesEmployee && matchesStatus && matchesSearch;
     });
@@ -865,8 +868,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
       const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
       const daysLeave = empRows.filter((r) => r.isLeave).length;
-      const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
-      const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
+      const lateDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
+      const otDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('overtime')).length;
 
       return {
         employee: emp,
@@ -916,8 +919,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
       const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
       const daysLeave = empRows.filter((r) => r.isLeave).length;
-      const lateDays = empRows.filter((r) => r.status.toLowerCase().includes('late')).length;
-      const otDays = empRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
+      const lateDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
+      const otDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('overtime')).length;
 
       return {
         employee: emp,
@@ -1252,8 +1255,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // Metrics Calculations
   const totalSundaysCount = timesheetRows.filter((r) => r.isSunday).length;
   const totalWorkedRows = timesheetRows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
-  const totalLateRows = timesheetRows.filter((r) => r.status.toLowerCase().includes('late')).length;
-  const totalOvertimeRows = timesheetRows.filter((r) => r.status.toLowerCase().includes('overtime')).length;
+  const totalLateRows = timesheetRows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
+  const totalOvertimeRows = timesheetRows.filter((r) => (r.status || '').toLowerCase().includes('overtime')).length;
   const totalStaffCount = filteredMergedSummaries.length;
   const totalConsolidatedWorkHours = filteredMergedSummaries.reduce((acc, s) => acc + s.totalWorkHours, 0).toFixed(1);
   const pendingCount = leaveRequests.filter((r) => r.status === 'pending').length;
@@ -2233,11 +2236,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                                         </td>
                                         <td className="py-2.5 px-3">
                                           <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                            dRow.status.toLowerCase().includes('on-time')
+                                            (dRow.status || '').toLowerCase().includes('on-time')
                                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                              : dRow.status.toLowerCase().includes('late')
+                                              : (dRow.status || '').toLowerCase().includes('late')
                                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                              : dRow.status.toLowerCase().includes('overtime')
+                                              : (dRow.status || '').toLowerCase().includes('overtime')
                                               ? 'bg-purple-50 text-purple-700 border border-purple-200'
                                               : 'bg-slate-100 text-slate-500 border border-slate-200'
                                           }`}>

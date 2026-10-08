@@ -491,8 +491,8 @@ export function exportTimesheetToCsv(
   const totalRows = rows.length;
   const totalPunches = rows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
   const totalSundays = rows.filter((r) => r.isSunday).length;
-  const onTimeCount = rows.filter((r) => r.status.toLowerCase().includes('on-time')).length;
-  const lateCount = rows.filter((r) => r.status.toLowerCase().includes('late')).length;
+  const onTimeCount = rows.filter((r) => (r.status || '').toLowerCase().includes('on-time')).length;
+  const lateCount = rows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
   const totalWorkHoursNum = rows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0);
 
   const headers = [
@@ -697,8 +697,8 @@ export async function exportTimesheetToXlsx(
   const totalRows = rows.length;
   const totalPunches = rows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
   const totalSundays = rows.filter((r) => r.isSunday).length;
-  const onTimeCount = rows.filter((r) => r.status.toLowerCase().includes('on-time')).length;
-  const lateCount = rows.filter((r) => r.status.toLowerCase().includes('late')).length;
+  const onTimeCount = rows.filter((r) => (r.status || '').toLowerCase().includes('on-time')).length;
+  const lateCount = rows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
   const totalWorkHoursNum = rows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0);
 
   // Column definitions matching the PDF layout
@@ -1323,8 +1323,8 @@ export async function exportTimesheetToPdf(
 
   const totalPunches = rows.filter((r) => !r.isSunday && r.timeIn !== '--:--').length;
   const totalSundays = rows.filter((r) => r.isSunday).length;
-  const onTimeCount = rows.filter((r) => r.status.toLowerCase().includes('on-time')).length;
-  const lateCount = rows.filter((r) => r.status.toLowerCase().includes('late')).length;
+  const onTimeCount = rows.filter((r) => (r.status || '').toLowerCase().includes('on-time')).length;
+  const lateCount = rows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
 
   container.innerHTML = `
     <div style="padding: 16px; background: white; font-family: 'Kantumruy Pro', 'Battambang', 'Noto Sans Khmer', sans-serif; width: 1450px;">
@@ -2145,7 +2145,7 @@ export async function exportRosterToXlsx(
         const isSun = r.isSunday;
         const isOff = r.isDayOff;
         const isLv = r.isLeave;
-        const isLate = r.status.toLowerCase().includes('late');
+        const isLate = (r.status || '').toLowerCase().includes('late');
 
         // Color coding matching PDF
         let fillArgb = rIdx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
