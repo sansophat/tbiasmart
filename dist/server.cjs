@@ -785,9 +785,13 @@ app.post("/api/employees/delete", (req, res) => {
   if (!employeeId) {
     return res.status(400).json({ error: "Missing employeeId" });
   }
+  if (!Array.isArray(serverDb.deletedEmployeeIds)) serverDb.deletedEmployeeIds = [];
+  if (!serverDb.deletedEmployeeIds.includes(employeeId)) {
+    serverDb.deletedEmployeeIds.push(employeeId);
+  }
   serverDb.employees = (serverDb.employees || []).filter((e) => e.id !== employeeId);
   persistDatabase();
-  syncToFirestore({ employees: serverDb.employees });
+  syncToFirestore({ employees: serverDb.employees, deletedEmployeeIds: serverDb.deletedEmployeeIds });
   const eventPayload = {
     type: "DELETE_EMPLOYEE",
     payload: { employeeId },

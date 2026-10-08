@@ -44,6 +44,7 @@ export interface SupabaseSystemData {
   auditLogs?: AuditLogEntry[];
   staffAlerts?: ActionAlertItem[];
   shifts?: ShiftConfig[];
+  deletedEmployeeIds?: string[];
 }
 
 /**

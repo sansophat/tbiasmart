@@ -183,6 +183,73 @@ function safeSetJson(key: string, value: any): boolean {
   }
 }
 
+export const KNOWN_DELETED_EMPLOYEE_IDS: string[] = [
+  'emp_1790830636106',
+  'emp_1790830699522',
+  'emp_1790831369824',
+  'emp_1790831431039',
+  'emp_1790831475316',
+  'emp_1790831527255',
+];
+
+/**
+ * Deduplicate employees within the same branch and filter out any tombstoned/deleted employees.
+ * When duplicates exist (e.g. duplicate accounts with placeholder vs real photo):
+ * ALWAYS keeps the one with the real uploaded photo.
+ */
+export function deduplicateAndFilterEmployees(
+  emps: Employee[],
+  tombstones: Set<string>
+): Employee[] {
+  if (!Array.isArray(emps)) return [];
+
+  // 1. Filter out all tombstoned/deleted employee IDs
+  const valid = emps.filter((e) => e && e.id && !tombstones.has(e.id));
+
+  // 2. Deduplicate within branch: each branch should only have 1 employee per code
+  const codeMap = new Map<string, Employee>();
+  for (const emp of valid) {
+    const branchKey = emp.branchId || 'nobranch';
+    const codeKey = (emp.code || '').trim().toLowerCase();
+    const dedupeKey = `${branchKey}___${codeKey}`;
+
+    const existing = codeMap.get(dedupeKey);
+    if (!existing) {
+      codeMap.set(dedupeKey, emp);
+    } else {
+      // Conflict resolution:
+      // Prefer the one with a real photo (base64 image or custom URL) over default unsplash photo
+      const empHasPhoto = Boolean(
+        emp.avatar &&
+        (emp.avatar.startsWith('data:image') || (!emp.avatar.includes('unsplash') && emp.avatar.length > 300))
+      );
+      const existHasPhoto = Boolean(
+        existing.avatar &&
+        (existing.avatar.startsWith('data:image') || (!existing.avatar.includes('unsplash') && existing.avatar.length > 300))
+      );
+
+      if (empHasPhoto && !existHasPhoto) {
+        // Replace placeholder account with real photo account
+        codeMap.set(dedupeKey, emp);
+        tombstones.add(existing.id);
+      } else if (!empHasPhoto && existHasPhoto) {
+        // Keep existing real photo account, tombstone placeholder
+        tombstones.add(emp.id);
+      } else {
+        // Both have photos or neither: keep newest created account
+        if (emp.id > existing.id) {
+          codeMap.set(dedupeKey, emp);
+          tombstones.add(existing.id);
+        } else {
+          tombstones.add(emp.id);
+        }
+      }
+    }
+  }
+
+  return Array.from(codeMap.values());
+}
+
 export default function App() {
 
   // Language State
@@ -239,13 +306,27 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Tombstone Deletion Tracking: ensures deleted employees stay deleted and never resurrect
+  const [deletedEmployeeIds, setDeletedEmployeeIds] = useState<Set<string>>(() => {
+    const saved = safeGetJson<string[]>('attend_deleted_employee_ids', []);
+    const initialList = Array.isArray(saved) ? saved : [];
+    return new Set([...initialList, ...KNOWN_DELETED_EMPLOYEE_IDS]);
+  });
+
   // Persistent Core Data
   const [branches, setBranches] = useState<Branch[]>(() => {
     return safeGetJson('attend_branches', INITIAL_BRANCHES);
   });
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
-    return safeGetJson('attend_employees', INITIAL_EMPLOYEES);
+    const saved = safeGetJson('attend_employees', INITIAL_EMPLOYEES);
+    const tombstones = new Set([
+      ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+      ...KNOWN_DELETED_EMPLOYEE_IDS,
+    ]);
+    const cleaned = deduplicateAndFilterEmployees(saved, tombstones);
+    try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
+    return cleaned;
   });
 
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
@@ -597,9 +678,15 @@ export default function App() {
 
         if (bestEmployees && bestEmployees.length > 0) {
           setEmployees((prev) => {
+            const tombstones = new Set([
+              ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+              ...KNOWN_DELETED_EMPLOYEE_IDS,
+              ...(Array.isArray((suState as any)?.deletedEmployeeIds) ? (suState as any).deletedEmployeeIds : []),
+            ]);
             const merged = mergeDatasets(prev, bestEmployees);
-            safeSetJson('attend_employees', JSON.stringify(merged));
-            return merged;
+            const cleaned = deduplicateAndFilterEmployees(merged, tombstones);
+            safeSetJson('attend_employees', JSON.stringify(cleaned));
+            return cleaned;
           });
           setCurrentUser((curr) => {
             if (curr && curr.role !== 'admin') {
@@ -1144,7 +1231,17 @@ export default function App() {
         });
       } else if (type === 'DELETE_EMPLOYEE' && payload) {
         const idToDelete = payload.id || payload.employeeId;
-        setEmployees((prev) => prev.filter((e) => e.id !== idToDelete));
+        setDeletedEmployeeIds((prev) => {
+          const next = new Set(prev);
+          next.add(idToDelete);
+          safeSetJson('attend_deleted_employee_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
+        setEmployees((prev) => {
+          const next = prev.filter((e) => e.id !== idToDelete);
+          safeSetJson('attend_employees', JSON.stringify(next));
+          return next;
+        });
       } else if (type === 'UPDATE_BRANCH' && payload) {
         setBranches((prev) => {
           const exists = prev.some((b) => b.id === payload.id);
@@ -1324,14 +1421,25 @@ export default function App() {
           return next;
         });
       } else if (event === 'DELETE_EMPLOYEE' && payload?.id) {
+        const delId = payload.id;
+        setDeletedEmployeeIds((prev) => {
+          const next = new Set(prev);
+          next.add(delId);
+          safeSetJson('attend_deleted_employee_ids', JSON.stringify(Array.from(next)));
+          return next;
+        });
         setEmployees((prev) => {
-          const next = prev.filter((e) => e.id !== payload.id);
+          const next = prev.filter((e) => e.id !== delId);
           safeSetJson('attend_employees', JSON.stringify(next));
           return next;
         });
       } else if (event === 'UPDATE_EMPLOYEES_BATCH' && Array.isArray(payload)) {
         setEmployees((prev) => {
-          const next = mergeDatasets(prev, payload);
+          const tombstones = new Set([
+            ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+            ...KNOWN_DELETED_EMPLOYEE_IDS,
+          ]);
+          const next = deduplicateAndFilterEmployees(mergeDatasets(prev, payload), tombstones);
           safeSetJson('attend_employees', JSON.stringify(next));
           return next;
         });
@@ -1407,9 +1515,15 @@ export default function App() {
             }
             if (Array.isArray(suState.employees) && suState.employees.length > 0) {
               setEmployees((prev) => {
+                const currentTombstones = new Set([
+                  ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+                  ...KNOWN_DELETED_EMPLOYEE_IDS,
+                  ...(Array.isArray((suState as any)?.deletedEmployeeIds) ? (suState as any).deletedEmployeeIds : []),
+                ]);
                 const merged = mergeDatasets(prev, suState.employees!);
-                try { safeSetJson('attend_employees', JSON.stringify(merged)); } catch (_) {}
-                return merged;
+                const cleaned = deduplicateAndFilterEmployees(merged, currentTombstones);
+                try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
+                return cleaned;
               });
             }
             if (Array.isArray(suState.branches) && suState.branches.length > 0) {
@@ -1461,7 +1575,14 @@ export default function App() {
         }
         if (Array.isArray(cloudData.employees) && (cloudData.employees.length > 0 || cloudData.isReset)) {
           setEmployees((prev) => {
-            const next = cloudData.isReset ? cloudData.employees! : mergeDatasets(prev, cloudData.employees!);
+            const tombstones = new Set([
+              ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+              ...KNOWN_DELETED_EMPLOYEE_IDS,
+            ]);
+            const candidate = cloudData.isReset
+              ? cloudData.employees!
+              : (prev.length > 0 ? prev : cloudData.employees!);
+            const next = deduplicateAndFilterEmployees(candidate, tombstones);
             safeSetJson('attend_employees', JSON.stringify(next));
             return next;
           });
@@ -2034,15 +2155,21 @@ export default function App() {
   };
 
   const handleDeleteEmployee = (id: string) => {
+    const nextDeleted = new Set(deletedEmployeeIds);
+    nextDeleted.add(id);
+    setDeletedEmployeeIds(nextDeleted);
+    const deletedArr = Array.from(nextDeleted);
+    safeSetJson('attend_deleted_employee_ids', JSON.stringify(deletedArr));
+
     let nextEmployees: Employee[] = [];
     setEmployees((prev) => {
-      nextEmployees = prev.filter((e) => e.id !== id);
+      nextEmployees = deduplicateAndFilterEmployees(prev.filter((e) => e.id !== id), nextDeleted);
       safeSetJson('attend_employees', JSON.stringify(nextEmployees));
       return nextEmployees;
     });
 
     // Supabase Sync & Broadcast
-    syncStateToSupabase({ employees: nextEmployees });
+    syncStateToSupabase({ employees: nextEmployees, deletedEmployeeIds: deletedArr } as any);
     broadcastSupabaseEvent('DELETE_EMPLOYEE', { id });
 
     realtimeService.emit('DELETE_EMPLOYEE', { id });
@@ -2055,19 +2182,20 @@ export default function App() {
   };
 
   const handleUpdateEmployeesList = (nextEmployees: Employee[]) => {
-    setEmployees(nextEmployees);
-    safeSetJson('attend_employees', JSON.stringify(nextEmployees));
+    const cleaned = deduplicateAndFilterEmployees(nextEmployees, deletedEmployeeIds);
+    setEmployees(cleaned);
+    safeSetJson('attend_employees', JSON.stringify(cleaned));
 
     // Supabase Sync & Broadcast
-    syncStateToSupabase({ employees: nextEmployees });
-    broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', nextEmployees);
+    syncStateToSupabase({ employees: cleaned });
+    broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', cleaned);
 
-    realtimeService.emit('UPDATE_EMPLOYEES_BATCH', nextEmployees);
-    syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
+    realtimeService.emit('UPDATE_EMPLOYEES_BATCH', cleaned);
+    syncStateToCloudImmediate({ employees: sanitizeForFirestore(cleaned) });
     fetch('/api/employees/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employees: nextEmployees, senderId: realtimeService.getClientId() }),
+      body: JSON.stringify({ employees: cleaned, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
 
