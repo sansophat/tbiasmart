@@ -23,7 +23,7 @@ import {
   Lock
 } from 'lucide-react';
 import { Branch, UserGeoLocation, Language, AuthUser, Employee } from '../types';
-import { calculateDistanceMeters, formatDistance, toKhmerNumeral } from '../utils/geoUtils';
+import { calculateDistanceMeters, formatDistance, toKhmerNumeral, isWithinAdaptiveGeofence } from '../utils/geoUtils';
 
 interface GpsRadarMapProps {
   branches: Branch[];
@@ -70,7 +70,12 @@ export const GpsRadarMap: React.FC<GpsRadarMapProps> = ({
     selectedBranch.lat,
     selectedBranch.lng
   );
-  const isSelectedWithin = distanceToSelected <= selectedBranch.radiusMeters;
+  const adaptiveCheck = isWithinAdaptiveGeofence(
+    distanceToSelected,
+    selectedBranch.radiusMeters,
+    currentGeo.accuracy
+  );
+  const isSelectedWithin = adaptiveCheck.isWithin;
 
   const filteredBranches = branches.filter((b) => {
     if (activeFilter === 'all') return true;

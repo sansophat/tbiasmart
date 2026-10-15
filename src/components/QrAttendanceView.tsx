@@ -38,7 +38,14 @@ import {
   Laptop
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
-import { calculateDistanceMeters, formatDistance, toKhmerNumeral, verifyBranchDynamicQrToken } from '../utils/geoUtils';
+import { 
+  calculateDistanceMeters, 
+  formatDistance, 
+  toKhmerNumeral, 
+  verifyBranchDynamicQrToken,
+  isWithinAdaptiveGeofence,
+  getGpsSignalQuality 
+} from '../utils/geoUtils';
 import { 
   getDeviceFingerprint, 
   validateEmployeeDevice, 
@@ -255,7 +262,15 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     selectedBranch.lat,
     selectedBranch.lng
   );
-  const isWithinGeofence = distanceToBranch <= selectedBranch.radiusMeters;
+
+  // Calculate adaptive geofence taking indoor GPS accuracy uncertainty into account
+  const adaptiveGeoResult = isWithinAdaptiveGeofence(
+    distanceToBranch,
+    selectedBranch.radiusMeters,
+    currentGeo.accuracy
+  );
+  const isWithinGeofence = adaptiveGeoResult.isWithin;
+  const gpsQuality = getGpsSignalQuality(currentGeo.accuracy);
 
   // Auto-detect check-in vs check-out recommendation based on today's logs (Timezone-safe)
   const selectedEmpTodayRecords = (attendanceRecords || [])
@@ -287,7 +302,22 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     }
   }, [hasCheckedInToday, hasCheckedOutToday]);
 
-  // Request real device GPS automatically on view load
+  const gpsWatchIdRef = useRef<number | null>(null);
+  const gpsWatchTimeoutRef = useRef<any>(null);
+
+  // Clean up GPS watcher on unmount
+  useEffect(() => {
+    return () => {
+      if (gpsWatchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      }
+      if (gpsWatchTimeoutRef.current) {
+        clearTimeout(gpsWatchTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Request real device GPS automatically on view load with multi-sample refinement
   useEffect(() => {
     fetchRealDeviceGps(false);
   }, []);
@@ -299,16 +329,19 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     }
 
     setIsLocatingGps(true);
+
+    // 1. Immediate high accuracy fix
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setIsLocatingGps(false);
+        const acc = Math.round(pos.coords.accuracy);
         setCurrentGeo({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy),
+          accuracy: acc,
           timestamp: pos.timestamp,
           isReal: true,
-          label: lang === 'km' ? `GPS ជាក់ស្តែង (±${Math.round(pos.coords.accuracy)}m)` : `Real GPS (±${Math.round(pos.coords.accuracy)}m)`,
+          label: lang === 'km' ? `GPS ជាក់ស្តែង (±${acc}m)` : `Real GPS (±${acc}m)`,
         });
       },
       (err) => {
@@ -322,8 +355,51 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
     );
+
+    // 2. Multi-sample refinement watch for 5 seconds to lock satellites and stabilize accuracy
+    try {
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      }
+      if (gpsWatchTimeoutRef.current) {
+        clearTimeout(gpsWatchTimeoutRef.current);
+      }
+
+      let bestAccuracy = currentGeo.accuracy || 999;
+      gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const acc = Math.round(pos.coords.accuracy);
+          if (acc < bestAccuracy) {
+            bestAccuracy = acc;
+            setCurrentGeo({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: acc,
+              timestamp: pos.timestamp,
+              isReal: true,
+              label: lang === 'km' ? `GPS ជាក់ស្តែង (±${acc}m)` : `Real GPS (±${acc}m)`,
+            });
+          }
+          if (acc <= 10 && gpsWatchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+            gpsWatchIdRef.current = null;
+          }
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 0 }
+      );
+
+      gpsWatchTimeoutRef.current = setTimeout(() => {
+        if (gpsWatchIdRef.current !== null && navigator.geolocation) {
+          navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+          gpsWatchIdRef.current = null;
+        }
+      }, 5000);
+    } catch (e) {
+      console.warn('GPS Watcher initialization error:', e);
+    }
   };
 
   // Handle camera start/stop smoothly without repeated prompts
@@ -672,7 +748,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           effectiveBranch.lat,
           effectiveBranch.lng
         );
-        const withinRadius = currentDistance <= (effectiveBranch.radiusMeters || 100);
+        const geoCheck = isWithinAdaptiveGeofence(
+          currentDistance,
+          effectiveBranch.radiusMeters || 100,
+          safeGeo.accuracy
+        );
+        const withinRadius = geoCheck.isWithin;
 
         // Determine Status (On-Time / Late / Geofence violation)
         let status: 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' = 'on_time';
@@ -693,6 +774,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             status = 'overtime';
           }
         }
+
+        const notesText = withinRadius
+          ? (geoCheck.indoorCompensated
+              ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវ (សម្រួលតាម GPS ក្នុងអគារ: ${currentDistance}m, កាំ: ${effectiveBranch.radiusMeters}m + Buffer ${geoCheck.accuracyBuffer}m, Accuracy ±${geoCheck.accuracyMeters}m)`
+              : `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${geoCheck.accuracyMeters}m)`)
+          : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${geoCheck.allowedRadiusMeters}m (GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
 
         const newRecord: AttendanceRecord = {
           id: `att_${Date.now()}`,
@@ -717,9 +804,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           deviceId: currentDevice.deviceId,
           deviceName: currentDevice.deviceName,
           deviceVerified: true,
-          notes: withinRadius
-            ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${safeGeo.accuracy || 5}m)`
-            : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${effectiveBranch.radiusMeters}m`,
+          notes: notesText,
         };
 
         onAddAttendanceRecord(newRecord);
@@ -2054,14 +2139,20 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                 </div>
               </div>
 
-              <button
-                onClick={() => fetchRealDeviceGps(true)}
-                disabled={isLocatingGps}
-                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs border border-slate-200 font-semibold shadow-sm transition cursor-pointer"
-              >
-                {isLocatingGps ? <RefreshCw className="w-3.5 h-3.5 text-indigo-600 animate-spin" /> : <Radio className="w-3.5 h-3.5 text-indigo-600" />}
-                <span>{lang === 'km' ? 'ទាញយក GPS ពិត' : 'Refresh GPS'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${gpsQuality.badgeBg} ${gpsQuality.badgeText} ${gpsQuality.badgeBorder}`}>
+                  <span className={`w-2 h-2 rounded-full ${gpsQuality.dotColor} ${isLocatingGps ? 'animate-ping' : ''}`} />
+                  <span>{lang === 'km' ? gpsQuality.labelKh : gpsQuality.labelEn}</span>
+                </span>
+                <button
+                  onClick={() => fetchRealDeviceGps(true)}
+                  disabled={isLocatingGps}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs border border-slate-200 font-semibold shadow-sm transition cursor-pointer"
+                >
+                  {isLocatingGps ? <RefreshCw className="w-3.5 h-3.5 text-indigo-600 animate-spin" /> : <Radio className="w-3.5 h-3.5 text-indigo-600" />}
+                  <span>{lang === 'km' ? 'សម្រួល GPS' : 'Refresh GPS'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Live Distance & Geofence Status Indicator */}
@@ -2080,14 +2171,22 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                   <div className="flex items-center space-x-2">
                     <span className="font-bold text-sm text-slate-800 font-battambang">
                       {isWithinGeofence
-                        ? lang === 'km' ? '✅ ស្ថិតក្នុងបរិវេណអនុញ្ញាត (Within Geofence)' : '✅ Geofence Verified: On-Site'
-                        : lang === 'km' ? '❌ នៅក្រៅបរិវេណសាខា (Out of Geofence)' : '❌ Geofence Violation: Out of Range'}
+                        ? (adaptiveGeoResult.indoorCompensated
+                            ? (lang === 'km' ? '✅ ស្ថិតក្នុងបរិវេណអនុញ្ញាត (សម្រួលតាមកម្រិត GPS ក្នុងអគារ)' : '✅ Geofence Verified: On-Site (Indoor Tolerance Applied)')
+                            : (lang === 'km' ? '✅ ស្ថិតក្នុងបរិវេណអនុញ្ញាត (Within Geofence)' : '✅ Geofence Verified: On-Site'))
+                        : (lang === 'km' ? '❌ នៅក្រៅបរិវេណសាខា (Out of Geofence)' : '❌ Geofence Violation: Out of Range')}
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 font-medium">
                     {lang === 'km' ? 'ចម្ងាយពីសាខា:' : 'Distance to branch:'}{' '}
                     <span className="font-bold text-slate-900">{formatDistance(distanceToBranch, lang)}</span>
-                    {' '}({lang === 'km' ? `កាំកំណត់: ${selectedBranch.radiusMeters} ម៉ែត្រ` : `Radius: ${selectedBranch.radiusMeters}m`})
+                    {' '}({lang === 'km' ? `កាំកំណត់: ${selectedBranch.radiusMeters} ម៉ែត្រ` : `Radius: ${selectedBranch.radiusMeters}m`}
+                    {adaptiveGeoResult.accuracyBuffer > 0 ? (
+                      <span className="text-emerald-700 font-semibold ml-1">
+                        + {adaptiveGeoResult.accuracyBuffer}m buffer
+                      </span>
+                    ) : null}
+                    )
                   </p>
                 </div>
               </div>
@@ -2100,11 +2199,23 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                     : 'bg-rose-600 text-white shadow-sm'
                 }`}>
                   {isWithinGeofence
-                    ? lang === 'km' ? 'អនុញ្ញាតស្កេន' : 'Punch Allowed'
-                    : lang === 'km' ? 'បដិសេធស្កេន' : 'Punch Blocked'}
+                    ? (lang === 'km' ? 'អនុញ្ញាតស្កេន' : 'Punch Allowed')
+                    : (lang === 'km' ? 'បដិសេធស្កេន' : 'Punch Blocked')}
                 </span>
               </div>
             </div>
+
+            {/* Indoor GPS compensation note banner */}
+            {adaptiveGeoResult.indoorCompensated && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  {lang === 'km'
+                    ? `📡 សញ្ញា GPS ក្នុងអគារមានគម្លាត ±${adaptiveGeoResult.accuracyMeters}m។ ប្រព័ន្ធបានបើកមុខងារជំនួយក្នុងអគារ (+${adaptiveGeoResult.accuracyBuffer}m) ដូច្នេះលោកអ្នកអាចចុះវត្តមានបានដោយរលូន!`
+                    : `📡 Indoor GPS signal variance (±${adaptiveGeoResult.accuracyMeters}m) detected. Adaptive buffer (+${adaptiveGeoResult.accuracyBuffer}m) applied so you can punch smoothly!`}
+                </span>
+              </div>
+            )}
 
             {/* GPS Metadata & Admin Calibration */}
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-2">

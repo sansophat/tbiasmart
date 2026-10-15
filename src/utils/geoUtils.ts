@@ -118,3 +118,109 @@ export function toKhmerNumeral(num: number | string): string {
   const khmerDigits = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
   return String(num).replace(/[0-9]/g, (w) => khmerDigits[parseInt(w, 10)]);
 }
+
+export interface AdaptiveGeofenceResult {
+  isWithin: boolean;
+  distanceMeters: number;
+  baseRadiusMeters: number;
+  allowedRadiusMeters: number;
+  accuracyMeters: number;
+  accuracyBuffer: number;
+  effectiveDistance: number;
+  indoorCompensated: boolean;
+}
+
+/**
+ * Calculates adaptive geofence validity taking device GPS accuracy uncertainty into account.
+ * When staff are indoors, GPS signals degrade and report accuracy of +-20m to +-50m.
+ * By factoring in an accuracy buffer (capped at maxBuffer to prevent spoofing),
+ * staff inside the workplace will not be rejected due to satellite bounce.
+ */
+export function isWithinAdaptiveGeofence(
+  distanceMeters: number,
+  branchRadiusMeters: number,
+  accuracyMeters?: number,
+  maxAccuracyBuffer: number = 55
+): AdaptiveGeofenceResult {
+  const baseRadius = Math.max(10, branchRadiusMeters || 100);
+  const accuracy = typeof accuracyMeters === 'number' && accuracyMeters > 0 ? Math.round(accuracyMeters) : 5;
+  
+  // Accuracy buffer: if device reports accuracy uncertainty > 5m, provide an allowance up to maxAccuracyBuffer
+  const rawBuffer = Math.max(0, accuracy - 5);
+  const accuracyBuffer = Math.min(rawBuffer, maxAccuracyBuffer);
+  
+  const allowedRadiusMeters = baseRadius + accuracyBuffer;
+  const isWithin = distanceMeters <= allowedRadiusMeters;
+  const effectiveDistance = Math.max(0, distanceMeters - accuracyBuffer);
+  const indoorCompensated = isWithin && distanceMeters > baseRadius;
+
+  return {
+    isWithin,
+    distanceMeters,
+    baseRadiusMeters: baseRadius,
+    allowedRadiusMeters,
+    accuracyMeters: accuracy,
+    accuracyBuffer,
+    effectiveDistance,
+    indoorCompensated,
+  };
+}
+
+export interface GpsSignalQuality {
+  quality: 'strong' | 'moderate' | 'weak';
+  accuracy: number;
+  labelKh: string;
+  labelEn: string;
+  badgeBg: string;
+  badgeText: string;
+  badgeBorder: string;
+  dotColor: string;
+  iconName: 'wifi' | 'radio' | 'alert-circle';
+}
+
+/**
+ * Evaluates the GPS satellite signal quality based on reported horizontal accuracy.
+ */
+export function getGpsSignalQuality(accuracyMeters?: number): GpsSignalQuality {
+  const accuracy = typeof accuracyMeters === 'number' && accuracyMeters > 0 ? Math.round(accuracyMeters) : 10;
+
+  if (accuracy <= 15) {
+    return {
+      quality: 'strong',
+      accuracy,
+      labelKh: `GPS ច្បាស់ខ្លាំង (±${accuracy}m)`,
+      labelEn: `Strong GPS (±${accuracy}m)`,
+      badgeBg: 'bg-emerald-50',
+      badgeText: 'text-emerald-700',
+      badgeBorder: 'border-emerald-200',
+      dotColor: 'bg-emerald-500',
+      iconName: 'wifi',
+    };
+  }
+
+  if (accuracy <= 45) {
+    return {
+      quality: 'moderate',
+      accuracy,
+      labelKh: `GPS មធ្យម/ក្នុងអគារ (±${accuracy}m)`,
+      labelEn: `Indoor GPS (±${accuracy}m)`,
+      badgeBg: 'bg-amber-50',
+      badgeText: 'text-amber-700',
+      badgeBorder: 'border-amber-200',
+      dotColor: 'bg-amber-500',
+      iconName: 'radio',
+    };
+  }
+
+  return {
+    quality: 'weak',
+    accuracy,
+    labelKh: `GPS ខ្សោយ/រំញ័រ (±${accuracy}m)`,
+    labelEn: `Weak GPS Signal (±${accuracy}m)`,
+    badgeBg: 'bg-rose-50',
+    badgeText: 'text-rose-700',
+    badgeBorder: 'border-rose-200',
+    dotColor: 'bg-rose-500',
+    iconName: 'alert-circle',
+  };
+}
