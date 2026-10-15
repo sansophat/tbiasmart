@@ -39,6 +39,7 @@ import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { DigitalIdCardModal } from './DigitalIdCardModal';
+import { ProcessingProgressModal } from './ProcessingProgressModal';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
 import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
 import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
@@ -206,6 +207,18 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [editingEmp, setEditingEmp] = useState<Employee | null>(null);
   const [photoEditEmp, setPhotoEditEmp] = useState<Employee | null>(null);
   const [quickScheduleEmp, setQuickScheduleEmp] = useState<Employee | null>(null);
+
+  // Universal Progress Modal State
+  const [processingState, setProcessingState] = useState<{
+    isOpen: boolean;
+    titleKh?: string;
+    titleEn?: string;
+    subtitleKh?: string;
+    subtitleEn?: string;
+    currentStep?: number;
+    totalSteps?: number;
+    isComplete?: boolean;
+  }>({ isOpen: false });
 
   // Quick Schedule Form State
   const [quickShiftId, setQuickShiftId] = useState<string>('shift_cafe_morning');
@@ -436,20 +449,52 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
 
   const handleSavePhotoOnly = () => {
     if (!photoEditEmp || !onUpdateEmployee) return;
+
+    setProcessingState({
+      isOpen: true,
+      titleKh: 'កំពុងរក្សាទុករូបថតបុគ្គលិក...',
+      titleEn: 'Saving Employee Profile Photo...',
+      subtitleKh: 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងធ្វើបច្ចុប្បន្នភាពរូបថតទៅកាន់ Cloud...',
+      subtitleEn: 'Updating photo and synchronizing across devices...',
+      currentStep: 1,
+      totalSteps: 3,
+      isComplete: false,
+    });
+
     const updated: Employee = {
       ...photoEditEmp,
       avatar: editAvatar,
     };
-    onUpdateEmployee(updated);
-    if (selectedBadgeEmp?.id === updated.id) {
-      setSelectedBadgeEmp(updated);
-    }
-    setPhotoEditEmp(null);
+
+    setTimeout(() => {
+      setProcessingState((prev) => ({ ...prev, currentStep: 2 }));
+      onUpdateEmployee(updated);
+      if (selectedBadgeEmp?.id === updated.id) {
+        setSelectedBadgeEmp(updated);
+      }
+
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setPhotoEditEmp(null);
+        setTimeout(() => setProcessingState({ isOpen: false }), 600);
+      }, 350);
+    }, 250);
   };
 
   const handleCreateEmployee = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEmpNameKh.trim() || !newEmpNameEn.trim()) return;
+
+    setProcessingState({
+      isOpen: true,
+      titleKh: 'កំពុងបង្កើត និងចុះឈ្មោះបុគ្គលិកថ្មី...',
+      titleEn: 'Registering New Employee...',
+      subtitleKh: 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងរក្សាទុកព័ត៌មានបុគ្គលិក និងតភ្ជាប់ Cloud...',
+      subtitleEn: 'Saving employee profile and synchronizing with Cloud Database...',
+      currentStep: 1,
+      totalSteps: 3,
+      isComplete: false,
+    });
 
     const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === newEmpDeptKh);
 
@@ -483,24 +528,44 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       sickLeaveUsed: 0,
     };
 
-    onAddEmployee(newEmp);
-    setShowAddModal(false);
-    // Reset Form
-    setNewEmpNameKh('');
-    setNewEmpNameEn('');
-    setNewEmpRoleType('employee');
-    setNewEmpRoleKh('បារីស្តា / អ្នកឆុងកាហ្វេ');
-    setNewEmpDeptKh(DEPARTMENT_OPTIONS[0].nameKh);
-    setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
-    setNewEmpAvatar(DEFAULT_AVATAR);
-    setNewEmpPhone('012 345 678');
-    setNewEmpAddress('');
-    setNewEmpWeeklyDayOff(1);
+    setTimeout(() => {
+      setProcessingState((prev) => ({ ...prev, currentStep: 2 }));
+      onAddEmployee(newEmp);
+
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setShowAddModal(false);
+        // Reset Form
+        setNewEmpNameKh('');
+        setNewEmpNameEn('');
+        setNewEmpRoleType('employee');
+        setNewEmpRoleKh('បារីស្តា / អ្នកឆុងកាហ្វេ');
+        setNewEmpDeptKh(DEPARTMENT_OPTIONS[0].nameKh);
+        setNewEmpCode(`EMP-${Math.floor(100 + Math.random() * 900)}`);
+        setNewEmpAvatar(DEFAULT_AVATAR);
+        setNewEmpPhone('012 345 678');
+        setNewEmpAddress('');
+        setNewEmpWeeklyDayOff(1);
+
+        setTimeout(() => setProcessingState({ isOpen: false }), 600);
+      }, 350);
+    }, 250);
   };
 
   const handleUpdateEmployeeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingEmp || !onUpdateEmployee) return;
+
+    setProcessingState({
+      isOpen: true,
+      titleKh: 'កំពុងកែប្រែ និងរក្សាទុកព័ត៌មានបុគ្គលិក...',
+      titleEn: 'Saving Employee Updates...',
+      subtitleKh: 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុង Sync ទៅកាន់ Cloud...',
+      subtitleEn: 'Updating staff records across Cloud & Realtime database...',
+      currentStep: 1,
+      totalSteps: 3,
+      isComplete: false,
+    });
 
     const selectedBranch = branches.find((b) => b.id === editBranchId);
     const matchedDept = DEPARTMENT_OPTIONS.find((d) => d.nameKh === editDeptKh || d.nameEn === editDeptKh);
@@ -529,11 +594,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
       hasSundayRest: editWeeklyDayOff === 0,
     };
 
-    onUpdateEmployee(updated);
-    if (selectedBadgeEmp?.id === updated.id) {
-      setSelectedBadgeEmp(updated);
-    }
-    setEditingEmp(null);
+    setTimeout(() => {
+      setProcessingState((prev) => ({ ...prev, currentStep: 2 }));
+      onUpdateEmployee(updated);
+      if (selectedBadgeEmp?.id === updated.id) {
+        setSelectedBadgeEmp(updated);
+      }
+
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setEditingEmp(null);
+        setTimeout(() => setProcessingState({ isOpen: false }), 600);
+      }, 350);
+    }, 250);
   };
 
   const handleDelete = (emp: Employee) => {
@@ -2322,6 +2395,19 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Universal Processing & Uploading Progress Popup Form */}
+      <ProcessingProgressModal
+        isOpen={processingState.isOpen}
+        titleKh={processingState.titleKh}
+        titleEn={processingState.titleEn}
+        subtitleKh={processingState.subtitleKh}
+        subtitleEn={processingState.subtitleEn}
+        currentStep={processingState.currentStep}
+        totalSteps={processingState.totalSteps}
+        isComplete={processingState.isComplete}
+        lang={lang}
+      />
     </div>
   );
 };

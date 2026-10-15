@@ -88,6 +88,13 @@ import {
   broadcastSupabaseEvent,
   startSupabasePollingSync,
 } from './utils/supabaseSync';
+import {
+  queuePunchForSync,
+  markPunchAsSynced,
+  syncPendingPunches,
+  fetchComprehensiveAttendance,
+  startAttendanceSyncService,
+} from './utils/attendanceSyncManager';
 
 const DEFAULT_STARTER_BRANCH: Branch = {
   id: 'br_main_hq',
@@ -1657,6 +1664,20 @@ export default function App() {
       }
     );
 
+    // 6. Start resilient attendance sync service (flushes mobile outbox & reconciles full attendance records)
+    const unsubAttendanceSync = startAttendanceSyncService((syncedRecords) => {
+      if (Array.isArray(syncedRecords) && syncedRecords.length > 0) {
+        setAttendanceRecords((prev) => {
+          const merged = mergeDatasets(prev, syncedRecords);
+          if (merged.length !== prev.length || (prev.length > 0 && merged[0]?.id !== prev[0]?.id)) {
+            try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
+            return merged;
+          }
+          return prev;
+        });
+      }
+    });
+
     return () => {
       unsubCloud();
       unsubConnection();
@@ -1664,6 +1685,7 @@ export default function App() {
       unsubSync();
       unsubSupabase();
       unsubPolling();
+      unsubAttendanceSync();
     };
   }, [lang]);
 
@@ -2195,6 +2217,9 @@ export default function App() {
       }
     }
 
+    // 0. Queue punch in persistent outbox so mobile offline never loses records
+    queuePunchForSync(newRecord);
+
     const newRecordsList = [newRecord, ...attendanceRecords.filter((r) => r.id !== newRecord.id)];
     setAttendanceRecords(newRecordsList);
     safeSetJson('attend_records', JSON.stringify(newRecordsList));
@@ -2230,11 +2255,19 @@ export default function App() {
     );
 
     // 1. Instantly save individual punch record directly to Supabase & broadcast in real-time
-    saveAttendancePunchToSupabase(newRecord);
+    saveAttendancePunchToSupabase(newRecord).then((res) => {
+      if (res && res.success) {
+        markPunchAsSynced(newRecord.id);
+      }
+    });
     saveStaffAlertToSupabase(punchAlert);
 
     // 2. Also save individual punch record directly to Firestore
-    saveAttendanceRecordToCloud(newRecord);
+    saveAttendanceRecordToCloud(newRecord).then((ok) => {
+      if (ok) {
+        markPunchAsSynced(newRecord.id);
+      }
+    });
     saveStaffAlertToCloud(punchAlert);
 
     // 3. Broadcast to all WebSocket connected peers and BroadcastChannel
@@ -2250,6 +2283,49 @@ export default function App() {
       body: JSON.stringify({ record: newRecord, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
+
+  const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
+
+  const handleManualSync = useCallback(async () => {
+    setIsManualSyncing(true);
+    try {
+      // 1. Flush any pending unsynced punches from outbox
+      await syncPendingPunches();
+
+      // 2. Comprehensive fetch from Supabase and Server
+      const comprehensiveRecords = await fetchComprehensiveAttendance(500);
+
+      if (comprehensiveRecords.length > 0) {
+        setAttendanceRecords((prev) => {
+          const merged = mergeDatasets(prev, comprehensiveRecords);
+          try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
+          return merged;
+        });
+      }
+
+      // 3. Also refresh initial data
+      const suState = await fetchInitialSupabaseData();
+      if (suState?.attendanceRecords && suState.attendanceRecords.length > 0) {
+        setAttendanceRecords((prev) => {
+          const merged = mergeDatasets(prev, suState.attendanceRecords!);
+          try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
+          return merged;
+        });
+      }
+
+      showLiveAlert(
+        lang === 'km' ? '✅ សមកាលកម្មវត្តមានជោគជ័យ' : '✅ Punches Synced Successfully',
+        lang === 'km' 
+          ? `បានទាញយក និងផ្គូផ្គងកំណត់ត្រាវត្តមានចុងក្រោយបង្អស់ពីប្រព័ន្ធកណ្តាល ${comprehensiveRecords.length > 0 ? `(${comprehensiveRecords.length} កំណត់ត្រា)` : ''}`
+          : `Fetched and reconciled the latest attendance punches from cloud database.`,
+        'system'
+      );
+    } catch (err) {
+      console.error('Manual sync error:', err);
+    } finally {
+      setIsManualSyncing(false);
+    }
+  }, [lang]);
 
   const handleApproveLocationException = (recordId: string, action: 'approve' | 'reject') => {
     let targetRecord: AttendanceRecord | undefined;
@@ -3466,6 +3542,8 @@ export default function App() {
               onNavigateTab={setActiveTab}
               onOpenTransferModal={handleOpenTransferModal}
               lang={lang}
+              onManualSync={handleManualSync}
+              isSyncing={isManualSyncing}
             />
           )}
 
@@ -3573,6 +3651,8 @@ export default function App() {
               onClearLeaveRequests={handleClearLeaveApprovals}
               lang={lang}
               branding={branding}
+              onManualSync={handleManualSync}
+              isSyncing={isManualSyncing}
             />
           )}
 

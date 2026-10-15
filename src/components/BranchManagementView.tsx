@@ -41,6 +41,8 @@ import {
 import { Branch, BranchTypeConfig, BranchTransferRecord, Employee, Language } from '../types';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { detectClientIp } from '../utils/networkUtils';
+import { ProcessingProgressModal } from './ProcessingProgressModal';
+import { compressImageFile } from '../utils/imageCompressor';
 
 interface BranchManagementViewProps {
   branches: Branch[];
@@ -213,6 +215,18 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
   const [isDetectingIp, setIsDetectingIp] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Universal Progress Modal State
+  const [processingState, setProcessingState] = useState<{
+    isOpen: boolean;
+    titleKh?: string;
+    titleEn?: string;
+    subtitleKh?: string;
+    subtitleEn?: string;
+    currentStep?: number;
+    totalSteps?: number;
+    isComplete?: boolean;
+  }>({ isOpen: false });
+
   // Modals
   const [showAddBranchModal, setShowAddBranchModal] = useState<boolean>(false);
   const [showAddTypeModal, setShowAddTypeModal] = useState<boolean>(false);
@@ -287,6 +301,18 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
 
   const handleSave = () => {
     if (!selectedBranch) return;
+
+    setProcessingState({
+      isOpen: true,
+      titleKh: 'កំពុងរក្សាទុកការកំណត់សាខា...',
+      titleEn: 'Saving Branch Configuration...',
+      subtitleKh: 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងធ្វើបច្ចុប្បន្នភាពសាខា និងតភ្ជាប់ Cloud...',
+      subtitleEn: 'Updating branch records and synchronizing with Cloud...',
+      currentStep: 1,
+      totalSteps: 3,
+      isComplete: false,
+    });
+
     const cleanedIps = allowedIpText
       .split(/[\n,;]+/)
       .map((s) => s.trim())
@@ -311,25 +337,62 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
       allowedIpText: allowedIpText.trim(),
       allowedIps: cleanedIps,
     };
-    onUpdateBranch(updated);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
+
+    setTimeout(() => {
+      setProcessingState((prev) => ({ ...prev, currentStep: 2 }));
+      onUpdateBranch(updated);
+
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setSaveSuccess(true);
+        setTimeout(() => {
+          setProcessingState({ isOpen: false });
+          setTimeout(() => setSaveSuccess(false), 2500);
+        }, 700);
+      }, 350);
+    }, 250);
   };
 
-  // Image Upload handler for branch
-  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>, isForNewBranch: boolean = false) => {
+  // Image Upload handler for branch with canvas compression to prevent page freezing
+  const handleImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, isForNewBranch: boolean = false) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (uploadEvent) => {
-        const result = uploadEvent.target?.result as string;
+      setProcessingState({
+        isOpen: true,
+        titleKh: 'កំពុងបង្ហាប់ និងរៀបចំរូបភាពសាខា...',
+        titleEn: 'Compressing & Preparing Venue Image...',
+        subtitleKh: 'កាត់បន្ថយទំហំឯកសារដើម្បីឱ្យការបង្ហោះ និង Sync រហ័ស មិនកកស្ទះ...',
+        subtitleEn: 'Optimizing image resolution for fast cloud sync without lag...',
+        currentStep: 1,
+        totalSteps: 3,
+        isComplete: false,
+      });
+
+      try {
+        const compressed = await compressImageFile(file, { maxDimension: 800, quality: 0.8 });
         if (isForNewBranch) {
-          setNewBranchData((prev) => ({ ...prev, imageUrl: result }));
+          setNewBranchData((prev) => ({ ...prev, imageUrl: compressed }));
         } else {
-          setImageUrl(result);
+          setImageUrl(compressed);
         }
-      };
-      reader.readAsDataURL(file);
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setTimeout(() => {
+          setProcessingState({ isOpen: false });
+        }, 500);
+      } catch (err) {
+        console.warn('Image compression fallback:', err);
+        const reader = new FileReader();
+        reader.onload = (uploadEvent) => {
+          const result = uploadEvent.target?.result as string;
+          if (isForNewBranch) {
+            setNewBranchData((prev) => ({ ...prev, imageUrl: result }));
+          } else {
+            setImageUrl(result);
+          }
+          setProcessingState({ isOpen: false });
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -401,13 +464,33 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
       allowedIps: newBranchData.allowedIpText ? newBranchData.allowedIpText.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean) : [],
     };
 
-    if (onAddBranch) {
-      onAddBranch(newBranch);
-    }
+    setProcessingState({
+      isOpen: true,
+      titleKh: 'កំពុងបង្កើតសាខាថ្មី...',
+      titleEn: 'Creating New Branch...',
+      subtitleKh: 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងចុះឈ្មោះសាខា និង Sync ទៅកាន់ Cloud...',
+      subtitleEn: 'Registering new branch listing and synchronizing across devices...',
+      currentStep: 1,
+      totalSteps: 3,
+      isComplete: false,
+    });
 
-    setShowAddBranchModal(false);
-    setEditingBranchId(newBranch.id);
-    handleSelectBranch(newBranch);
+    setTimeout(() => {
+      setProcessingState((prev) => ({ ...prev, currentStep: 2 }));
+      if (onAddBranch) {
+        onAddBranch(newBranch);
+      }
+
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, currentStep: 3, isComplete: true }));
+        setShowAddBranchModal(false);
+        setEditingBranchId(newBranch.id);
+        handleSelectBranch(newBranch);
+        setTimeout(() => {
+          setProcessingState({ isOpen: false });
+        }, 600);
+      }, 350);
+    }, 250);
   };
 
   const getBranchIcon = (type: string) => {
@@ -1576,6 +1659,19 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Universal Processing & Uploading Progress Popup Form */}
+      <ProcessingProgressModal
+        isOpen={processingState.isOpen}
+        titleKh={processingState.titleKh}
+        titleEn={processingState.titleEn}
+        subtitleKh={processingState.subtitleKh}
+        subtitleEn={processingState.subtitleEn}
+        currentStep={processingState.currentStep}
+        totalSteps={processingState.totalSteps}
+        isComplete={processingState.isComplete}
+        lang={lang}
+      />
     </div>
   );
 };

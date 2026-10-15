@@ -35,6 +35,7 @@ import { StaffRosterTable } from './StaffRosterTable';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 import { getLocalDateString } from '../utils/dateUtils';
+import { ProcessingProgressModal, ProcessingState } from './ProcessingProgressModal';
 
 interface EmployeePortalViewProps {
   currentUser: AuthUser;
@@ -136,6 +137,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [attachmentNote, setAttachmentNote] = useState('');
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
+  const [processingState, setProcessingState] = useState<ProcessingState>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    progress: 0,
+    steps: [],
+  });
+
   // Filter requests for current employee safely
   const myRequests = safeLeaveRequests.filter(
     (req) => req && (req.employeeId === currentEmp.id || (currentEmp.nameEn && req.employeeNameEn === currentEmp.nameEn))
@@ -172,6 +181,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     e.preventDefault();
     if (!reason.trim()) return;
 
+    setProcessingState({
+      isOpen: true,
+      title: lang === 'km' ? 'កំពុងបញ្ជូនពាក្យស្នើសុំ' : 'Submitting Request',
+      subtitle: lang === 'km' ? 'កំពុងផ្ទៀងផ្ទាត់ទិន្នន័យ និងបញ្ជូនទៅប្រព័ន្ធកណ្តាល...' : 'Validating dates and submitting to central system...',
+      progress: 30,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់កាលបរិច្ឆេទ & ច្បាប់អនុញ្ញាត' : 'Validating schedule & leave allowance', status: 'completed' },
+        { label: lang === 'km' ? 'បញ្ជូនពាក្យស្នើទៅអ្នកគ្រប់គ្រងសាខា' : 'Forwarding request to branch manager', status: 'processing' },
+        { label: lang === 'km' ? 'ធ្វើសមកាលកម្មទៅ Cloud Database' : 'Syncing to Cloud Database', status: 'pending' },
+      ],
+    });
+
     let typeKhLabel = '';
     if (leaveCategory === 'leave') {
       typeKhLabel = leaveType === 'annual' ? 'ច្បាប់ឈប់សម្រាកប្រចាំឆ្នាំ (Annual Leave)' : 'ច្បាប់ឈប់បន្ទាន់ (Urgent Leave)';
@@ -205,13 +226,34 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     };
 
     onSubmitLeaveRequest(newRequest);
-    setSubmitSuccess(true);
+
+    setProcessingState((prev) => ({
+      ...prev,
+      progress: 80,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់កាលបរិច្ឆេទ & ច្បាប់អនុញ្ញាត' : 'Validating schedule & leave allowance', status: 'completed' },
+        { label: lang === 'km' ? 'បញ្ជូនពាក្យស្នើទៅអ្នកគ្រប់គ្រងសាខា' : 'Forwarding request to branch manager', status: 'completed' },
+        { label: lang === 'km' ? 'ធ្វើសមកាលកម្មទៅ Cloud Database' : 'Syncing to Cloud Database', status: 'processing' },
+      ],
+    }));
+
     setTimeout(() => {
-      setSubmitSuccess(false);
-      setShowRequestModal(false);
-      setReason('');
-      setAttachmentNote('');
-    }, 1200);
+      setProcessingState((prev) => ({
+        ...prev,
+        progress: 100,
+        steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+      }));
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, isOpen: false }));
+        setSubmitSuccess(true);
+        setTimeout(() => {
+          setSubmitSuccess(false);
+          setShowRequestModal(false);
+          setReason('');
+          setAttachmentNote('');
+        }, 1000);
+      }, 500);
+    }, 400);
   };
 
   // Helper to calculate days between two YYYY-MM-DD dates inclusive
@@ -976,6 +1018,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Universal Form Processing Progress Modal */}
+      <ProcessingProgressModal state={processingState} />
     </div>
   );
 };

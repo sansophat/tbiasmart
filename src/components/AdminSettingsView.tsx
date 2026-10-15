@@ -85,6 +85,8 @@ import { KhmerTypographySettings } from './KhmerTypographySettings';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge } from '../utils/dayOffUtils';
+import { compressImageFile } from '../utils/imageCompressor';
+import { ProcessingProgressModal, ProcessingState } from './ProcessingProgressModal';
 
 interface AdminSettingsViewProps {
   branches: Branch[];
@@ -245,6 +247,14 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
   // Success / Feedback Alerts
   const [toastMessage, setToastMessage] = useState<string>('');
+
+  const [processingState, setProcessingState] = useState<ProcessingState>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    progress: 0,
+    steps: [],
+  });
 
   // Navigation helpers & responsive layout controls
   type SettingsTabId = 'branches' | 'shifts' | 'branding' | 'typography' | 'roles' | 'leaves' | 'system' | 'audit' | 'backup';
@@ -537,6 +547,18 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   // 2. SAVE BRANDING
   const handleSaveBranding = (e: React.FormEvent) => {
     e.preventDefault();
+    setProcessingState({
+      isOpen: true,
+      title: lang === 'km' ? 'កំពុងរក្សាទុកស្លាកយីហោក្រុមហ៊ុន' : 'Saving Corporate Identity',
+      subtitle: lang === 'km' ? 'កំពុងធ្វើសមកាលកម្មទៅ Title Bar, Favicon & Cloud...' : 'Syncing branding to Title Bar, Favicon & Cloud...',
+      progress: 30,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់ទិន្នន័យស្លាកយីហោ' : 'Validating brand configuration', status: 'completed' },
+        { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាព Window Title & Favicon' : 'Updating Window Title & Favicon', status: 'processing' },
+        { label: lang === 'km' ? 'សមកាលកម្មទៅ Cloud Database' : 'Syncing to Cloud Database', status: 'pending' },
+      ],
+    });
+
     const updatedBranding = {
       ...brandForm,
       appIcon: brandForm.appIcon || brandForm.logoUrl,
@@ -557,11 +579,31 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       status: 'success',
     });
 
-    showToast(
-      lang === 'km' 
-        ? 'ស្លាកយីហោត្រូវបានរក្សាទុក និង Sync ទៅកាន់ Window Title Bar, Favicon & Home Screen PWA!' 
-        : 'Company branding saved & synced to Window Title Bar, Favicon & PWA Home Screen!'
-    );
+    setProcessingState((prev) => ({
+      ...prev,
+      progress: 80,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់ទិន្នន័យស្លាកយីហោ' : 'Validating brand configuration', status: 'completed' },
+        { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាព Window Title & Favicon' : 'Updating Window Title & Favicon', status: 'completed' },
+        { label: lang === 'km' ? 'សមកាលកម្មទៅ Cloud Database' : 'Syncing to Cloud Database', status: 'processing' },
+      ],
+    }));
+
+    setTimeout(() => {
+      setProcessingState((prev) => ({
+        ...prev,
+        progress: 100,
+        steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+      }));
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, isOpen: false }));
+        showToast(
+          lang === 'km' 
+            ? 'ស្លាកយីហោត្រូវបានរក្សាទុក និង Sync ទៅកាន់ Window Title Bar, Favicon & Home Screen PWA!' 
+            : 'Company branding saved & synced to Window Title Bar, Favicon & PWA Home Screen!'
+        );
+      }, 500);
+    }, 400);
   };
 
   const handleApplyLiveBranding = () => {
@@ -577,24 +619,53 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
     );
   };
 
-  // Handle Logo Upload
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Logo Upload with image compression
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        alert(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 2MB ឡើយ' : 'Logo size must be under 2MB');
+      if (file.size > 15 * 1024 * 1024) {
+        alert(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 15MB ឡើយ' : 'Logo size must be under 15MB');
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const resultUrl = reader.result as string;
+      setProcessingState({
+        isOpen: true,
+        title: lang === 'km' ? 'កំពុងបង្រួម & ផ្ទុកឡើង Logo' : 'Compressing & Uploading Logo',
+        subtitle: lang === 'km' ? 'កំពុងដំណើរការបង្កើនល្បឿន និងបង្រួមទំហំរូបភាព...' : 'Optimizing and scaling logo image...',
+        progress: 35,
+        steps: [
+          { label: lang === 'km' ? 'អានឯកសាររូបភាពដើម' : 'Reading source image file', status: 'completed' },
+          { label: lang === 'km' ? 'បង្រួមទំហំតាមរយៈ Canvas គុណភាពខ្ពស់' : 'Scaling with high-fidelity Canvas', status: 'processing' },
+          { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាព App Favicon & Title' : 'Updating App Favicon & Title', status: 'pending' },
+        ],
+      });
+      try {
+        const compressedUrl = await compressImageFile(file, 400, 400, 0.88);
+        setProcessingState((prev) => ({
+          ...prev,
+          progress: 80,
+          steps: [
+            { label: lang === 'km' ? 'អានឯកសាររូបភាពដើម' : 'Reading source image file', status: 'completed' },
+            { label: lang === 'km' ? 'បង្រួមទំហំតាមរយៈ Canvas គុណភាពខ្ពស់' : 'Scaling with high-fidelity Canvas', status: 'completed' },
+            { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាព App Favicon & Title' : 'Updating App Favicon & Title', status: 'processing' },
+          ],
+        }));
         setBrandForm((prev) => ({ 
           ...prev, 
-          logoUrl: resultUrl,
-          appIcon: resultUrl
+          logoUrl: compressedUrl,
+          appIcon: compressedUrl
         }));
-      };
-      reader.readAsDataURL(file);
+        setProcessingState((prev) => ({
+          ...prev,
+          progress: 100,
+          steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+        }));
+        setTimeout(() => {
+          setProcessingState((prev) => ({ ...prev, isOpen: false }));
+        }, 500);
+      } catch (err) {
+        console.error('Logo compression failed:', err);
+        setProcessingState((prev) => ({ ...prev, isOpen: false }));
+      }
     }
   };
 
@@ -3885,6 +3956,9 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
           <span className="hidden sm:inline font-battambang">{lang === 'km' ? 'ទៅលើ' : 'Top'}</span>
         </button>
       )}
+
+      {/* Universal Form Processing Progress Modal */}
+      <ProcessingProgressModal state={processingState} />
     </div>
   );
 };

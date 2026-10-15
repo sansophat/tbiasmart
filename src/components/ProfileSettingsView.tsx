@@ -22,6 +22,8 @@ import {
   IdCard
 } from 'lucide-react';
 import { AuthUser, Employee, Branch, Language } from '../types';
+import { compressImageFile } from '../utils/imageCompressor';
+import { ProcessingProgressModal, ProcessingState } from './ProcessingProgressModal';
 
 interface ProfileSettingsViewProps {
   currentUser: AuthUser;
@@ -83,51 +85,65 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  const [processingState, setProcessingState] = useState<ProcessingState>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    progress: 0,
+    steps: [],
+  });
+
   // Handle local file upload with canvas compression
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.type.startsWith('image/')) {
         setErrorMsg(lang === 'km' ? 'សូមជ្រើសរើសឯកសារជារូបភាព (PNG, JPG, WebP)!' : 'Please select an image file (PNG, JPG, WebP)!');
         return;
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setErrorMsg(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 10MB ឡើយ' : 'Image size must be under 10MB');
+      if (file.size > 15 * 1024 * 1024) {
+        setErrorMsg(lang === 'km' ? 'ទំហំរូបភាពមិនត្រូវលើសពី 15MB ឡើយ' : 'Image size must be under 15MB');
         return;
       }
-      const reader = new FileReader();
-      reader.onload = (uploadEvt) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_DIM = 280;
-          let width = img.width;
-          let height = img.height;
-          if (width > height) {
-            if (width > MAX_DIM) {
-              height = Math.round((height * MAX_DIM) / width);
-              width = MAX_DIM;
-            }
-          } else {
-            if (height > MAX_DIM) {
-              width = Math.round((width * MAX_DIM) / height);
-              height = MAX_DIM;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            const compressed = canvas.toDataURL('image/jpeg', 0.85);
-            setAvatar(compressed);
-            setErrorMsg('');
-            handleApplyAvatar(compressed);
-          }
-        };
-        img.src = uploadEvt.target?.result as string;
-      };
-      reader.readAsDataURL(file);
+
+      setProcessingState({
+        isOpen: true,
+        title: lang === 'km' ? 'កំពុងបង្រួម & ប្តូររូបភាព' : 'Optimizing Profile Photo',
+        subtitle: lang === 'km' ? 'កំពុងដំណើរការបង្កើនគុណភាព និងរក្សាទុក...' : 'Compressing and scaling profile image...',
+        progress: 35,
+        steps: [
+          { label: lang === 'km' ? 'អានឯកសាររូបភាពដើម' : 'Reading photo file', status: 'completed' },
+          { label: lang === 'km' ? 'បង្រួមទំហំតាមរយៈ Canvas គុណភាពខ្ពស់' : 'Scaling with high-fidelity Canvas', status: 'processing' },
+          { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាពគណនីបុគ្គលិក' : 'Updating employee profile', status: 'pending' },
+        ],
+      });
+
+      try {
+        const compressed = await compressImageFile(file, 320, 320, 0.85);
+        setProcessingState((prev) => ({
+          ...prev,
+          progress: 85,
+          steps: [
+            { label: lang === 'km' ? 'អានឯកសាររូបភាពដើម' : 'Reading photo file', status: 'completed' },
+            { label: lang === 'km' ? 'បង្រួមទំហំតាមរយៈ Canvas គុណភាពខ្ពស់' : 'Scaling with high-fidelity Canvas', status: 'completed' },
+            { label: lang === 'km' ? 'ធ្វើបច្ចុប្បន្នភាពគណនីបុគ្គលិក' : 'Updating employee profile', status: 'processing' },
+          ],
+        }));
+        setAvatar(compressed);
+        setErrorMsg('');
+        handleApplyAvatar(compressed);
+        setProcessingState((prev) => ({
+          ...prev,
+          progress: 100,
+          steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+        }));
+        setTimeout(() => {
+          setProcessingState((prev) => ({ ...prev, isOpen: false }));
+        }, 500);
+      } catch (err) {
+        console.error('Avatar upload failed:', err);
+        setProcessingState((prev) => ({ ...prev, isOpen: false }));
+      }
     }
   };
 
@@ -170,6 +186,18 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
       return;
     }
 
+    setProcessingState({
+      isOpen: true,
+      title: lang === 'km' ? 'កំពុងរក្សាទុកព័ត៌មានគណនី' : 'Saving Profile Changes',
+      subtitle: lang === 'km' ? 'កំពុងធ្វើបច្ចុប្បន្នភាព និងសមកាលកម្មទៅ Cloud...' : 'Updating profile and syncing to Cloud...',
+      progress: 30,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់ឈ្មោះ & លេខកូដ PIN' : 'Validating identity & PIN code', status: 'completed' },
+        { label: lang === 'km' ? 'កត់ត្រាការផ្លាស់ប្តូរចូលគណនី' : 'Updating profile data', status: 'processing' },
+        { label: lang === 'km' ? 'ធ្វើសមកាលកម្មទៅប្រព័ន្ធកណ្តាល' : 'Syncing changes to central cloud', status: 'pending' },
+      ],
+    });
+
     const updatedUser: AuthUser = {
       ...currentUser,
       avatar,
@@ -198,16 +226,35 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
     onUpdateUserProfile(updatedUser, updatedEmp);
 
-    setSuccessMsg(
-      lang === 'km'
-        ? 'ព័ត៌មានផ្ទាល់ខ្លួន លេខទូរស័ព្ទ អ៊ីមែល អាសយដ្ឋាន និងលេខសម្ងាត់ PIN ត្រូវបានរក្សាទុកដោយជោគជ័យ!'
-        : 'Official profile details, phone, email, address & 4-digit PIN updated successfully!'
-    );
-    setErrorMsg('');
-    setNewPassword('');
-    setConfirmPassword('');
+    setProcessingState((prev) => ({
+      ...prev,
+      progress: 80,
+      steps: [
+        { label: lang === 'km' ? 'ផ្ទៀងផ្ទាត់ឈ្មោះ & លេខកូដ PIN' : 'Validating identity & PIN code', status: 'completed' },
+        { label: lang === 'km' ? 'កត់ត្រាការផ្លាស់ប្តូរចូលគណនី' : 'Updating profile data', status: 'completed' },
+        { label: lang === 'km' ? 'ធ្វើសមកាលកម្មទៅប្រព័ន្ធកណ្តាល' : 'Syncing changes to central cloud', status: 'processing' },
+      ],
+    }));
 
-    setTimeout(() => setSuccessMsg(''), 4000);
+    setTimeout(() => {
+      setProcessingState((prev) => ({
+        ...prev,
+        progress: 100,
+        steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+      }));
+      setTimeout(() => {
+        setProcessingState((prev) => ({ ...prev, isOpen: false }));
+        setSuccessMsg(
+          lang === 'km'
+            ? 'ព័ត៌មានផ្ទាល់ខ្លួន លេខទូរស័ព្ទ អ៊ីមែល អាសយដ្ឋាន និងលេខសម្ងាត់ PIN ត្រូវបានរក្សាទុកដោយជោគជ័យ!'
+            : 'Official profile details, phone, email, address & 4-digit PIN updated successfully!'
+        );
+        setErrorMsg('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => setSuccessMsg(''), 4000);
+      }, 500);
+    }, 400);
   };
 
   return (
@@ -573,6 +620,9 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Universal Form Processing Progress Modal */}
+      <ProcessingProgressModal state={processingState} />
     </div>
   );
 };

@@ -26,11 +26,13 @@ import {
   X,
   Lock,
   User,
-  HeartPulse
+  HeartPulse,
+  RefreshCw
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest } from '../types';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
 import { isSameLocalDate } from '../utils/dateUtils';
+import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { RealtimeActionAlertCenter, ActionAlertItem } from './RealtimeActionAlertCenter';
 
@@ -52,6 +54,8 @@ interface DashboardViewProps {
   setSelectedBranchId: (id: string) => void;
   onNavigateTab: (tab: string) => void;
   onOpenTransferModal?: (emp?: Employee) => void;
+  onManualSync?: () => Promise<void> | void;
+  isSyncing?: boolean;
   lang: Language;
 }
 
@@ -68,6 +72,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onClearAlerts,
   onDismissAlert,
   onApproveLocationException,
+  onManualSync,
+  isSyncing = false,
   currentUser,
   selectedBranchId,
   setSelectedBranchId,
@@ -97,7 +103,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Filter records by selected branch if not 'all'
   const relevantRecords = selectedBranchId === 'all'
     ? attendanceRecords
-    : attendanceRecords.filter((r) => r.branchId === selectedBranchId);
+    : attendanceRecords.filter((r) => {
+        if (r.branchId === selectedBranchId) return true;
+        const matchedEmp = employees.find((e) => doesRecordMatchEmployee(r, e));
+        return matchedEmp?.branchId === selectedBranchId;
+      });
 
   const relevantEmployees = selectedBranchId === 'all'
     ? employees
@@ -107,7 +117,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const todayRecords = relevantRecords.filter((r) => isSameLocalDate(r.timestamp, now));
   const checkInRecords = todayRecords.filter((r) => r.type === 'check_in');
   
-  const presentCount = new Set(checkInRecords.map((r) => r.employeeId)).size;
+  // Resilient count of present unique employees
+  const presentEmployeesSet = new Set<string>();
+  checkInRecords.forEach((r) => {
+    const matched = employees.find((e) => doesRecordMatchEmployee(r, e));
+    if (matched) presentEmployeesSet.add(matched.id);
+    else if (r.employeeId) presentEmployeesSet.add(r.employeeId);
+    else if (r.employeeCode) presentEmployeesSet.add(r.employeeCode);
+  });
+  const presentCount = presentEmployeesSet.size;
   const onTimeCount = checkInRecords.filter((r) => r.status === 'on_time').length;
   const lateCount = checkInRecords.filter((r) => r.status === 'late').length;
   const overtimeCount = todayRecords.filter((r) => r.status === 'overtime').length;
@@ -146,7 +164,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Roll call: Currently on-site employees (checked in today and haven't checked out yet)
   const currentlyOnSiteList = employees.map((emp) => {
     const empToday = attendanceRecords
-      .filter((r) => r.employeeId === emp.id && isSameLocalDate(r.timestamp, now))
+      .filter((r) => doesRecordMatchEmployee(r, emp) && isSameLocalDate(r.timestamp, now))
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const lastRec = empToday[0]; // sorted latest first
     const isOnSite = lastRec && lastRec.type === 'check_in';
@@ -370,6 +388,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Quick Action Shortcuts */}
         <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {/* Cloud Attendance Sync Action */}
+          <button
+            onClick={() => onManualSync && onManualSync()}
+            disabled={isSyncing}
+            className="flex items-center space-x-2 px-4 py-3 rounded-2xl bg-white/20 hover:bg-white/30 text-white font-bold text-xs border border-white/30 backdrop-blur-sm transition shadow-sm cursor-pointer"
+            title={lang === 'km' ? 'ទាញយក និងសមកាលកម្មវត្តមានពី Cloud ភ្លាមៗ' : 'Sync all staff punches from Cloud now'}
+          >
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? (lang === 'km' ? 'កំពុងទាញយក...' : 'Syncing...') : (lang === 'km' ? 'សមកាលកម្មវត្តមាន' : 'Sync Punches')}</span>
+          </button>
+
           {/* Emergency Roll Call Action */}
           <button
             onClick={() => setShowEmergencyRollCall(true)}

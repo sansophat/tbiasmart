@@ -37,11 +37,13 @@ import {
   CheckCheck,
   Maximize2,
   Minimize2,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { AttendanceRecord, Branch, LeaveRequest, Language, Employee, CompanyBranding } from '../types';
 import { INITIAL_LEAVE_REQUESTS } from '../data/initialData';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
+import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
 import { 
   generateDailyTimesheetRows, 
   generateEmployeeMergedSummaries,
@@ -80,6 +82,8 @@ interface ReportsViewProps {
   onUpdateLeaveStatus: (leaveId: string, status: 'approved' | 'rejected', adminComment?: string, approvedBy?: string) => void;
   onDeleteLeaveRequest?: (leaveId: string) => void;
   onClearLeaveRequests?: (scope: 'processed' | 'all') => void;
+  onManualSync?: () => Promise<void> | void;
+  isSyncing?: boolean;
   lang: Language;
   branding?: CompanyBranding;
 }
@@ -92,6 +96,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onUpdateLeaveStatus,
   onDeleteLeaveRequest,
   onClearLeaveRequests,
+  onManualSync,
+  isSyncing = false,
   lang,
   branding,
 }) => {
@@ -777,8 +783,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const matchesDate =
         (localDateOnly >= startDate && localDateOnly <= endDate) ||
         (rawDateOnly >= startDate && rawDateOnly <= endDate);
-      const matchesBranch = selectedBranchFilter === 'all' || rec.branchId === selectedBranchFilter;
-      const matchesEmployee = selectedEmployeeFilter === 'all' || rec.employeeId === selectedEmployeeFilter || rec.employeeCode === selectedEmployeeFilter;
+      const matchesBranch =
+        selectedBranchFilter === 'all' ||
+        rec.branchId === selectedBranchFilter ||
+        employees.find((e) => doesRecordMatchEmployee(rec, e))?.branchId === selectedBranchFilter;
+
+      const targetEmp = selectedEmployeeFilter === 'all'
+        ? null
+        : employees.find((e) => e.id === selectedEmployeeFilter || e.code === selectedEmployeeFilter);
+
+      const matchesEmployee =
+        selectedEmployeeFilter === 'all' ||
+        (targetEmp ? doesRecordMatchEmployee(rec, targetEmp) : (rec.employeeId === selectedEmployeeFilter || rec.employeeCode === selectedEmployeeFilter));
+
       const matchesStatus =
         selectedStatusFilter === 'all' ||
         (selectedStatusFilter === 'valid' && rec.isWithinGeofence) ||
@@ -795,7 +812,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
       return matchesDate && matchesBranch && matchesEmployee && matchesStatus && matchesSearch;
     });
-  }, [attendanceRecords, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, selectedStatusFilter, searchQuery]);
+  }, [attendanceRecords, employees, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, selectedStatusFilter, searchQuery]);
 
   // Dedicated Leave, Sick & OT Requests Approval Stream Filter
   const filteredRequests = useMemo(() => {
@@ -1297,6 +1314,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         {/* Quick Export Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+          {/* Cloud Attendance Sync Action */}
+          <button
+            type="button"
+            disabled={isSyncing}
+            onClick={() => onManualSync && onManualSync()}
+            className="flex items-center space-x-2 px-3.5 py-2.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 shadow-sm transition cursor-pointer disabled:opacity-60"
+            title={lang === 'km' ? 'សមកាលកម្មវត្តមានពី Cloud ភ្លាមៗ' : 'Sync all attendance records from Cloud'}
+          >
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? (lang === 'km' ? 'កំពុង Sync...' : 'Syncing...') : (lang === 'km' ? 'សមកាលកម្មវត្តមាន' : 'Sync Records')}</span>
+          </button>
+
           {/* Excel XLSX Download Button (With Exact PDF Format & Style) */}
           <button
             type="button"

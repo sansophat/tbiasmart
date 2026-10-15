@@ -12,6 +12,7 @@ import {
   User
 } from 'lucide-react';
 import { Language } from '../types';
+import { compressImageFile } from '../utils/imageCompressor';
 
 interface EmployeeImageUploaderProps {
   currentAvatar: string;
@@ -80,51 +81,22 @@ export const EmployeeImageUploader: React.FC<EmployeeImageUploaderProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
 
   // Compress / resize image using HTMLCanvas to keep localStorage compact and fast
-  const processImageFile = (file: File) => {
+  const processImageFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert(lang === 'km' ? 'សូមជ្រើសរើសឯកសារជារូបភាព (PNG, JPG, WebP)!' : 'Please select an image file (PNG, JPG, WebP)!');
       return;
     }
 
     setIsProcessing(true);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_DIM = 320;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_DIM) {
-            height = Math.round((height * MAX_DIM) / width);
-            width = MAX_DIM;
-          }
-        } else {
-          if (height > MAX_DIM) {
-            width = Math.round((width * MAX_DIM) / height);
-            height = MAX_DIM;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          onAvatarChange(dataUrl);
-        }
-        setIsProcessing(false);
-      };
-      img.onerror = () => {
-        setIsProcessing(false);
-        alert(lang === 'km' ? 'មិនអាចបើករូបភាពបានទេ' : 'Failed to parse image file.');
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImageFile(file, { maxDimension: 320, quality: 0.82 });
+      onAvatarChange(compressed);
+    } catch (err) {
+      console.error('Image compression error:', err);
+      alert(lang === 'km' ? 'មិនអាចបើករូបភាពបានទេ' : 'Failed to parse image file.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Drag and Drop handlers

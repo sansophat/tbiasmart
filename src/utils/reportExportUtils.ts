@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { AttendanceRecord, Branch, Employee, Language, LeaveRequest } from '../types';
 import { isEmployeeDayOff, isEmployeeSundayRest, getEmployeeLeaveOnDate, getEmployeeDayOffName } from './dayOffUtils';
 import { ReportTableSettings, DAILY_TIMESHEET_COLUMNS, MERGED_SUMMARY_COLUMNS } from '../types/tableCustomization';
+import { doesRecordMatchEmployee } from './attendanceSyncManager';
 
 export interface TimesheetRow {
   no: number;
@@ -152,11 +153,7 @@ export function generateDailyTimesheetRows(
       // Find punches for this employee on this date (timezone-aware)
       const dayPunches = records.filter((r) => {
         if (!r || !r.timestamp) return false;
-        const matchesEmp =
-          r.employeeId === emp.id ||
-          r.employeeCode === emp.code ||
-          (emp.nameEn && r.employeeNameEn && emp.nameEn.toLowerCase() === r.employeeNameEn.toLowerCase());
-        if (!matchesEmp) return false;
+        if (!doesRecordMatchEmployee(r, emp)) return false;
         const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
         return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
       });
@@ -322,11 +319,7 @@ export function generateEmployeeMergedSummaries(
 
       const dayPunches = records.filter((r) => {
         if (!r || !r.timestamp) return false;
-        const matchesEmp =
-          r.employeeId === emp.id ||
-          r.employeeCode === emp.code ||
-          (emp.nameEn && r.employeeNameEn && emp.nameEn.toLowerCase() === r.employeeNameEn.toLowerCase());
-        if (!matchesEmp) return false;
+        if (!doesRecordMatchEmployee(r, emp)) return false;
         const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
         return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
       });

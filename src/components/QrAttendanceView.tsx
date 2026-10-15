@@ -58,6 +58,7 @@ import { playAlertChime } from '../utils/soundUtils';
 import { validatePunchAllowance, PunchAllowanceResult } from '../utils/dayOffUtils';
 import { isSameLocalDate } from '../utils/dateUtils';
 import { detectClientIp, isIpInBranchWhitelist } from '../utils/networkUtils';
+import { compressImageFile } from '../utils/imageCompressor';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -1548,14 +1549,19 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                         type="file"
                         accept="image/*"
                         capture="user"
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (file) {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => {
-                              setWeakGpsPhoto(ev.target?.result as string);
-                            };
-                            reader.readAsDataURL(file);
+                            try {
+                              const compressed = await compressImageFile(file, { maxDimension: 400, quality: 0.75 });
+                              setWeakGpsPhoto(compressed);
+                            } catch {
+                              const reader = new FileReader();
+                              reader.onload = (ev) => {
+                                setWeakGpsPhoto(ev.target?.result as string);
+                              };
+                              reader.readAsDataURL(file);
+                            }
                           }
                         }}
                         className="hidden"
