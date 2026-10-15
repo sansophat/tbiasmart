@@ -475,20 +475,47 @@ export default function App() {
         const timeMs = r.timestamp ? new Date(r.timestamp).getTime() : Date.now();
         const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString(lang === 'km' ? 'km-KH' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
+        const isException = r.locationExceptionStatus === 'pending' || r.method === 'weak_gps_exception';
+        const isWifi = r.isWifiVerified || r.verifiedBy === 'wifi_ip';
+
+        let titleKh = 'វត្តមានស្កេន GPS ជោគជ័យ';
+        let titleEn = 'GPS Scan Punch Verified';
+        if (isException) {
+          titleKh = '📍 ស្នើសុំអនុម័តវត្តមានលើកលែង (GPS ក្នុងអគារ)';
+          titleEn = '📍 Pending Weak GPS Exception Review';
+        } else if (isWifi) {
+          titleKh = '📶 វត្តមានស្កេនជោគជ័យ (Wi-Fi/IP សាខា)';
+          titleEn = '📶 Verified via Office Wi-Fi/IP';
+        } else if (!r.isWithinGeofence) {
+          titleKh = '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence';
+          titleEn = '⚠️ Geofence Distance Warning';
+        }
+
+        let detailKh = `${empName} ${actionType} - ${r.branchNameKh || r.branchNameEn || ''} (${r.isWithinGeofence ? 'ត្រឹមត្រូវតាម GPS' : `លើសដែនកំណត់ ${Math.round(r.distanceToBranch || 0)}m`})`;
+        let detailEn = `${empName} ${actionType} - ${r.branchNameEn || ''} (${r.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(r.distanceToBranch || 0)}m Out of Range`})`;
+
+        if (isException) {
+          detailKh = `${empName} ស្នើសុំចុះវត្តមានលើកលែងដោយសារ GPS ខ្សោយក្នុងអគារ (${Math.round(r.distanceToBranch || 0)}m, ±${r.accuracyMeters || 0}m)`;
+          detailEn = `${empName} requested exception punch due to weak indoor GPS (${Math.round(r.distanceToBranch || 0)}m, ±${r.accuracyMeters || 0}m)`;
+        } else if (isWifi) {
+          detailKh = `${empName} ${actionType} - បានផ្ទៀងផ្ទាត់តាម Wi-Fi/IP សាខា (${r.ipAddress || 'Office IP'})`;
+          detailEn = `${empName} ${actionType} - Verified via Branch Wi-Fi/IP (${r.ipAddress || 'Office IP'})`;
+        }
+
         return {
           id: `alert_att_${r.id}`,
           type: 'punch' as const,
-          titleKh: r.isWithinGeofence ? 'វត្តមានស្កេន GPS ជោគជ័យ' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
-          titleEn: r.isWithinGeofence ? 'GPS Scan Punch Verified' : '⚠️ Geofence Distance Warning',
-          detailKh: `${empName} ${actionType} - ${r.branchNameKh || r.branchNameEn || ''} (${r.isWithinGeofence ? 'ត្រឹមត្រូវតាម GPS' : `លើសដែនកំណត់ ${Math.round(r.distanceToBranch || 0)}m`})`,
-          detailEn: `${empName} ${actionType} - ${r.branchNameEn || ''} (${r.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(r.distanceToBranch || 0)}m Out of Range`})`,
+          titleKh,
+          titleEn,
+          detailKh,
+          detailEn,
           timestamp: timeStr || r.timestamp || '',
           rawTimestamp: timeMs,
           actorName: empName,
           actorAvatar: r.employeeAvatar,
           branchId: r.branchId,
           branchName: r.branchNameKh || r.branchNameEn,
-          isUnread: false,
+          isUnread: isException,
         };
       });
 
@@ -2224,6 +2251,52 @@ export default function App() {
     }).catch(() => {});
   };
 
+  const handleApproveLocationException = (recordId: string, action: 'approve' | 'reject') => {
+    let targetRecord: AttendanceRecord | undefined;
+    const nextRecords = attendanceRecords.map((r) => {
+      if (r.id !== recordId) return r;
+      const isApproved = action === 'approve';
+      targetRecord = {
+        ...r,
+        status: isApproved ? 'on_time' : 'geofence_violation',
+        isWithinGeofence: isApproved,
+        locationExceptionStatus: isApproved ? 'approved' : 'rejected',
+        locationExceptionReviewedBy: currentUser?.nameEn || currentUser?.nameKh || 'Admin',
+        locationExceptionReviewedAt: new Date().toISOString(),
+        notes: isApproved
+          ? `${r.notes || ''} [បានអនុម័តករណីលើកលែង GPS ដោយ ${currentUser?.nameKh || 'Admin'}]`
+          : `${r.notes || ''} [បានបដិសេធករណីលើកលែងដោយ ${currentUser?.nameKh || 'Admin'}]`,
+      };
+      return targetRecord;
+    });
+
+    setAttendanceRecords(nextRecords);
+    safeSetJson('attend_records', JSON.stringify(nextRecords));
+
+    if (targetRecord) {
+      saveAttendanceRecordToCloud(targetRecord);
+      saveAttendancePunchToSupabase(targetRecord);
+    }
+    syncStateToCloudDatabase({ attendanceRecords: nextRecords });
+    saveAttendanceRecordsToSupabase(nextRecords);
+
+    realtimeService.emit('UPDATE_ATTENDANCE_RECORD', {
+      recordId,
+      action,
+      record: targetRecord,
+    });
+
+    showLiveAlert(
+      action === 'approve'
+        ? (lang === 'km' ? '✅ បានអនុម័តវត្តមានលើកលែង' : '✅ Exception Punch Approved')
+        : (lang === 'km' ? '❌ បានបដិសេធសំណើលើកលែង' : '❌ Exception Punch Rejected'),
+      action === 'approve'
+        ? (lang === 'km' ? 'វត្តមានរបស់បុគ្គលិកត្រូវបានគិតជាវត្តមានត្រឹមត្រូវ' : 'Attendance record marked as valid')
+        : (lang === 'km' ? 'វត្តមានត្រូវបានបដិសេធជាខុសទីតាំង' : 'Attendance record marked as violation'),
+      action === 'approve' ? 'punch' : 'system'
+    );
+  };
+
   const handleAddEmployee = (newEmp: Employee) => {
     const preparedEmp: Employee = {
       ...newEmp,
@@ -3386,6 +3459,7 @@ export default function App() {
               actionAlerts={actionAlerts}
               onClearAlerts={handleClearAlerts}
               onDismissAlert={handleDismissAlert}
+              onApproveLocationException={handleApproveLocationException}
               currentUser={currentUser}
               selectedBranchId={selectedBranchId}
               setSelectedBranchId={setSelectedBranchId}

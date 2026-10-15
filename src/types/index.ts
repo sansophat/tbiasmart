@@ -33,6 +33,9 @@ export interface Branch {
   activeStaffCount?: number;
   gpsSetByEmployeeId?: string;
   gpsSetAt?: string;
+  wifiSsid?: string;
+  allowedIps?: string[];
+  allowedIpText?: string;
 }
 
 export type UserRole = 'admin' | 'manager' | 'supervisor' | 'hr' | 'employee';
@@ -112,8 +115,8 @@ export interface Shift {
 }
 
 export type AttendanceType = 'check_in' | 'check_out';
-export type AttendanceMethod = 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin' | 'kiosk_pin';
-export type AttendanceStatus = 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation';
+export type AttendanceMethod = 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin' | 'kiosk_pin' | 'wifi_network' | 'weak_gps_exception';
+export type AttendanceStatus = 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' | 'pending_location_review';
 
 export interface AttendanceRecord {
   id: string;
@@ -140,6 +143,12 @@ export interface AttendanceRecord {
   deviceName?: string;
   deviceVerified?: boolean;
   ipAddress?: string;
+  isWifiVerified?: boolean;
+  verifiedBy?: 'gps' | 'wifi_ip' | 'kiosk_qr' | 'supervisor_override' | 'weak_gps_exception';
+  locationExceptionStatus?: 'pending' | 'approved' | 'rejected';
+  locationExceptionReason?: string;
+  locationExceptionReviewedBy?: string;
+  locationExceptionReviewedAt?: string;
 }
 
 export type RequestCategory = 'leave' | 'sick' | 'overtime' | 'permission' | 'urgent';

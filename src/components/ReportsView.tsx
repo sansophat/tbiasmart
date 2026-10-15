@@ -2563,7 +2563,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         <span className="text-[11px] font-mono bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 text-slate-700 font-medium">
                           {rec.method === 'qr_mobile' ? '📱 Phone QR' :
                            rec.method === 'qr_kiosk' ? '📺 Kiosk QR' :
-                           rec.method === 'kiosk_pin' ? '🔢 Touch PIN' : '🛡️ Badge'}
+                           rec.method === 'kiosk_pin' ? '🔢 Touch PIN' :
+                           rec.method === 'wifi_network' ? '📶 Office Wi-Fi' :
+                           rec.method === 'weak_gps_exception' ? '📍 GPS Exception' : '🛡️ Badge'}
                         </span>
                       </td>
 
@@ -2575,12 +2577,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             ? 'bg-rose-50 text-rose-700 border border-rose-200'
                             : rec.status === 'overtime'
                             ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                            : rec.status === 'pending_location_review'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
                             : 'bg-rose-50 text-rose-700 border border-rose-200'
                         }`}>
                           <div className={`w-1.5 h-1.5 rounded-full ${
-                            rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
+                            rec.status === 'on_time' ? 'bg-emerald-500' :
+                            rec.status === 'late' ? 'bg-rose-500' :
+                            rec.status === 'overtime' ? 'bg-purple-500' :
+                            rec.status === 'pending_location_review' ? 'bg-amber-500' : 'bg-rose-500'
                           }`} />
-                          {rec.status}
+                          {rec.status === 'pending_location_review'
+                            ? (lang === 'km' ? 'រង់ចាំអនុម័តទីតាំង' : 'Location Review')
+                            : rec.status}
                         </span>
                       </td>
                     </tr>

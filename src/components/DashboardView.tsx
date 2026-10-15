@@ -46,6 +46,7 @@ interface DashboardViewProps {
   actionAlerts?: ActionAlertItem[];
   onClearAlerts?: () => void;
   onDismissAlert?: (alertId: string) => void;
+  onApproveLocationException?: (recordId: string, action: 'approve' | 'reject') => void;
   currentUser?: AuthUser | null;
   selectedBranchId: string;
   setSelectedBranchId: (id: string) => void;
@@ -66,6 +67,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   actionAlerts = [],
   onClearAlerts,
   onDismissAlert,
+  onApproveLocationException,
   currentUser,
   selectedBranchId,
   setSelectedBranchId,
@@ -109,6 +111,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const onTimeCount = checkInRecords.filter((r) => r.status === 'on_time').length;
   const lateCount = checkInRecords.filter((r) => r.status === 'late').length;
   const overtimeCount = todayRecords.filter((r) => r.status === 'overtime').length;
+  const pendingLocationExceptions = todayRecords.filter((r) => r.locationExceptionStatus === 'pending');
 
   // Real-Time Attendance Feed: ONLY show punches recorded TODAY
   const todayFeedRecords = relevantRecords
@@ -578,6 +581,79 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onNavigateToLeavesTab={() => onNavigateTab('settings')}
             lang={lang}
           />
+        </div>
+      )}
+
+      {/* Weak GPS / Indoor Location Exception Review Widget for Managers */}
+      {onApproveLocationException && pendingLocationExceptions.length > 0 && (
+        <div className="bg-amber-50/70 border border-amber-300 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-200 shrink-0">
+                <MapPin className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base font-battambang flex items-center gap-2">
+                  <span>{lang === 'km' ? '📍 សំណើបញ្ជាក់វត្តមានលើកលែង (GPS ក្នុងអគារ)' : '📍 Indoor Weak GPS Exception Punch Reviews'}</span>
+                  <span className="px-2 py-0.5 rounded-full text-xs bg-amber-600 text-white font-mono font-bold">
+                    {pendingLocationExceptions.length}
+                  </span>
+                </h3>
+                <p className="text-xs text-amber-800 font-medium">
+                  {lang === 'km'
+                    ? 'បុគ្គលិកបានចុះវត្តមានដោយភ្ជាប់រូបថត Selfie ដោយសារសញ្ញាផ្កាយរណបខ្សោយក្នុងអគារ សូមត្រួតពិនិត្យ និងអនុម័ត'
+                    : 'Employees requested punch exception with live selfie due to indoor GPS signal blockage.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {pendingLocationExceptions.map((rec) => (
+              <div
+                key={rec.id}
+                className="bg-white border border-amber-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between space-y-3"
+              >
+                <div className="flex items-start space-x-3">
+                  <img
+                    src={rec.selfieUrl || rec.employeeAvatar}
+                    alt={rec.employeeNameEn}
+                    className="w-14 h-14 rounded-xl object-cover border border-amber-200 shadow-sm shrink-0"
+                  />
+                  <div className="min-w-0 flex-1 text-xs">
+                    <h4 className="font-bold text-slate-900 truncate font-battambang">
+                      {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
+                    </h4>
+                    <span className="text-[11px] font-mono text-indigo-600 font-bold block">
+                      {rec.employeeCode} • {rec.branchNameEn}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {rec.type === 'check_in' ? 'Check-In' : 'Check-Out'}
+                    </span>
+                    <p className="text-[11px] text-amber-800 font-medium mt-1 truncate">
+                      {rec.locationExceptionReason || 'GPS ខ្សោយក្នុងអគារ'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => onApproveLocationException(rec.id, 'reject')}
+                    className="flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-600 font-bold text-xs transition cursor-pointer"
+                  >
+                    {lang === 'km' ? 'បដិសេធ' : 'Reject'}
+                  </button>
+                  <button
+                    onClick={() => onApproveLocationException(rec.id, 'approve')}
+                    className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center space-x-1 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{lang === 'km' ? 'អនុម័ត' : 'Approve'}</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

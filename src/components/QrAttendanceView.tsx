@@ -57,6 +57,7 @@ import {
 import { playAlertChime } from '../utils/soundUtils';
 import { validatePunchAllowance, PunchAllowanceResult } from '../utils/dayOffUtils';
 import { isSameLocalDate } from '../utils/dateUtils';
+import { detectClientIp, isIpInBranchWhitelist } from '../utils/networkUtils';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -223,6 +224,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const [supervisorPinValue, setSupervisorPinValue] = useState<string>('');
   const [supervisorPinError, setSupervisorPinError] = useState<string>('');
 
+  // Office Wi-Fi / IP Verification & Weak GPS Exception State
+  const [clientIp, setClientIp] = useState<string>('');
+  const [showWeakGpsModal, setShowWeakGpsModal] = useState<boolean>(false);
+  const [weakGpsReason, setWeakGpsReason] = useState<string>('');
+  const [weakGpsPhoto, setWeakGpsPhoto] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameId = useRef<number | null>(null);
@@ -231,6 +238,13 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
   const selectedBranch = branches.find((b) => b.id === selectedBranchId) || branches[0];
   const selectedEmp = employees.find((e) => e.id === selectedEmpId) || employees[0];
+
+  // Detect Client IP on view mount for Office Network Verification
+  useEffect(() => {
+    detectClientIp().then((ip) => {
+      if (ip) setClientIp(ip);
+    });
+  }, []);
 
   // Auto-redirect countdown when scan completes successfully
   useEffect(() => {
@@ -271,6 +285,10 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   );
   const isWithinGeofence = adaptiveGeoResult.isWithin;
   const gpsQuality = getGpsSignalQuality(currentGeo.accuracy);
+
+  // Office Wi-Fi / IP Verification Check
+  const isBranchNetworkVerified = Boolean(clientIp && isIpInBranchWhitelist(selectedBranch, clientIp));
+  const isAllowedToPunch = isWithinGeofence || isBranchNetworkVerified;
 
   // Auto-detect check-in vs check-out recommendation based on today's logs (Timezone-safe)
   const selectedEmpTodayRecords = (attendanceRecords || [])
@@ -753,12 +771,17 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           effectiveBranch.radiusMeters || 100,
           safeGeo.accuracy
         );
-        const withinRadius = geoCheck.isWithin;
+        const isNetworkMatch = Boolean(clientIp && isIpInBranchWhitelist(effectiveBranch, clientIp));
+        const isWeakGpsException = method === 'weak_gps_exception';
+        const isWifiMethod = method === 'wifi_network' || isNetworkMatch;
+        const withinRadius = geoCheck.isWithin || isWifiMethod;
 
-        // Determine Status (On-Time / Late / Geofence violation)
-        let status: 'on_time' | 'late' | 'early_leave' | 'overtime' | 'geofence_violation' = 'on_time';
+        // Determine Status (On-Time / Late / Geofence violation / Pending review)
+        let status: AttendanceStatus = 'on_time';
         
-        if (!withinRadius) {
+        if (isWeakGpsException) {
+          status = 'pending_location_review';
+        } else if (!withinRadius) {
           status = 'geofence_violation';
         } else {
           const hour = now.getHours();
@@ -775,11 +798,23 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           }
         }
 
-        const notesText = withinRadius
-          ? (geoCheck.indoorCompensated
-              ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវ (សម្រួលតាម GPS ក្នុងអគារ: ${currentDistance}m, កាំ: ${effectiveBranch.radiusMeters}m + Buffer ${geoCheck.accuracyBuffer}m, Accuracy ±${geoCheck.accuracyMeters}m)`
-              : `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${geoCheck.accuracyMeters}m)`)
-          : `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${geoCheck.allowedRadiusMeters}m (GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
+        let verifiedByTag: 'gps' | 'wifi_ip' | 'kiosk_qr' | 'supervisor_override' | 'weak_gps_exception' = 'gps';
+        let notesText = '';
+
+        if (isWeakGpsException) {
+          verifiedByTag = 'weak_gps_exception';
+          notesText = `📍 ស្នើសុំកត់ត្រាវត្តមានលើកលែង (សញ្ញា GPS ខ្សោយក្នុងអគារ): ចម្ងាយ ${currentDistance}m, ±${geoCheck.accuracyMeters}m - រង់ចាំការអនុម័តពី Admin/Manager`;
+        } else if (isWifiMethod) {
+          verifiedByTag = 'wifi_ip';
+          notesText = `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាមប្រព័ន្ធ Wi-Fi / IP សាខា (${clientIp || effectiveBranch.wifiSsid || 'Office Network'})`;
+        } else if (withinRadius) {
+          verifiedByTag = method === 'qr_kiosk' ? 'kiosk_qr' : 'gps';
+          notesText = geoCheck.indoorCompensated
+            ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវ (សម្រួលតាម GPS ក្នុងអគារ: ${currentDistance}m, កាំ: ${effectiveBranch.radiusMeters}m + Buffer ${geoCheck.accuracyBuffer}m, Accuracy ±${geoCheck.accuracyMeters}m)`
+            : `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
+        } else {
+          notesText = `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${geoCheck.allowedRadiusMeters}m (GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
+        }
 
         const newRecord: AttendanceRecord = {
           id: `att_${Date.now()}`,
@@ -796,14 +831,19 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           lat: safeGeo.lat,
           lng: safeGeo.lng,
           distanceToBranch: currentDistance,
-          isWithinGeofence: withinRadius,
+          isWithinGeofence: withinRadius && !isWeakGpsException,
           accuracyMeters: safeGeo.accuracy || 5,
-          method: method,
+          method: isWeakGpsException ? 'weak_gps_exception' : (isWifiMethod ? 'wifi_network' : method),
           selfieUrl: photoUrl || emp.avatar,
           status: status,
           deviceId: currentDevice.deviceId,
           deviceName: currentDevice.deviceName,
           deviceVerified: true,
+          ipAddress: clientIp,
+          isWifiVerified: isWifiMethod,
+          verifiedBy: verifiedByTag,
+          locationExceptionStatus: isWeakGpsException ? 'pending' : undefined,
+          locationExceptionReason: isWeakGpsException ? (weakGpsReason || 'សញ្ញា GPS ខ្សោយក្នុងអគារ') : undefined,
           notes: notesText,
         };
 
@@ -1451,6 +1491,136 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* WEAK GPS INDOOR EXCEPTION PUNCH MODAL */}
+      {/* ========================================================================= */}
+      {showWeakGpsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-100 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200 text-left font-hanuman">
+            <button
+              onClick={() => setShowWeakGpsModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center shrink-0">
+                <Camera className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm font-battambang">
+                  {lang === 'km' ? '📍 ស្នើសុំកត់ត្រាវត្តមានករណីលើកលែង (GPS ក្នុងអគារ)' : '📍 Indoor Weak GPS Exception Punch'}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {lang === 'km' ? 'ផ្ញើសំណើជូន Admin/Manager ត្រួតពិនិត្យ និងអនុម័ត' : 'Submit punch with live photo for manager approval'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl text-[11px] text-amber-900 space-y-1">
+              <p className="font-bold">
+                {lang === 'km' ? 'ℹ️ ការពន្យល់អំពីទីតាំង:' : 'ℹ️ Location Context:'}
+              </p>
+              <p className="text-amber-800">
+                {lang === 'km'
+                  ? `ចម្ងាយបច្ចុប្បន្ន: ${formatDistance(distanceToBranch, lang)} (លើសកាំ ${selectedBranch.radiusMeters}m ដោយសារសញ្ញាផ្កាយរណបខ្សោយពេលនៅក្នុងអគារ)។ ម៉ោងរបស់អ្នកនឹងត្រូវបានកត់ត្រាភ្លាមៗ!`
+                  : `Current distance: ${formatDistance(distanceToBranch, lang)} (exceeds ${selectedBranch.radiusMeters}m due to indoor satellite blockage). Your timestamp will be logged immediately!`}
+              </p>
+            </div>
+
+            {/* Selfie Photo Preview / Capture */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                {lang === 'km' ? 'រូបថត Selfie នៅកន្លែងធ្វើការ (Workplace Selfie):' : 'Workplace Selfie Photo:'}
+              </label>
+              
+              <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 h-44 flex items-center justify-center">
+                {weakGpsPhoto ? (
+                  <img src={weakGpsPhoto} alt="Selfie" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="text-center p-4 space-y-2 text-slate-500 text-xs">
+                    <Camera className="w-8 h-8 mx-auto text-slate-400" />
+                    <p>{lang === 'km' ? 'មិនទាន់មានរូបថត Selfie ទេ' : 'No selfie taken yet'}</p>
+                    <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-bold cursor-pointer hover:bg-indigo-700 transition">
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{lang === 'km' ? 'ថតរូប ឬជ្រើសរើសរូប' : 'Take / Upload Selfie'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="user"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              setWeakGpsPhoto(ev.target?.result as string);
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                )}
+                {weakGpsPhoto && (
+                  <button
+                    type="button"
+                    onClick={() => setWeakGpsPhoto(null)}
+                    className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white transition text-xs"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Reason Note */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                {lang === 'km' ? 'មូលហេតុ ឬចំណាំបន្ថែម:' : 'Reason / Note:'}
+              </label>
+              <input
+                type="text"
+                value={weakGpsReason}
+                onChange={(e) => setWeakGpsReason(e.target.value)}
+                placeholder="e.g. សញ្ញា GPS ខ្សោយក្នុងអគារ"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-battambang"
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-2 flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowWeakGpsModal(false)}
+                className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 transition"
+              >
+                {lang === 'km' ? 'បោះបង់' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWeakGpsModal(false);
+                  processAttendance(
+                    selectedEmp,
+                    selectedBranch,
+                    'weak_gps_exception',
+                    weakGpsPhoto || capturedPhoto || selectedEmp.avatar,
+                    attendanceType
+                  );
+                }}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md shadow-amber-200 transition flex items-center justify-center space-x-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>{lang === 'km' ? 'បញ្ជូនសំណើវត្តមាន' : 'Submit Exception Punch'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* SCAN COMPLETED & SUCCESSFUL POPUP MODAL */}
       {/* ========================================================================= */}
       {scanSuccessModalRecord && (
@@ -1486,11 +1656,19 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             {/* Heading */}
             <div>
               <span className={`inline-block text-[11px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wider mb-1.5 ${
-                scanSuccessModalRecord.isWithinGeofence
+                scanSuccessModalRecord.method === 'weak_gps_exception'
+                  ? 'bg-amber-100 text-amber-800'
+                  : scanSuccessModalRecord.method === 'wifi_network'
+                  ? 'bg-blue-100 text-blue-800'
+                  : scanSuccessModalRecord.isWithinGeofence
                   ? 'bg-emerald-100 text-emerald-800'
                   : 'bg-amber-100 text-amber-800'
               }`}>
-                {scanSuccessModalRecord.isWithinGeofence
+                {scanSuccessModalRecord.method === 'weak_gps_exception'
+                  ? (lang === 'km' ? '📍 ស្នើសុំវត្តមានលើកលែង (រង់ចាំការអនុម័ត)' : '📍 Exception Punch Submitted (Pending Review)')
+                  : scanSuccessModalRecord.method === 'wifi_network'
+                  ? (lang === 'km' ? '📶 ផ្ទៀងផ្ទាត់តាម Wi-Fi/IP សាខា' : '📶 Verified via Office Wi-Fi/IP')
+                  : scanSuccessModalRecord.isWithinGeofence
                   ? (lang === 'km' ? '✅ ការស្កេនបានជោគជ័យ' : '✅ Verified Successful')
                   : (lang === 'km' ? '⚠️ ក្រៅរង្វង់ Geofence' : '⚠️ Geofence Flag')}
               </span>
@@ -2042,11 +2220,19 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                 {/* Instant Punch Action Button */}
                 <button
                   id="instant-punch-submit-btn"
-                  onClick={() => processAttendance(selectedEmp, selectedBranch, 'qr_mobile', selectedEmp.avatar, attendanceType)}
-                  disabled={isProcessing}
+                  onClick={() => processAttendance(
+                    selectedEmp,
+                    selectedBranch,
+                    isBranchNetworkVerified && !isWithinGeofence ? 'wifi_network' : 'qr_mobile',
+                    selectedEmp.avatar,
+                    attendanceType
+                  )}
+                  disabled={isProcessing || !isAllowedToPunch}
                   className={`w-full py-4 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 shadow-md transition-all cursor-pointer ${
-                    !isWithinGeofence
-                      ? 'bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100'
+                    !isAllowedToPunch
+                      ? 'bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 opacity-90'
+                      : isBranchNetworkVerified && !isWithinGeofence
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'
                       : attendanceType === 'check_in'
                       ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
                       : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200'
@@ -2055,27 +2241,54 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                   {isProcessing ? (
                     <>
                       <RefreshCw className="w-5 h-5 animate-spin" />
-                      <span>{lang === 'km' ? 'កំពុងផ្ទៀងផ្ទាត់ GPS & កត់ត្រាវត្តមាន...' : 'Verifying GPS & Recording Attendance...'}</span>
+                      <span>{lang === 'km' ? 'កំពុងផ្ទៀងផ្ទាត់ & កត់ត្រាវត្តមាន...' : 'Verifying & Recording Attendance...'}</span>
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-5 h-5" />
+                      {isBranchNetworkVerified && !isWithinGeofence ? (
+                        <Wifi className="w-5 h-5" />
+                      ) : (
+                        <Sparkles className="w-5 h-5" />
+                      )}
                       <span>
-                        {isWithinGeofence
-                          ? lang === 'km'
-                            ? attendanceType === 'check_in'
-                              ? '🟢 បញ្ជាក់វត្តមានចូលធ្វើការ (Punch Check-In) តាម GPS ផ្ទាល់'
-                              : '🔴 បញ្ជាក់វត្តមានចេញពីធ្វើការ (Punch Check-Out) តាម GPS ផ្ទាល់'
-                            : attendanceType === 'check_in'
-                            ? '🟢 Execute Check-In with Live GPS'
-                            : '🔴 Execute Check-Out with Live GPS'
-                          : lang === 'km'
-                            ? `⚠️ ទីតាំងនៅឆ្ងាយ (${formatDistance(distanceToBranch, lang)}) - មិនទាន់ដល់សាខា`
-                            : `⚠️ Out of Geofence Range (${formatDistance(distanceToBranch, lang)})`}
+                        {isAllowedToPunch
+                          ? (isBranchNetworkVerified && !isWithinGeofence
+                              ? (lang === 'km'
+                                  ? `📶 បញ្ជាក់វត្តមានតាម Wi-Fi/IP សាខា (${attendanceType === 'check_in' ? 'Check-In' : 'Check-Out'})`
+                                  : `📶 Execute ${attendanceType === 'check_in' ? 'Check-In' : 'Check-Out'} via Office Network`)
+                              : (lang === 'km'
+                                  ? (attendanceType === 'check_in'
+                                      ? '🟢 បញ្ជាក់វត្តមានចូលធ្វើការ (Punch Check-In) តាម GPS ផ្ទាល់'
+                                      : '🔴 បញ្ជាក់វត្តមានចេញពីធ្វើការ (Punch Check-Out) តាម GPS ផ្ទាល់')
+                                  : (attendanceType === 'check_in'
+                                      ? '🟢 Execute Check-In with Live GPS'
+                                      : '🔴 Execute Check-Out with Live GPS')))
+                          : (lang === 'km'
+                              ? `⚠️ ទីតាំងនៅឆ្ងាយ (${formatDistance(distanceToBranch, lang)}) - មិនទាន់ដល់សាខា`
+                              : `⚠️ Out of Geofence Range (${formatDistance(distanceToBranch, lang)})`)}
                       </span>
                     </>
                   )}
                 </button>
+
+                {/* Weak GPS Exception Action Button when GPS is poor or outside */}
+                {!isAllowedToPunch && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWeakGpsReason(lang === 'km' ? 'សញ្ញា GPS ខ្សោយក្នុងអគារ / ក្រោមដំបូលបេតុង' : 'Weak indoor GPS under building roof');
+                      setShowWeakGpsModal(true);
+                    }}
+                    className="w-full mt-2.5 py-3 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-sm"
+                  >
+                    <Camera className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      {lang === 'km'
+                        ? '📸 សញ្ញា GPS ខ្សោយក្នុងអគារ? ចុះវត្តមានករណីលើកលែង (ថត Selfie បញ្ជាក់)'
+                        : '📸 Indoor GPS Weak? Request Exception Punch (Selfie Verification)'}
+                    </span>
+                  </button>
+                )}
 
                 {/* Quick Toggle Link for Attendance Type */}
                 <div className="text-center pt-0.5">

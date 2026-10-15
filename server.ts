@@ -528,6 +528,19 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.get('/api/network/my-ip', (req, res) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  let ip = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.socket.remoteAddress || '';
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  res.json({
+    success: true,
+    ip: ip || '127.0.0.1',
+    timestamp: Date.now(),
+  });
+});
+
 // 1. GET CANONICAL SYSTEM STATE (Called by new devices/tabs on load)
 app.get('/api/system/state', (req, res) => {
   res.json({

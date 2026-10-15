@@ -32,11 +32,15 @@ import {
   Layers,
   ArrowRightLeft,
   Search,
-  ExternalLink,
-  AlertTriangle
+  AlertTriangle,
+  Wifi,
+  Globe,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { Branch, BranchTypeConfig, BranchTransferRecord, Employee, Language } from '../types';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
+import { detectClientIp } from '../utils/networkUtils';
 
 interface BranchManagementViewProps {
   branches: Branch[];
@@ -202,6 +206,11 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
   const [imageUrl, setImageUrl] = useState<string>(selectedBranch?.imageUrl || '');
   const [lat, setLat] = useState<number>(selectedBranch?.lat || 11.5580);
   const [lng, setLng] = useState<number>(selectedBranch?.lng || 104.9280);
+  const [wifiSsid, setWifiSsid] = useState<string>(selectedBranch?.wifiSsid || '');
+  const [allowedIpText, setAllowedIpText] = useState<string>(
+    selectedBranch?.allowedIpText || (selectedBranch?.allowedIps ? selectedBranch.allowedIps.join(', ') : '')
+  );
+  const [isDetectingIp, setIsDetectingIp] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Modals
@@ -232,6 +241,8 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
     lat: 11.5564,
     lng: 104.9282,
     imageUrl: PRESET_BRANCH_IMAGES[0].url,
+    wifiSsid: '',
+    allowedIpText: '',
   });
 
   const handleSelectBranch = (branch: Branch) => {
@@ -249,11 +260,38 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
     setImageUrl(branch.imageUrl || '');
     setLat(branch.lat);
     setLng(branch.lng);
+    setWifiSsid(branch.wifiSsid || '');
+    setAllowedIpText(branch.allowedIpText || (branch.allowedIps ? branch.allowedIps.join(', ') : ''));
     setSaveSuccess(false);
+  };
+
+  const handleDetectCurrentIp = async () => {
+    setIsDetectingIp(true);
+    try {
+      const ip = await detectClientIp();
+      if (ip) {
+        setAllowedIpText((prev) => {
+          const list = prev ? prev.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean) : [];
+          if (!list.includes(ip)) {
+            list.push(ip);
+          }
+          return list.join(', ');
+        });
+      }
+    } catch (e) {
+      console.warn('Could not detect IP:', e);
+    } finally {
+      setIsDetectingIp(false);
+    }
   };
 
   const handleSave = () => {
     if (!selectedBranch) return;
+    const cleanedIps = allowedIpText
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const updated: Branch = {
       ...selectedBranch,
       nameKh,
@@ -269,6 +307,9 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
       closeTime,
       contactPhone,
       imageUrl,
+      wifiSsid: wifiSsid.trim(),
+      allowedIpText: allowedIpText.trim(),
+      allowedIps: cleanedIps,
     };
     onUpdateBranch(updated);
     setSaveSuccess(true);
@@ -355,6 +396,9 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
       iconName: 'Building2',
       imageUrl: newBranchData.imageUrl,
       activeStaffCount: 0,
+      wifiSsid: newBranchData.wifiSsid || '',
+      allowedIpText: newBranchData.allowedIpText || '',
+      allowedIps: newBranchData.allowedIpText ? newBranchData.allowedIpText.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean) : [],
     };
 
     if (onAddBranch) {
@@ -831,6 +875,61 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                     <span>85m (Nightclub)</span>
                     <span>400m (Large Logistics)</span>
                   </div>
+                </div>
+
+                {/* Office Wi-Fi & Public IP Verification Fallback */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-1.5 font-bold text-slate-800 text-xs">
+                      <Wifi className="w-4 h-4 text-indigo-600" />
+                      <span>{lang === 'km' ? 'បណ្តាញ Wi-Fi & IP សាខា (Indoor Network Fallback):' : 'Office Wi-Fi & IP Whitelist (Indoor Fallback):'}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDetectCurrentIp}
+                      disabled={isDetectingIp}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold border border-indigo-200 flex items-center space-x-1 cursor-pointer transition shadow-2xs"
+                    >
+                      {isDetectingIp ? <RefreshCw className="w-3 h-3 animate-spin text-indigo-600" /> : <Globe className="w-3 h-3 text-indigo-600" />}
+                      <span>{lang === 'km' ? 'ទាញយក IP បច្ចុប្បន្ន' : 'Detect Current IP'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-700 font-semibold mb-1 text-[11px]">
+                        {lang === 'km' ? 'ឈ្មោះ Wi-Fi សាខា (SSID):' : 'Office Wi-Fi Network (SSID):'}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. TBIA_Office_5G"
+                        value={wifiSsid}
+                        onChange={(e) => setWifiSsid(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 font-semibold mb-1 text-[11px]">
+                        {lang === 'km' ? 'អាសយដ្ឋាន IP អនុញ្ញាត (Allowed Public IP):' : 'Allowed Public IP Address(es):'}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 203.189.145.22, 192.168.1.*"
+                        value={allowedIpText}
+                        onChange={(e) => setAllowedIpText(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 flex items-start gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <span>
+                      {lang === 'km'
+                        ? 'ប្រសិនបើសញ្ញា GPS ខ្សោយក្នុងអគារ ឬរំញ័រ បុគ្គលិកដែលភ្ជាប់ Wi-Fi ឬប្រើប្រាស់ IP អនុញ្ញាតនេះនឹងអាចចុះវត្តមានបានដោយស្វ័យប្រវត្តិ។'
+                        : 'If GPS is weak or drifting indoors, employees connected to this Wi-Fi or matching IP will be verified automatically.'}
+                    </span>
+                  </p>
                 </div>
 
                 {/* Operating Hours & Manager Phone */}

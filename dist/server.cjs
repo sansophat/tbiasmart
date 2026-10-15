@@ -470,6 +470,18 @@ app.get("/api/health", (req, res) => {
     employeesCount: serverDb.employees?.length || 0
   });
 });
+app.get("/api/network/my-ip", (req, res) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  let ip = typeof forwarded === "string" ? forwarded.split(",")[0].trim() : req.socket.remoteAddress || "";
+  if (ip.startsWith("::ffff:")) {
+    ip = ip.substring(7);
+  }
+  res.json({
+    success: true,
+    ip: ip || "127.0.0.1",
+    timestamp: Date.now()
+  });
+});
 app.get("/api/system/state", (req, res) => {
   res.json({
     success: true,
