@@ -593,7 +593,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       setProcessingState((prev) => ({
         ...prev,
         progress: 100,
-        steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+        steps: (prev.steps || []).map((s) => ({ ...s, status: 'completed' })),
       }));
       setTimeout(() => {
         setProcessingState((prev) => ({ ...prev, isOpen: false }));
@@ -657,7 +657,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
         setProcessingState((prev) => ({
           ...prev,
           progress: 100,
-          steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+          steps: (prev.steps || []).map((s) => ({ ...s, status: 'completed' })),
         }));
         setTimeout(() => {
           setProcessingState((prev) => ({ ...prev, isOpen: false }));

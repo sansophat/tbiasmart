@@ -35,9 +35,10 @@ import {
   Check,
   ShieldAlert,
   Shield,
-  Laptop
+  Laptop,
+  Wifi,
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
+import { Branch, Employee, AttendanceRecord, AttendanceMethod, AttendanceStatus, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
 import { 
   calculateDistanceMeters, 
   formatDistance, 
@@ -197,7 +198,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const [doublePunchModal, setDoublePunchModal] = useState<{
     emp: Employee;
     branch: Branch;
-    method: 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin';
+    method: AttendanceMethod;
     photoUrl?: string;
     targetType: 'check_in' | 'check_out';
     recentPunch: AttendanceRecord;
@@ -600,7 +601,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const processAttendance = (
     emp: Employee,
     branch: Branch,
-    method: 'qr_kiosk' | 'qr_mobile' | 'badge_scan' | 'manual_admin' = 'qr_mobile',
+    method: AttendanceMethod = 'qr_mobile',
     photoUrl?: string,
     forcedType?: 'check_in' | 'check_out',
     forceConfirm: boolean = false,

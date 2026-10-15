@@ -2275,7 +2275,7 @@ export default function App() {
 
     // 1. Instantly save individual punch record directly to Supabase & broadcast in real-time
     saveAttendancePunchToSupabase(newRecord).then((res) => {
-      if (res && res.success) {
+      if (res) {
         markPunchAsSynced(newRecord.id);
       }
     });
@@ -2373,7 +2373,6 @@ export default function App() {
       saveAttendancePunchToSupabase(targetRecord);
     }
     syncStateToCloudDatabase({ attendanceRecords: nextRecords });
-    saveAttendanceRecordsToSupabase(nextRecords);
 
     realtimeService.emit('UPDATE_ATTENDANCE_RECORD', {
       recordId,

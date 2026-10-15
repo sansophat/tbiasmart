@@ -2,8 +2,12 @@ import React from 'react';
 import { Loader2, CheckCircle2, CloudUpload, Database, Sparkles } from 'lucide-react';
 import { Language } from '../types';
 
-export interface ProcessingProgressModalProps {
+export interface ProcessingState {
   isOpen: boolean;
+  title?: string;
+  subtitle?: string;
+  progress?: number;
+  steps?: Array<{ label: string; status: 'pending' | 'processing' | 'completed' }>;
   titleKh?: string;
   titleEn?: string;
   subtitleKh?: string;
@@ -12,21 +16,35 @@ export interface ProcessingProgressModalProps {
   totalSteps?: number;
   progressPercent?: number;
   isComplete?: boolean;
-  lang: Language;
 }
 
-export const ProcessingProgressModal: React.FC<ProcessingProgressModalProps> = ({
-  isOpen,
-  titleKh = 'កំពុងដំណើរការរក្សាទុក...',
-  titleEn = 'Processing & Saving...',
-  subtitleKh = 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងដំណើរការទិន្នន័យ និងតភ្ជាប់ Cloud...',
-  subtitleEn = 'Please wait, syncing changes with Cloud Database & Realtime...',
-  currentStep = 2,
-  totalSteps = 3,
-  progressPercent,
-  isComplete = false,
-  lang,
-}) => {
+export interface ProcessingProgressModalProps {
+  isOpen?: boolean;
+  state?: ProcessingState;
+  titleKh?: string;
+  titleEn?: string;
+  subtitleKh?: string;
+  subtitleEn?: string;
+  currentStep?: number;
+  totalSteps?: number;
+  progressPercent?: number;
+  isComplete?: boolean;
+  lang?: Language;
+}
+
+export const ProcessingProgressModal: React.FC<ProcessingProgressModalProps> = (props) => {
+  const merged = { ...props.state, ...props };
+  const isOpen = merged.isOpen;
+  const titleKh = merged.titleKh || 'កំពុងដំណើរការរក្សាទុក...';
+  const titleEn = merged.titleEn || 'Processing & Saving...';
+  const subtitleKh = merged.subtitleKh || 'សូមរង់ចាំមួយភ្លែត ប្រព័ន្ធកំពុងដំណើរការទិន្នន័យ និងតភ្ជាប់ Cloud...';
+  const subtitleEn = merged.subtitleEn || 'Please wait, syncing changes with Cloud Database & Realtime...';
+  const currentStep = merged.currentStep ?? 2;
+  const totalSteps = merged.totalSteps ?? 3;
+  const progressPercent = merged.progressPercent;
+  const isComplete = merged.isComplete ?? false;
+  const lang = merged.lang || 'km';
+
   if (!isOpen) return null;
 
   const calculatedPercent = progressPercent !== undefined 

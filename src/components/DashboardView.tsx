@@ -27,7 +27,8 @@ import {
   Lock,
   User,
   HeartPulse,
-  RefreshCw
+  RefreshCw,
+  Check,
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest } from '../types';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';

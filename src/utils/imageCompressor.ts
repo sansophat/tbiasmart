@@ -12,8 +12,19 @@ export interface CompressionOptions {
 
 export function compressImageFile(
   file: File,
-  options: CompressionOptions = {}
+  optionsOrMaxDimension?: CompressionOptions | number,
+  _ignoredHeight?: number,
+  qualityArg?: number
 ): Promise<string> {
+  let options: CompressionOptions = {};
+  if (typeof optionsOrMaxDimension === 'number') {
+    options = {
+      maxDimension: optionsOrMaxDimension,
+      quality: qualityArg !== undefined ? qualityArg : 0.88,
+    };
+  } else if (optionsOrMaxDimension) {
+    options = optionsOrMaxDimension;
+  }
   const { maxDimension = 600, quality = 0.78, format = 'image/jpeg' } = options;
 
   return new Promise((resolve, reject) => {

@@ -36,7 +36,6 @@ import {
   Wifi,
   Globe,
   RefreshCw,
-  Sparkles
 } from 'lucide-react';
 import { Branch, BranchTypeConfig, BranchTransferRecord, Employee, Language } from '../types';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
@@ -1622,8 +1621,8 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
               </h3>
               <p className="text-sm text-slate-600 mb-2">
                 {lang === 'km'
-                  ? `អ្នកកំពុងរៀបចំលុបសាខា "${branchToDelete.nameKh || branchToDelete.name}" (${branchToDelete.code || branchToDelete.id})។`
-                  : `Are you sure you want to delete branch "${branchToDelete.name}" (${branchToDelete.code || branchToDelete.id})?`}
+                  ? `អ្នកកំពុងរៀបចំលុបសាខា "${branchToDelete.nameKh || branchToDelete.nameEn}" (${branchToDelete.id})។`
+                  : `Are you sure you want to delete branch "${branchToDelete.nameEn || branchToDelete.nameKh}" (${branchToDelete.id})?`}
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mb-6 text-left flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />

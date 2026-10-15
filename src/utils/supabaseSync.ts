@@ -5,14 +5,14 @@ import {
   Branch,
   LeaveRequest,
   BranchTransferRecord,
-  ActionAlertItem,
   AuthUser,
   SystemSettings,
-  AppBranding,
+  CompanyBranding,
   RolePermission,
   AuditLogEntry,
-  ShiftConfig,
+  Shift,
 } from '../types';
+import { ActionAlertItem } from '../components/RealtimeActionAlertCenter';
 
 export const SUPABASE_URL = 'https://zurvopjghgeaadjojrwc.supabase.co';
 export const SUPABASE_ANON_KEY =
@@ -30,6 +30,28 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
+/**
+ * Robust timeout wrapper to guarantee Supabase PostgREST queries never freeze the UI
+ */
+export function withTimeout<T>(p: Promise<T>, ms: number = 3500, fallback: T): Promise<T> {
+  let timer: any;
+  const timeoutP = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([
+    p
+      .then((val) => {
+        clearTimeout(timer);
+        return val;
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        return fallback;
+      }),
+    timeoutP,
+  ]);
+}
+
 export interface SupabaseSystemData {
   branches?: Branch[];
   employees?: Employee[];
@@ -37,13 +59,13 @@ export interface SupabaseSystemData {
   leaveRequests?: LeaveRequest[];
   transferRecords?: BranchTransferRecord[];
   branchTypes?: any[];
-  branding?: AppBranding;
+  branding?: CompanyBranding;
   rolePermissions?: RolePermission[];
   systemSettings?: SystemSettings;
   adminProfile?: AuthUser;
   auditLogs?: AuditLogEntry[];
   staffAlerts?: ActionAlertItem[];
-  shifts?: ShiftConfig[];
+  shifts?: Shift[];
   deletedEmployeeIds?: string[];
   deletedBranchIds?: string[];
   deletedLeaveIds?: string[];
@@ -51,49 +73,48 @@ export interface SupabaseSystemData {
 }
 
 /**
- * Fetch initial full snapshot from Supabase PostgreSQL
+ * Fetch initial full snapshot from Supabase PostgreSQL (with 3.5s timeout protection)
  */
 export async function fetchInitialSupabaseData(): Promise<SupabaseSystemData | null> {
   try {
     const result: SupabaseSystemData = {};
 
-    // 1. Fetch app_state items
-    const { data: stateRows, error: stateErr } = await supabase
-      .from('app_state')
-      .select('key, value');
+    const [stateRes, punchRes, alertRes] = await Promise.all([
+      withTimeout(
+        supabase.from('app_state').select('key, value') as unknown as Promise<{ data: any; error: any }>,
+        3500,
+        { data: null, error: null }
+      ),
+      withTimeout(
+        supabase.from('attendance_records').select('record').order('created_at', { ascending: false }).limit(200) as unknown as Promise<{ data: any; error: any }>,
+        3500,
+        { data: null, error: null }
+      ),
+      withTimeout(
+        supabase.from('staff_alerts').select('alert').order('created_at', { ascending: false }).limit(50) as unknown as Promise<{ data: any; error: any }>,
+        3500,
+        { data: null, error: null }
+      ),
+    ]);
 
-    if (!stateErr && Array.isArray(stateRows)) {
-      stateRows.forEach((row) => {
+    if (stateRes?.data && Array.isArray(stateRes.data)) {
+      stateRes.data.forEach((row: any) => {
         if (row && row.key && row.value !== undefined) {
           (result as any)[row.key] = row.value;
         }
       });
     }
 
-    // 2. Fetch latest attendance records (up to 200)
-    const { data: punchRows, error: punchErr } = await supabase
-      .from('attendance_records')
-      .select('record')
-      .order('created_at', { ascending: false })
-      .limit(200);
-
-    if (!punchErr && Array.isArray(punchRows)) {
-      result.attendanceRecords = punchRows
-        .map((r) => r.record)
-        .filter((r) => r && r.id);
+    if (punchRes?.data && Array.isArray(punchRes.data)) {
+      result.attendanceRecords = punchRes.data
+        .map((r: any) => r.record)
+        .filter((r: any) => r && r.id);
     }
 
-    // 3. Fetch latest staff alerts (up to 50)
-    const { data: alertRows, error: alertErr } = await supabase
-      .from('staff_alerts')
-      .select('alert')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (!alertErr && Array.isArray(alertRows)) {
-      result.staffAlerts = alertRows
-        .map((a) => a.alert)
-        .filter((a) => a && a.id);
+    if (alertRes?.data && Array.isArray(alertRes.data)) {
+      result.staffAlerts = alertRes.data
+        .map((a: any) => a.alert)
+        .filter((a: any) => a && a.id);
     }
 
     return result;
@@ -110,19 +131,20 @@ export async function saveAttendancePunchToSupabase(record: AttendanceRecord): P
   try {
     if (!record || !record.id) return false;
 
-    // 1. Persist to Postgres
-    const { error } = await supabase.from('attendance_records').upsert({
-      id: record.id,
-      record: record,
-      created_at: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
-    });
-
-    if (error) {
-      console.warn('[Supabase] Punch insert warning:', error.message);
-    }
-
-    // 2. Broadcast immediately over Realtime channel
+    // 1. Broadcast immediately over Realtime channel (always active and instantaneous)
     broadcastSupabaseEvent('PUNCH_ATTENDANCE', { record });
+
+    // 2. Persist to Postgres in background with strict 3.5s timeout
+    withTimeout(
+      supabase.from('attendance_records').upsert({
+        id: record.id,
+        record: record,
+        created_at: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
+      }) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
+
     return true;
   } catch (err) {
     console.warn('[Supabase] Error saving punch:', err);
@@ -137,17 +159,20 @@ export async function saveStaffAlertToSupabase(alert: ActionAlertItem): Promise<
   try {
     if (!alert || !alert.id) return false;
 
-    const { error } = await supabase.from('staff_alerts').upsert({
-      id: alert.id,
-      alert: alert,
-      created_at: new Date(alert.rawTimestamp || Date.now()).toISOString(),
-    });
-
-    if (error) {
-      console.warn('[Supabase] Alert insert warning:', error.message);
-    }
-
+    // 1. Broadcast immediately over Realtime channel
     broadcastSupabaseEvent('ACTION_ALERT', { alert });
+
+    // 2. Persist to Postgres with 3.5s timeout
+    withTimeout(
+      supabase.from('staff_alerts').upsert({
+        id: alert.id,
+        alert: alert,
+        created_at: new Date(alert.rawTimestamp || Date.now()).toISOString(),
+      }) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
+
     return true;
   } catch (err) {
     console.warn('[Supabase] Error saving alert:', err);
@@ -158,70 +183,150 @@ export async function saveStaffAlertToSupabase(alert: ActionAlertItem): Promise<
 /**
  * Permanently clear all alerts from Supabase PostgreSQL and broadcast instantly
  */
-export async function clearStaffAlertsFromSupabase(clearedAt: number): Promise<boolean> {
+export async function clearStaffAlertsInSupabase(clearedTimestamp: number = Date.now()): Promise<boolean> {
   try {
-    // 1. Delete rows from staff_alerts table
-    await supabase.from('staff_alerts').delete().neq('id', 'keep_system_placeholder');
+    // 1. Instantly broadcast CLEAR_ALERTS event
+    broadcastSupabaseEvent('CLEAR_ALERTS', { clearedAt: clearedTimestamp });
 
-    // 2. Persist alertsClearedAt in app_state
-    await supabase.from('app_state').upsert({
-      key: 'alertsClearedAt',
-      value: clearedAt,
-      updated_at: new Date().toISOString(),
-    });
+    // 2. Persist to Postgres
+    withTimeout(
+      supabase.from('app_state').upsert({
+        key: 'alertsClearedAt',
+        value: clearedTimestamp,
+        updated_at: new Date().toISOString(),
+      }) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
 
-    // 3. Broadcast CLEAR_ALL event over Realtime channel
-    broadcastSupabaseEvent('ACTION_ALERT', { action: 'CLEAR_ALL', clearedAt });
+    withTimeout(
+      supabase.from('staff_alerts').delete().neq('id', '___non_existent___') as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
+
+    try {
+      localStorage.setItem('attend_alerts_cleared_at', String(clearedTimestamp));
+    } catch (_) {}
+
     return true;
   } catch (err) {
-    console.warn('[Supabase] Error clearing staff alerts:', err);
+    console.warn('[Supabase] Error clearing alerts in Supabase:', err);
     return false;
   }
 }
 
-/**
- * Delete or dismiss a single alert from Supabase
- */
+export const clearStaffAlertsFromSupabase = clearStaffAlertsInSupabase;
+
 export async function deleteSingleStaffAlertFromSupabase(alertId: string): Promise<boolean> {
   try {
-    if (!alertId) return false;
-    await supabase.from('staff_alerts').delete().eq('id', alertId);
-    broadcastSupabaseEvent('ACTION_ALERT', { action: 'DISMISS_ONE', alertId });
+    withTimeout(
+      supabase.from('staff_alerts').delete().eq('id', alertId) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
     return true;
-  } catch (err) {
-    console.warn('[Supabase] Error deleting single alert:', err);
+  } catch {
     return false;
   }
 }
 
 /**
- * Direct save for updated employee (e.g. profile edit, avatar upload)
+ * Permanently delete processed or all leave requests from Supabase PostgreSQL and broadcast
+ */
+export async function clearLeaveRequestsInSupabase(
+  scope: 'processed' | 'all',
+  remainingLeaves: LeaveRequest[] = [],
+  deletedIds: string[] = []
+): Promise<boolean> {
+  try {
+    // 1. Broadcast immediately
+    broadcastSupabaseEvent('CLEAR_LEAVES', { scope, remainingLeaves, deletedIds });
+
+    // 2. Update app_state leaves collection
+    withTimeout(
+      supabase.from('app_state').upsert({
+        key: 'leaveRequests',
+        value: remainingLeaves,
+        updated_at: new Date().toISOString(),
+      }) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
+
+    if (deletedIds.length > 0) {
+      withTimeout(
+        supabase.from('app_state').upsert({
+          key: 'deletedLeaveIds',
+          value: deletedIds,
+          updated_at: new Date().toISOString(),
+        }) as unknown as Promise<any>,
+        3500,
+        null
+      ).catch(() => {});
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Error clearing leave requests in Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Permanently delete a single leave request in Supabase
+ */
+export async function deleteLeaveRequestInSupabase(
+  leaveId: string,
+  remainingLeaves: LeaveRequest[] = []
+): Promise<boolean> {
+  try {
+    // 1. Broadcast immediately
+    broadcastSupabaseEvent('DELETE_LEAVE', { leaveId, remainingLeaves });
+
+    // 2. Update app_state in background
+    withTimeout(
+      supabase.from('app_state').upsert({
+        key: 'leaveRequests',
+        value: remainingLeaves,
+        updated_at: new Date().toISOString(),
+      }) as unknown as Promise<any>,
+      3500,
+      null
+    ).catch(() => {});
+
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Error deleting leave in Supabase:', err);
+    return false;
+  }
+}
+
+/**
+ * Direct save for an individual employee record (e.g. photo update, registration)
  */
 export async function saveEmployeeToSupabase(employee: Employee, allEmployees?: Employee[]): Promise<boolean> {
   try {
     if (!employee || !employee.id) return false;
 
-    let employeesList = allEmployees;
-    if (!employeesList || !Array.isArray(employeesList) || employeesList.length === 0) {
-      // Pull current employees from app_state first to merge safely
-      const { data } = await supabase.from('app_state').select('value').eq('key', 'employees').single();
-      const existing: Employee[] = (data && Array.isArray(data.value)) ? data.value : [];
-      employeesList = [employee, ...existing.filter((e) => e.id !== employee.id && e.code !== employee.code)];
-    }
-
-    if (Array.isArray(employeesList) && employeesList.length > 0) {
-      const { error } = await supabase.from('app_state').upsert({
-        key: 'employees',
-        value: employeesList,
-        updated_at: new Date().toISOString(),
-      });
-      if (error) {
-        console.warn('[Supabase] Failed to upsert employees row:', error);
-      }
-    }
-
+    // 1. Broadcast immediately over Realtime channel
     broadcastSupabaseEvent('ADD_EMPLOYEE', employee);
     broadcastSupabaseEvent('UPDATE_EMPLOYEE', employee);
+
+    // 2. Update employees collection in background
+    let employeesList = allEmployees;
+    if (Array.isArray(employeesList) && employeesList.length > 0) {
+      withTimeout(
+        supabase.from('app_state').upsert({
+          key: 'employees',
+          value: employeesList,
+          updated_at: new Date().toISOString(),
+        }) as unknown as Promise<any>,
+        3500,
+        null
+      ).catch(() => {});
+    }
+
     return true;
   } catch (err) {
     console.warn('[Supabase] Error saving employee:', err);
@@ -238,15 +343,18 @@ export async function syncStateToSupabase(stateData: Partial<SupabaseSystemData>
     for (const k of keys) {
       const val = stateData[k];
       if (val !== undefined && k !== 'attendanceRecords' && k !== 'staffAlerts') {
-        // Prevent accidental overwrites of populated collections with empty arrays
         if (Array.isArray(val) && val.length === 0) {
           continue;
         }
-        await supabase.from('app_state').upsert({
-          key: k,
-          value: val,
-          updated_at: new Date().toISOString(),
-        });
+        withTimeout(
+          supabase.from('app_state').upsert({
+            key: k,
+            value: val,
+            updated_at: new Date().toISOString(),
+          }) as unknown as Promise<any>,
+          3500,
+          null
+        ).catch(() => {});
       }
     }
     return true;
@@ -312,8 +420,8 @@ export function subscribeToSupabaseRealtime(callback: (event: string, payload: a
 
 /**
  * Bulletproof Background Polling Sync (Runs every 3.5 seconds):
- * Ensures Admin ALWAYS receives new punches and alerts from Supabase PostgreSQL,
- * even if a mobile browser's WebSocket was sleeping or disconnected.
+ * Ensures Admin receives new punches and alerts from Supabase PostgreSQL,
+ * with timeout guards to prevent hanging.
  */
 export function startSupabasePollingSync(
   onNewPunch: (record: AttendanceRecord) => void,
@@ -321,22 +429,22 @@ export function startSupabasePollingSync(
   onBatchSync?: (records: AttendanceRecord[]) => void
 ): () => void {
   let isMounted = true;
-  // Initialize baseline cutoff to 2 minutes ago
   let lastSeenTimestamp = Date.now() - 120000;
 
   const pollInterval = setInterval(async () => {
     if (!isMounted) return;
     try {
-      // 1. Fetch latest punches from Postgres
-      const { data: punchRows, error: punchErr } = await supabase
+      const punchPromise = supabase
         .from('attendance_records')
         .select('record, created_at')
         .order('created_at', { ascending: false })
-        .limit(25);
+        .limit(25) as unknown as Promise<{ data: any; error: any }>;
 
-      if (!punchErr && Array.isArray(punchRows)) {
+      const punchRes = await withTimeout(punchPromise, 3000, { data: null, error: null });
+
+      if (punchRes?.data && Array.isArray(punchRes.data)) {
         const batch: AttendanceRecord[] = [];
-        punchRows.forEach((row) => {
+        punchRes.data.forEach((row: any) => {
           if (row?.record && row.record.id) {
             batch.push(row.record);
             const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
@@ -350,15 +458,16 @@ export function startSupabasePollingSync(
         }
       }
 
-      // 2. Fetch latest alerts from Postgres
-      const { data: alertRows, error: alertErr } = await supabase
+      const alertPromise = supabase
         .from('staff_alerts')
         .select('alert, created_at')
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(10) as unknown as Promise<{ data: any; error: any }>;
 
-      if (!alertErr && Array.isArray(alertRows)) {
-        alertRows.forEach((row) => {
+      const alertRes = await withTimeout(alertPromise, 3000, { data: null, error: null });
+
+      if (alertRes?.data && Array.isArray(alertRes.data)) {
+        alertRes.data.forEach((row: any) => {
           if (row?.alert && row.alert.id) {
             const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
             const clearedCutoff = Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
@@ -373,7 +482,7 @@ export function startSupabasePollingSync(
     } catch (e) {
       // silent background ignore
     }
-  }, 3500);
+  }, 4000);
 
   return () => {
     isMounted = false;

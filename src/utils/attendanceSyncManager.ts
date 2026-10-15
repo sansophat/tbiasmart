@@ -1,5 +1,5 @@
 import { AttendanceRecord, Employee } from '../types';
-import { supabase, saveAttendancePunchToSupabase } from './supabaseSync';
+import { supabase, saveAttendancePunchToSupabase, withTimeout } from './supabaseSync';
 import { saveAttendanceRecordToCloud } from './firebaseSync';
 import { mergeDatasets } from './backupRestoreUtils';
 
@@ -112,7 +112,7 @@ export async function syncPendingPunches(): Promise<{ synced: number; failed: nu
 
   for (const record of queued) {
     try {
-      // 1. Supabase Postgres
+      // 1. Supabase Postgres & instant Realtime broadcast (delivers immediately to Admin!)
       const sbOk = await saveAttendancePunchToSupabase(record);
 
       // 2. Firebase Cloud Firestore
@@ -141,21 +141,23 @@ export async function syncPendingPunches(): Promise<{ synced: number; failed: nu
 
 /**
  * Fetch all canonical attendance records directly from Supabase PostgreSQL without artificial 25 limit,
- * guaranteeing Admin receives all staff punches even across device restarts and offline periods.
+ * with strict timeout protection so network latency never blocks the UI.
  */
 export async function fetchComprehensiveAttendance(limitCount: number = 500): Promise<AttendanceRecord[]> {
   const recordsMap = new Map<string, AttendanceRecord>();
 
   try {
-    // 1. Fetch from Supabase attendance_records table
-    const { data: punchRows, error } = await supabase
+    // 1. Fetch from Supabase attendance_records table with 3.5s timeout
+    const punchPromise = supabase
       .from('attendance_records')
       .select('record, created_at')
       .order('created_at', { ascending: false })
-      .limit(limitCount);
+      .limit(limitCount) as unknown as Promise<{ data: any; error: any }>;
+
+    const { data: punchRows, error } = await withTimeout(punchPromise, 3500, { data: null, error: null });
 
     if (!error && Array.isArray(punchRows)) {
-      punchRows.forEach((row) => {
+      punchRows.forEach((row: any) => {
         if (row?.record && row.record.id) {
           recordsMap.set(row.record.id, row.record);
         }
@@ -188,7 +190,14 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
  */
 export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
   try {
-    const { data, error } = await supabase.from('app_state').select('value').eq('key', 'employees').single();
+    const empPromise = supabase
+      .from('app_state')
+      .select('value')
+      .eq('key', 'employees')
+      .single() as unknown as Promise<{ data: any; error: any }>;
+
+    const { data, error } = await withTimeout(empPromise, 3500, { data: null, error: null });
+
     if (!error && data?.value && Array.isArray(data.value) && data.value.length > 0) {
       return data.value;
     }
@@ -223,10 +232,10 @@ export function startAttendanceSyncService(
   const runSync = async () => {
     if (!isRunning) return;
 
-    // 1. Flush any pending mobile punches
+    // 1. Flush any pending mobile punches (broadcasts directly to Admin!)
     await syncPendingPunches();
 
-    // 2. Fetch fresh records from Supabase
+    // 2. Fetch fresh records from Supabase / server
     try {
       const records = await fetchComprehensiveAttendance(150);
       if (records.length > 0 && isRunning) {
