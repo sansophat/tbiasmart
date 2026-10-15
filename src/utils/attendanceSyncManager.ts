@@ -1,5 +1,6 @@
 import { AttendanceRecord, Employee } from '../types';
 import { supabase, saveAttendancePunchToSupabase, withTimeout, requestEmployeesFromPeers } from './supabaseSync';
+import { saveAttendancePunchToTurso, fetchTursoEmployees, turso } from './tursoSync';
 import { saveAttendanceRecordToCloud } from './firebaseSync';
 import { mergeDatasets } from './backupRestoreUtils';
 
@@ -112,20 +113,23 @@ export async function syncPendingPunches(): Promise<{ synced: number; failed: nu
 
   for (const record of queued) {
     try {
-      // 1. Supabase Postgres & instant Realtime broadcast (delivers immediately to Admin!)
-      const sbOk = await saveAttendancePunchToSupabase(record);
+      // 1. Turso SQLite Cloud (Always-on 24/7, unlimited quota)
+      const tursoOk = await saveAttendancePunchToTurso(record).catch(() => false);
 
-      // 2. Firebase Cloud Firestore
+      // 2. Supabase Postgres & instant Realtime broadcast (delivers immediately to Admin!)
+      const sbOk = await saveAttendancePunchToSupabase(record).catch(() => false);
+
+      // 3. Firebase Cloud Firestore
       saveAttendanceRecordToCloud(record).catch(() => {});
 
-      // 3. Local Express server if running
+      // 4. Local Express server if running
       fetch('/api/attendance/punch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ record }),
       }).catch(() => {});
 
-      if (sbOk) {
+      if (tursoOk || sbOk) {
         markPunchAsSynced(record.id);
         synced++;
       } else {
@@ -140,14 +144,33 @@ export async function syncPendingPunches(): Promise<{ synced: number; failed: nu
 }
 
 /**
- * Fetch all canonical attendance records directly from Supabase PostgreSQL without artificial 25 limit,
- * with strict timeout protection so network latency never blocks the UI.
+ * Fetch all canonical attendance records directly from Turso SQLite Cloud and Supabase
  */
 export async function fetchComprehensiveAttendance(limitCount: number = 500): Promise<AttendanceRecord[]> {
   const recordsMap = new Map<string, AttendanceRecord>();
 
+  // 1. Fetch from Turso SQLite Cloud (Fastest, always active)
   try {
-    // 1. Fetch from Supabase attendance_records table with 3.5s timeout
+    const res = await turso.execute({
+      sql: 'SELECT record FROM attendance_records ORDER BY created_at DESC LIMIT ?',
+      args: [limitCount],
+    });
+    if (res?.rows && Array.isArray(res.rows)) {
+      res.rows.forEach((row: any) => {
+        try {
+          const rec = JSON.parse(String(row.record));
+          if (rec?.id && !recordsMap.has(rec.id)) {
+            recordsMap.set(rec.id, rec);
+          }
+        } catch (_) {}
+      });
+    }
+  } catch (err) {
+    console.warn('[SyncManager] Turso attendance fetch warning:', err);
+  }
+
+  try {
+    // 2. Fetch from Supabase attendance_records table with 3.5s timeout
     const punchPromise = supabase
       .from('attendance_records')
       .select('record, created_at')
@@ -158,7 +181,7 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
 
     if (!error && Array.isArray(punchRows)) {
       punchRows.forEach((row: any) => {
-        if (row?.record && row.record.id) {
+        if (row?.record && row.record.id && !recordsMap.has(row.record.id)) {
           recordsMap.set(row.record.id, row.record);
         }
       });
@@ -168,7 +191,7 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
   }
 
   try {
-    // 2. Fetch from local backend server if active
+    // 3. Fetch from local backend server if active
     const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (res?.success && Array.isArray(res?.state?.attendanceRecords)) {
       res.state.attendanceRecords.forEach((r: AttendanceRecord) => {
@@ -185,11 +208,21 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
 }
 
 /**
- * Fetch all canonical employees directly from Supabase PostgreSQL and Server,
+ * Fetch all canonical employees directly from Turso SQLite Cloud, Supabase, and Server,
  * ensuring newly registered staff are immediately available on all mobile devices.
  */
 export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
-  // 1. First attempt: Supabase PostgreSQL app_state table
+  // 1. First attempt: Turso SQLite Cloud (Always-on 24/7, ultra-fast, 9GB storage)
+  try {
+    const tursoEmps = await fetchTursoEmployees();
+    if (Array.isArray(tursoEmps) && tursoEmps.length > 0) {
+      return tursoEmps;
+    }
+  } catch (err) {
+    console.warn('[SyncManager] Turso employees fetch warning:', err);
+  }
+
+  // 2. Second attempt: Supabase PostgreSQL app_state table
   try {
     const empPromise = supabase
       .from('app_state')
@@ -206,7 +239,7 @@ export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
     console.warn('[SyncManager] Supabase employees fetch warning:', err);
   }
 
-  // 2. Second attempt: On-Demand Peer-to-Peer Sync over Supabase Realtime WebSocket
+  // 3. Third attempt: On-Demand Peer-to-Peer Sync over Supabase Realtime WebSocket
   try {
     const peerEmps = await requestEmployeesFromPeers(2000);
     if (Array.isArray(peerEmps) && peerEmps.length > 0) {
@@ -217,7 +250,7 @@ export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
     console.warn('[SyncManager] Peer employees request warning:', err);
   }
 
-  // 3. Third attempt: Local server endpoint if available
+  // 4. Fourth attempt: Local server endpoint if available
   try {
     const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (res?.success && Array.isArray(res?.state?.employees) && res.state.employees.length > 0) {

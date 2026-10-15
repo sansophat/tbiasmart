@@ -89,6 +89,13 @@ import {
   startSupabasePollingSync,
 } from './utils/supabaseSync';
 import {
+  fetchInitialTursoData,
+  saveEmployeeToTurso,
+  saveAttendancePunchToTurso,
+  saveLeaveRequestToTurso,
+  syncStateToTurso,
+} from './utils/tursoSync';
+import {
   queuePunchForSync,
   markPunchAsSynced,
   syncPendingPunches,
@@ -648,11 +655,12 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Cloud Firestore, Local Server state, and Supabase PostgreSQL concurrently
-        const [cloudStateRes, serverRes, supabaseRes] = await Promise.allSettled([
+        // Fetch Turso SQLite Cloud, Cloud Firestore, Local Server state, and Supabase PostgreSQL concurrently
+        const [cloudStateRes, serverRes, supabaseRes, tursoRes] = await Promise.allSettled([
           getCloudDatabaseState(),
           fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null),
           fetchInitialSupabaseData(),
+          fetchInitialTursoData(),
         ]);
 
         const cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
@@ -662,65 +670,85 @@ export default function App() {
         const suState = (supabaseRes.status === 'fulfilled' && supabaseRes.value)
           ? supabaseRes.value
           : null;
+        const tState = (tursoRes.status === 'fulfilled' && tursoRes.value)
+          ? tursoRes.value
+          : null;
 
         if (!isMounted) return;
 
-        // Prioritize populated datasets to ensure no empty overwrites
-        const bestBranches = (suState && Array.isArray(suState.branches) && suState.branches.length > 0)
-          ? suState.branches
-          : (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
-            ? cState.branches
-            : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
-              ? sState.branches
-              : null;
+        // Prioritize populated datasets to ensure no empty overwrites (Turso first)
+        const bestBranches = (tState && Array.isArray(tState.branches) && tState.branches.length > 0)
+          ? tState.branches
+          : (suState && Array.isArray(suState.branches) && suState.branches.length > 0)
+            ? suState.branches
+            : (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
+              ? cState.branches
+              : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
+                ? sState.branches
+                : null;
 
-        const bestEmployees = (suState && Array.isArray(suState.employees) && suState.employees.length > 0)
-          ? suState.employees
-          : (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
-            ? cState.employees
-            : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
-              ? sState.employees
-              : null;
+        const bestEmployees = (tState && Array.isArray(tState.employees) && tState.employees.length > 0)
+          ? tState.employees
+          : (suState && Array.isArray(suState.employees) && suState.employees.length > 0)
+            ? suState.employees
+            : (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
+              ? cState.employees
+              : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
+                ? sState.employees
+                : null;
 
         const bestRecords = mergeDatasets(
-          (suState?.attendanceRecords || []),
+          (tState?.attendanceRecords || []),
           mergeDatasets(
-            (cState?.attendanceRecords || []),
-            (sState?.attendanceRecords || [])
+            (suState?.attendanceRecords || []),
+            mergeDatasets(
+              (cState?.attendanceRecords || []),
+              (sState?.attendanceRecords || [])
+            )
           )
         );
 
-        const bestLeaves = (suState && Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0)
-          ? suState.leaveRequests
-          : (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
-            ? cState.leaveRequests
-            : (sState?.leaveRequests || []);
+        const bestLeaves = (tState && Array.isArray(tState.leaveRequests) && tState.leaveRequests.length > 0)
+          ? tState.leaveRequests
+          : (suState && Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0)
+            ? suState.leaveRequests
+            : (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
+              ? cState.leaveRequests
+              : (sState?.leaveRequests || []);
 
-        const bestTransfers = (suState && Array.isArray(suState.transferRecords) && suState.transferRecords.length > 0)
-          ? suState.transferRecords
-          : (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
-            ? cState.transferRecords
-            : (sState?.transferRecords || []);
+        const bestTransfers = (tState && Array.isArray(tState.transferRecords) && tState.transferRecords.length > 0)
+          ? tState.transferRecords
+          : (suState && Array.isArray(suState.transferRecords) && suState.transferRecords.length > 0)
+            ? suState.transferRecords
+            : (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
+              ? cState.transferRecords
+              : (sState?.transferRecords || []);
 
-        const bestBranchTypes = (suState && Array.isArray(suState.branchTypes) && suState.branchTypes.length > 0)
-          ? suState.branchTypes
-          : (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
-            ? cState.branchTypes
-            : (sState?.branchTypes || []);
+        const bestBranchTypes = (tState && Array.isArray(tState.branchTypes) && tState.branchTypes.length > 0)
+          ? tState.branchTypes
+          : (suState && Array.isArray(suState.branchTypes) && suState.branchTypes.length > 0)
+            ? suState.branchTypes
+            : (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
+              ? cState.branchTypes
+              : (sState?.branchTypes || []);
 
-        const bestBranding = suState?.branding || cState?.branding || sState?.branding;
-        const bestRolePerms = (suState && Array.isArray(suState.rolePermissions) && suState.rolePermissions.length > 0)
-          ? suState.rolePermissions
-          : (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
-            ? cState.rolePermissions
-            : (sState?.rolePermissions || []);
-        const bestSettings = suState?.systemSettings || cState?.systemSettings || sState?.systemSettings;
-        const bestAdmin = suState?.adminProfile || cState?.adminProfile || sState?.adminProfile;
-        const bestAudit = (suState && Array.isArray(suState.auditLogs) && suState.auditLogs.length > 0)
-          ? suState.auditLogs
-          : (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
-            ? cState.auditLogs
-            : (sState?.auditLogs || []);
+        const bestBranding = tState?.branding || suState?.branding || cState?.branding || sState?.branding;
+        const bestRolePerms = (tState && Array.isArray(tState.rolePermissions) && tState.rolePermissions.length > 0)
+          ? tState.rolePermissions
+          : (suState && Array.isArray(suState.rolePermissions) && suState.rolePermissions.length > 0)
+            ? suState.rolePermissions
+            : (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
+              ? cState.rolePermissions
+              : (sState?.rolePermissions || []);
+        const bestSettings = tState?.systemSettings || suState?.systemSettings || cState?.systemSettings || sState?.systemSettings;
+        const bestAdmin = tState?.adminProfile || suState?.adminProfile || cState?.adminProfile || sState?.adminProfile;
+        const bestAudit = (tState && Array.isArray(tState.auditLogs) && tState.auditLogs.length > 0)
+          ? tState.auditLogs
+          : (suState && Array.isArray(suState.auditLogs) && suState.auditLogs.length > 0)
+            ? suState.auditLogs
+            : (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
+              ? cState.auditLogs
+              : (sState?.auditLogs || []);
         const bestShifts = (suState && Array.isArray(suState.shifts) && suState.shifts.length > 0)
           ? suState.shifts
           : (cState && Array.isArray(cState.shifts) && cState.shifts.length > 0)
@@ -2293,6 +2321,13 @@ export default function App() {
       'punch'
     );
 
+    // 0. Instantly save individual punch record to Turso SQLite Cloud (Always-on)
+    saveAttendancePunchToTurso(newRecord).then((ok) => {
+      if (ok) {
+        markPunchAsSynced(newRecord.id);
+      }
+    });
+
     // 1. Instantly save individual punch record directly to Supabase & broadcast in real-time
     saveAttendancePunchToSupabase(newRecord).then((res) => {
       if (res) {
@@ -2425,7 +2460,11 @@ export default function App() {
     setEmployees(nextEmployees);
     safeSetJson('attend_employees', JSON.stringify(nextEmployees));
 
-    // 1. Supabase Persistence & Instant Realtime Broadcast
+    // 1. Turso SQLite Cloud (Always-on 24/7 persistent storage)
+    saveEmployeeToTurso(preparedEmp, nextEmployees);
+    syncStateToTurso({ employees: nextEmployees });
+
+    // 2. Supabase Persistence & Instant Realtime Broadcast
     saveEmployeeToSupabase(preparedEmp, nextEmployees);
     syncStateToSupabase({ employees: nextEmployees });
     broadcastSupabaseEvent('ADD_EMPLOYEE', preparedEmp);
@@ -2485,6 +2524,10 @@ export default function App() {
       }
       return curr;
     });
+
+    // 1. Turso SQLite Cloud
+    saveEmployeeToTurso(updatedEmp, nextEmployees);
+    syncStateToTurso({ employees: nextEmployees });
 
     // 2. Supabase Persistence & Instant Broadcast
     saveEmployeeToSupabase(updatedEmp, nextEmployees);
@@ -2870,6 +2913,10 @@ export default function App() {
       auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
 
+    // Sync to Turso SQLite Cloud
+    saveLeaveRequestToTurso(cleanRequest);
+    syncStateToTurso({ leaveRequests: nextLeaves });
+
     syncStateToSupabase({ leaveRequests: nextLeaves });
     broadcastSupabaseEvent('SUBMIT_LEAVE', cleanRequest);
 
@@ -2997,6 +3044,9 @@ export default function App() {
       employees: sanitizeForFirestore(nextEmployees),
       auditLogs: sanitizeForFirestore([logEntry, ...auditLogs]),
     });
+
+    // Sync to Turso SQLite Cloud
+    syncStateToTurso({ leaveRequests: nextLeaves, employees: nextEmployees });
 
     syncStateToSupabase({ leaveRequests: nextLeaves, employees: nextEmployees });
     broadcastSupabaseEvent('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });

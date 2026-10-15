@@ -44,6 +44,7 @@ import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, 
 import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
 import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
 import { broadcastSupabaseEvent, syncStateToSupabase } from '../utils/supabaseSync';
+import { syncStateToTurso } from '../utils/tursoSync';
 
 export const DEPARTMENT_OPTIONS = [
   { id: 'dept_barista_cafe', nameKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)', nameEn: 'Barista & Coffee Service' },
@@ -228,6 +229,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     try {
       setSyncStatus('syncing');
       await broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', employees);
+      syncStateToTurso({ employees });
       syncStateToSupabase({ employees });
       setSyncStatus('success');
       setTimeout(() => setSyncStatus('idle'), 3000);
