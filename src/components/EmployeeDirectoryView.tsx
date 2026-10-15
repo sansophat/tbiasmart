@@ -43,6 +43,7 @@ import { ProcessingProgressModal } from './ProcessingProgressModal';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
 import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
 import { unbindEmployeeDevice } from '../utils/deviceSecurityUtils';
+import { broadcastSupabaseEvent, syncStateToSupabase } from '../utils/supabaseSync';
 
 export const DEPARTMENT_OPTIONS = [
   { id: 'dept_barista_cafe', nameKh: 'សេវាកម្មភេសជ្ជៈ & បារីស្តាកាហ្វេ (Barista & Cafe)', nameEn: 'Barista & Coffee Service' },
@@ -219,6 +220,22 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     totalSteps?: number;
     isComplete?: boolean;
   }>({ isOpen: false });
+
+  // Sync staff roster to mobile devices state
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+
+  const handleSyncAllStaffToDevices = async () => {
+    try {
+      setSyncStatus('syncing');
+      await broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', employees);
+      syncStateToSupabase({ employees });
+      setSyncStatus('success');
+      setTimeout(() => setSyncStatus('idle'), 3000);
+    } catch {
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus('idle'), 3000);
+    }
+  };
 
   // Quick Schedule Form State
   const [quickShiftId, setQuickShiftId] = useState<string>('shift_cafe_morning');
@@ -727,6 +744,22 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
               <span className="hidden sm:inline">{lang === 'km' ? 'តារាង' : 'Table'}</span>
             </button>
           </div>
+
+          {/* Sync All Staff to Devices Button */}
+          <button
+            type="button"
+            onClick={handleSyncAllStaffToDevices}
+            disabled={syncStatus === 'syncing'}
+            className="flex items-center space-x-1.5 px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold shadow-xs transition cursor-pointer w-full sm:w-auto justify-center"
+            title={lang === 'km' ? 'បញ្ជូនបញ្ជីបុគ្គលិកទាំងអស់ទៅកាន់គ្រប់ទូរស័ព្ទដៃភ្លាមៗ' : 'Broadcast all employees to all mobile devices now'}
+          >
+            <RefreshCw className={`w-4 h-4 text-emerald-600 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+            <span>
+              {syncStatus === 'success'
+                ? (lang === 'km' ? '✓ បានបញ្ជូនទៅគ្រប់ទូរស័ព្ទ' : '✓ Synced to devices')
+                : (lang === 'km' ? 'សមកាលកម្មទៅទូរស័ព្ទ' : 'Sync to Devices')}
+            </span>
+          </button>
 
           <button
             onClick={() => setShowAddModal(true)}

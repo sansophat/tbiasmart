@@ -1,5 +1,5 @@
 import { AttendanceRecord, Employee } from '../types';
-import { supabase, saveAttendancePunchToSupabase, withTimeout } from './supabaseSync';
+import { supabase, saveAttendancePunchToSupabase, withTimeout, requestEmployeesFromPeers } from './supabaseSync';
 import { saveAttendanceRecordToCloud } from './firebaseSync';
 import { mergeDatasets } from './backupRestoreUtils';
 
@@ -189,6 +189,7 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
  * ensuring newly registered staff are immediately available on all mobile devices.
  */
 export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
+  // 1. First attempt: Supabase PostgreSQL app_state table
   try {
     const empPromise = supabase
       .from('app_state')
@@ -196,7 +197,7 @@ export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
       .eq('key', 'employees')
       .single() as unknown as Promise<{ data: any; error: any }>;
 
-    const { data, error } = await withTimeout(empPromise, 3500, { data: null, error: null });
+    const { data, error } = await withTimeout(empPromise, 2500, { data: null, error: null });
 
     if (!error && data?.value && Array.isArray(data.value) && data.value.length > 0) {
       return data.value;
@@ -205,6 +206,18 @@ export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
     console.warn('[SyncManager] Supabase employees fetch warning:', err);
   }
 
+  // 2. Second attempt: On-Demand Peer-to-Peer Sync over Supabase Realtime WebSocket
+  try {
+    const peerEmps = await requestEmployeesFromPeers(2000);
+    if (Array.isArray(peerEmps) && peerEmps.length > 0) {
+      console.info('[SyncManager] Retrieved', peerEmps.length, 'employees from online peer');
+      return peerEmps;
+    }
+  } catch (err) {
+    console.warn('[SyncManager] Peer employees request warning:', err);
+  }
+
+  // 3. Third attempt: Local server endpoint if available
   try {
     const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (res?.success && Array.isArray(res?.state?.employees) && res.state.employees.length > 0) {

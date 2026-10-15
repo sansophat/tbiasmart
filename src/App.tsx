@@ -1564,6 +1564,12 @@ export default function App() {
           safeSetJson('attend_employees', JSON.stringify(next));
           return next;
         });
+      } else if (event === 'REQUEST_EMPLOYEES') {
+        const localEmps = safeGetJson<Employee[]>('attend_employees', employees);
+        if (Array.isArray(localEmps) && localEmps.length > 0) {
+          console.info('[Supabase Realtime] Inbound REQUEST_EMPLOYEES: broadcasting current roster of', localEmps.length);
+          broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', localEmps);
+        }
       } else if (event === 'UPDATE_BRANCH' && payload) {
         setBranches((prev) => {
           const tombstones = new Set(safeGetJson<string[]>('attend_deleted_branch_ids', []));
@@ -2121,6 +2127,20 @@ export default function App() {
     safeSetJson('attend_employees', JSON.stringify(employees));
   }, [employees]);
 
+  // When Admin is active, proactively broadcast employee roster so all peer devices receive latest staff
+  useEffect(() => {
+    if (currentUser?.role === 'admin' && employees.length > 0) {
+      broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', employees);
+      const timer = setInterval(() => {
+        const local = safeGetJson<Employee[]>('attend_employees', employees);
+        if (Array.isArray(local) && local.length > 0) {
+          broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', local);
+        }
+      }, 30000);
+      return () => clearInterval(timer);
+    }
+  }, [currentUser?.role, employees]);
+
   useEffect(() => {
     safeSetJson('attend_records', JSON.stringify(attendanceRecords));
   }, [attendanceRecords]);
@@ -2409,6 +2429,7 @@ export default function App() {
     saveEmployeeToSupabase(preparedEmp, nextEmployees);
     syncStateToSupabase({ employees: nextEmployees });
     broadcastSupabaseEvent('ADD_EMPLOYEE', preparedEmp);
+    broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', nextEmployees);
 
     // 2. Firebase Cloud Firestore
     saveEmployeeToCloud(preparedEmp);
@@ -2469,6 +2490,7 @@ export default function App() {
     saveEmployeeToSupabase(updatedEmp, nextEmployees);
     syncStateToSupabase({ employees: nextEmployees });
     broadcastSupabaseEvent('UPDATE_EMPLOYEE', updatedEmp);
+    broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', nextEmployees);
 
     // 3. Direct single-item Cloud write: immediately persists avatar & info to Firestore!
     saveEmployeeToCloud(updatedEmp);

@@ -312,6 +312,9 @@ export async function saveEmployeeToSupabase(employee: Employee, allEmployees?: 
     // 1. Broadcast immediately over Realtime channel
     broadcastSupabaseEvent('ADD_EMPLOYEE', employee);
     broadcastSupabaseEvent('UPDATE_EMPLOYEE', employee);
+    if (Array.isArray(allEmployees) && allEmployees.length > 0) {
+      broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', allEmployees);
+    }
 
     // 2. Update employees collection in background
     let employeesList = allEmployees;
@@ -416,6 +419,44 @@ export function subscribeToSupabaseRealtime(callback: (event: string, payload: a
   return () => {
     liveListeners.delete(callback);
   };
+}
+
+/**
+ * Real-time Peer Request: Asks all connected devices (especially Admin) for their latest employee roster.
+ * Resolves as soon as any peer responds with a valid array, or falls back to empty array if timeout.
+ */
+export async function requestEmployeesFromPeers(timeoutMs: number = 2200): Promise<Employee[]> {
+  return new Promise((resolve) => {
+    let resolved = false;
+
+    const unsub = subscribeToSupabaseRealtime((event, payload) => {
+      if (
+        (event === 'UPDATE_EMPLOYEES_BATCH' || event === 'SYNC_EMPLOYEES_RESPONSE') &&
+        Array.isArray(payload) &&
+        payload.length > 0
+      ) {
+        if (!resolved) {
+          resolved = true;
+          unsub();
+          resolve(payload);
+        }
+      }
+    });
+
+    // Broadcast the request to all online peers (Admin, supervisors, other active tablets/phones)
+    broadcastSupabaseEvent('REQUEST_EMPLOYEES', {
+      senderId: 'device_' + Math.random().toString(36).substring(2, 9),
+      timestamp: Date.now(),
+    });
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        unsub();
+        resolve([]);
+      }
+    }, timeoutMs);
+  });
 }
 
 /**
