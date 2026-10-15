@@ -201,14 +201,26 @@ export async function saveEmployeeToSupabase(employee: Employee, allEmployees?: 
   try {
     if (!employee || !employee.id) return false;
 
-    if (allEmployees && Array.isArray(allEmployees)) {
-      await supabase.from('app_state').upsert({
-        key: 'employees',
-        value: allEmployees,
-        updated_at: new Date().toISOString(),
-      });
+    let employeesList = allEmployees;
+    if (!employeesList || !Array.isArray(employeesList) || employeesList.length === 0) {
+      // Pull current employees from app_state first to merge safely
+      const { data } = await supabase.from('app_state').select('value').eq('key', 'employees').single();
+      const existing: Employee[] = (data && Array.isArray(data.value)) ? data.value : [];
+      employeesList = [employee, ...existing.filter((e) => e.id !== employee.id && e.code !== employee.code)];
     }
 
+    if (Array.isArray(employeesList) && employeesList.length > 0) {
+      const { error } = await supabase.from('app_state').upsert({
+        key: 'employees',
+        value: employeesList,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) {
+        console.warn('[Supabase] Failed to upsert employees row:', error);
+      }
+    }
+
+    broadcastSupabaseEvent('ADD_EMPLOYEE', employee);
     broadcastSupabaseEvent('UPDATE_EMPLOYEE', employee);
     return true;
   } catch (err) {
@@ -226,6 +238,10 @@ export async function syncStateToSupabase(stateData: Partial<SupabaseSystemData>
     for (const k of keys) {
       const val = stateData[k];
       if (val !== undefined && k !== 'attendanceRecords' && k !== 'staffAlerts') {
+        // Prevent accidental overwrites of populated collections with empty arrays
+        if (Array.isArray(val) && val.length === 0) {
+          continue;
+        }
         await supabase.from('app_state').upsert({
           key: k,
           value: val,

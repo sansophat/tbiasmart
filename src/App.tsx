@@ -1664,19 +1664,38 @@ export default function App() {
       }
     );
 
-    // 6. Start resilient attendance sync service (flushes mobile outbox & reconciles full attendance records)
-    const unsubAttendanceSync = startAttendanceSyncService((syncedRecords) => {
-      if (Array.isArray(syncedRecords) && syncedRecords.length > 0) {
-        setAttendanceRecords((prev) => {
-          const merged = mergeDatasets(prev, syncedRecords);
-          if (merged.length !== prev.length || (prev.length > 0 && merged[0]?.id !== prev[0]?.id)) {
-            try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
-            return merged;
-          }
-          return prev;
-        });
+    // 6. Start resilient attendance & employee sync service (flushes mobile outbox & reconciles records and employees)
+    const unsubAttendanceSync = startAttendanceSyncService(
+      (syncedRecords) => {
+        if (Array.isArray(syncedRecords) && syncedRecords.length > 0) {
+          setAttendanceRecords((prev) => {
+            const merged = mergeDatasets(prev, syncedRecords);
+            if (merged.length !== prev.length || (prev.length > 0 && merged[0]?.id !== prev[0]?.id)) {
+              try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
+              return merged;
+            }
+            return prev;
+          });
+        }
+      },
+      (syncedEmployees) => {
+        if (Array.isArray(syncedEmployees) && syncedEmployees.length > 0) {
+          setEmployees((prev) => {
+            const currentTombstones = new Set([
+              ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+              ...KNOWN_DELETED_EMPLOYEE_IDS,
+            ]);
+            const merged = mergeDatasets(prev, syncedEmployees);
+            const cleaned = deduplicateAndFilterEmployees(merged, currentTombstones);
+            if (cleaned.length !== prev.length || cleaned.some((e, i) => prev[i]?.id !== e.id)) {
+              try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
+              return cleaned;
+            }
+            return prev;
+          });
+        }
       }
-    });
+    );
 
     return () => {
       unsubCloud();
@@ -2381,21 +2400,23 @@ export default function App() {
       sickLeaveQuota: newEmp.sickLeaveQuota !== undefined ? newEmp.sickLeaveQuota : 7,
       sickLeaveUsed: newEmp.sickLeaveUsed !== undefined ? newEmp.sickLeaveUsed : 0,
     };
-    let nextEmployees: Employee[] = [];
-    setEmployees((prev) => {
-      nextEmployees = [preparedEmp, ...prev];
-      safeSetJson('attend_employees', JSON.stringify(nextEmployees));
-      return nextEmployees;
-    });
+
+    // Calculate synchronously so nextEmployees is guaranteed non-empty and has the new employee
+    const nextEmployees = [preparedEmp, ...employees.filter((e) => e.id !== preparedEmp.id)];
+    setEmployees(nextEmployees);
+    safeSetJson('attend_employees', JSON.stringify(nextEmployees));
 
     // 1. Supabase Persistence & Instant Realtime Broadcast
     saveEmployeeToSupabase(preparedEmp, nextEmployees);
     syncStateToSupabase({ employees: nextEmployees });
     broadcastSupabaseEvent('ADD_EMPLOYEE', preparedEmp);
 
-    // 2. Realtime socket & fallback
-    realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
+    // 2. Firebase Cloud Firestore
+    saveEmployeeToCloud(preparedEmp);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
+
+    // 3. Realtime socket & fallback
+    realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
     fetch('/api/employees/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2468,6 +2489,20 @@ export default function App() {
       body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
     }).catch(() => {});
   };
+
+  const handleBatchUpdateEmployees = useCallback((newEmployeesList: Employee[]) => {
+    if (!Array.isArray(newEmployeesList) || newEmployeesList.length === 0) return;
+    setEmployees((prev) => {
+      const tombstones = new Set([
+        ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
+        ...KNOWN_DELETED_EMPLOYEE_IDS,
+      ]);
+      const merged = mergeDatasets(prev, newEmployeesList);
+      const cleaned = deduplicateAndFilterEmployees(merged, tombstones);
+      try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
+      return cleaned;
+    });
+  }, []);
 
   const handleDeleteEmployee = (id: string) => {
     const nextDeleted = new Set(deletedEmployeeIds);
@@ -3818,6 +3853,7 @@ export default function App() {
         lang={lang}
         branding={branding}
         onUpdateBranding={handleUpdateBranding}
+        onUpdateEmployees={handleBatchUpdateEmployees}
       />
 
       {/* PWA & Home Screen Device Installation Modal */}

@@ -237,7 +237,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
   const [newEmpRoleKh, setNewEmpRoleKh] = useState('បារីស្តា / អ្នកឆុងកាហ្វេ');
   const [newEmpPhone, setNewEmpPhone] = useState('012 345 678');
   const [newEmpAddress, setNewEmpAddress] = useState('');
-  const [newEmpPin, setNewEmpPin] = useState(String(Math.floor(1000 + Math.random() * 9000)));
+  const [newEmpPin, setNewEmpPin] = useState('1234');
   const [newEmpAvatar, setNewEmpAvatar] = useState(DEFAULT_AVATAR);
   const [newEmpShiftId, setNewEmpShiftId] = useState<string>('shift_cafe_morning');
   const [newEmpShiftStartTime, setNewEmpShiftStartTime] = useState<string>('06:30');
@@ -545,6 +545,7 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
         setNewEmpAvatar(DEFAULT_AVATAR);
         setNewEmpPhone('012 345 678');
         setNewEmpAddress('');
+        setNewEmpPin('1234');
         setNewEmpWeeklyDayOff(1);
 
         setTimeout(() => setProcessingState({ isOpen: false }), 600);

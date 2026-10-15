@@ -183,15 +183,42 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
 }
 
 /**
+ * Fetch all canonical employees directly from Supabase PostgreSQL and Server,
+ * ensuring newly registered staff are immediately available on all mobile devices.
+ */
+export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
+  try {
+    const { data, error } = await supabase.from('app_state').select('value').eq('key', 'employees').single();
+    if (!error && data?.value && Array.isArray(data.value) && data.value.length > 0) {
+      return data.value;
+    }
+  } catch (err) {
+    console.warn('[SyncManager] Supabase employees fetch warning:', err);
+  }
+
+  try {
+    const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (res?.success && Array.isArray(res?.state?.employees) && res.state.employees.length > 0) {
+      return res.state.employees;
+    }
+  } catch (_) {}
+
+  return [];
+}
+
+/**
  * Start persistent background sync worker:
  * - Runs every 5 seconds to flush unsynced records
  * - Polls for any new records and delivers them to the caller
+ * - Polls for newly registered employees and delivers them across devices
  * - Responds to online/focus events
  */
 export function startAttendanceSyncService(
-  onRecordsReceived: (newRecords: AttendanceRecord[]) => void
+  onRecordsReceived: (newRecords: AttendanceRecord[]) => void,
+  onEmployeesReceived?: (newEmployees: Employee[]) => void
 ): () => void {
   let isRunning = true;
+  let cycleCount = 0;
 
   const runSync = async () => {
     if (!isRunning) return;
@@ -207,6 +234,19 @@ export function startAttendanceSyncService(
       }
     } catch {
       // background silent
+    }
+
+    // 3. Periodically sync employees every ~10s so new staff instantly propagate to all devices
+    cycleCount++;
+    if (onEmployeesReceived && cycleCount % 2 === 0) {
+      try {
+        const freshEmps = await fetchComprehensiveEmployees();
+        if (freshEmps.length > 0 && isRunning) {
+          onEmployeesReceived(freshEmps);
+        }
+      } catch {
+        // silent
+      }
     }
   };
 

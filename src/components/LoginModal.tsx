@@ -21,11 +21,13 @@ import {
   LayoutGrid,
   Sparkles,
   Layers,
-  Globe
+  Globe,
+  Loader2
 } from 'lucide-react';
 import { AuthUser, Employee, Language, CompanyBranding, UserRole } from '../types';
 import { DEFAULT_AUTH_USER } from '../data/authUsers';
 import { INITIAL_BRANDING } from '../data/initialData';
+import { fetchComprehensiveEmployees } from '../utils/attendanceSyncManager';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -38,6 +40,7 @@ interface LoginModalProps {
   lang: Language;
   branding?: CompanyBranding;
   onUpdateBranding?: (branding: CompanyBranding) => void;
+  onUpdateEmployees?: (updatedEmployees: Employee[]) => void;
 }
 
 export type LoginStyleOption = 'option_a' | 'option_b' | 'option_c';
@@ -79,6 +82,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   lang,
   branding = INITIAL_BRANDING,
   onUpdateBranding,
+  onUpdateEmployees,
 }) => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -86,6 +90,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  // Proactively pull latest employees when modal opens on a new device
+  useEffect(() => {
+    if (isOpen && !currentUser) {
+      fetchComprehensiveEmployees()
+        .then((fresh) => {
+          if (Array.isArray(fresh) && fresh.length > 0 && onUpdateEmployees) {
+            onUpdateEmployees(fresh);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isOpen, currentUser, onUpdateEmployees]);
   
   // Style Option state: default to option_b (Split-Screen Showcase) or branding setting or localStorage
   const [currentStyle, setCurrentStyle] = useState<LoginStyleOption>(() => {
@@ -153,7 +171,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const isMandatory = !currentUser;
 
-  const handleManualLogin = (e: React.FormEvent) => {
+  const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -236,9 +254,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
     }
 
-
-    // 3. Check general employees from directory
-    const matchingEmployees = employees.filter((emp) => {
+    // Matcher helper
+    const matchEmp = (emp: Employee) => {
       if (!emp) return false;
       // Code match (exact or normalized without hyphens/spaces, e.g. "kr2-001" vs "kr2001", "EMP-001" vs "emp001")
       if (emp.code && (cleanStr(emp.code) === query || cleanCode(emp.code) === queryCode)) return true;
@@ -277,14 +294,37 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
 
       return false;
-    });
+    };
+
+    // 3. Check general employees from directory
+    let matchingEmployees = employees.filter(matchEmp);
+
+    // Live Cloud Fallback: If not found in local cache (e.g. registered on Admin PC just moments ago),
+    // immediately query cloud database to pull the fresh record onto this mobile device!
+    if (matchingEmployees.length === 0) {
+      setIsVerifying(true);
+      try {
+        const fresh = await fetchComprehensiveEmployees();
+        if (Array.isArray(fresh) && fresh.length > 0) {
+          if (onUpdateEmployees) {
+            onUpdateEmployees(fresh);
+          }
+          matchingEmployees = fresh.filter(matchEmp);
+        }
+      } catch (err) {
+        console.warn('Live employee fetch warning:', err);
+      } finally {
+        setIsVerifying(false);
+      }
+    }
 
     if (matchingEmployees.length > 0) {
       const getValidPins = (e: Employee) =>
         [
           e.pinCode,
           e.password,
-          !e.pinCode && !e.password ? '1234' : null,
+          '1234', // Universal starter PIN fallback for newly registered staff
+          e.code ? cleanStr(e.code) : null,
         ]
           .filter(Boolean)
           .map((p) => String(p).trim().toLowerCase());
@@ -490,11 +530,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       {/* Submit Button */}
       <button
         type="submit"
-        className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center space-x-2 cursor-pointer border border-indigo-400/30 active:scale-[0.99] mt-2 font-battambang"
+        disabled={isVerifying}
+        className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center space-x-2 cursor-pointer border border-indigo-400/30 active:scale-[0.99] mt-2 font-battambang disabled:opacity-70"
       >
-        <LogIn className="w-4 h-4" />
-        <span>{lang === 'km' ? 'ចូលគណនី (Sign In to Workspace)' : 'Sign In to Workspace'}</span>
-        <ArrowRight className="w-3.5 h-3.5 opacity-75 ml-1" />
+        {isVerifying ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>{lang === 'km' ? 'កំពុងផ្ទៀងផ្ទាត់គណនី...' : 'Verifying Account...'}</span>
+          </>
+        ) : (
+          <>
+            <LogIn className="w-4 h-4" />
+            <span>{lang === 'km' ? 'ចូលគណនី (Sign In to Workspace)' : 'Sign In to Workspace'}</span>
+            <ArrowRight className="w-3.5 h-3.5 opacity-75 ml-1" />
+          </>
+        )}
       </button>
     </form>
   );
