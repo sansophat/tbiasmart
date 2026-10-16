@@ -246,7 +246,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       : '--:--';
 
     // Determine if employee's shift has already ended today without checking out (e.g. Morning Shift forgot check-out)
-    const sId = (matchedEmp?.shiftId || empShift?.id || '').toLowerCase();
+    const sId = String(matchedEmp?.shiftId || empShift?.id || '').toLowerCase();
     const firstInHour = firstCheckIn ? new Date(firstCheckIn.timestamp).getHours() : 12;
     const isMorningWorker = sId.includes('morning') || sId.includes('s1') || firstInHour < 9;
 
@@ -360,7 +360,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const filteredFeedItems = enrichedFeedRecords.filter(({ rec, meta }) => {
     if (feedFilter === 'all') return true;
-    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
     if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
     if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2') || (!meta.isMorningWorker && !sId.includes('office'));
     if (feedFilter === 'checked_out') return rec.type === 'check_out' || meta.hasCheckedOutToday;
@@ -371,11 +371,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   });
 
   const morningFeedCount = enrichedFeedRecords.filter(({ meta }) => {
-    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
     return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
   }).length;
   const afternoonFeedCount = enrichedFeedRecords.filter(({ meta }) => {
-    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
     return sId.includes('afternoon') || sId.includes('s2');
   }).length;
   const checkedOutFeedCount = enrichedFeedRecords.filter(({ rec, meta }) => rec.type === 'check_out' || meta.hasCheckedOutToday).length;
@@ -411,12 +411,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Comprehensive Emergency Safety Roll Call Personnel Analysis
   const rollCallPersonnelList = useMemo(() => {
     return employees.map((emp) => {
-      const branch = branches.find((b) => b.id === emp.branchId) || branches[0];
-      const empShift = shifts.find((s) => s.id === emp.shiftId) || shifts[0];
+      const branch = (branches && branches.find((b) => b.id === emp.branchId)) || branches[0] || { id: 'b1', nameKh: 'សាខា', nameEn: 'Branch' };
+      const empShift = (shifts && shifts.find((s) => s.id === emp.shiftId)) || (shifts && shifts[0]) || INITIAL_SHIFTS[0];
       const startTime = emp.shiftStartTime || empShift?.startTime || '08:00';
       const endTime = emp.shiftEndTime || empShift?.endTime || '17:00';
-      const shiftHoursText = getEmployeeWorkingHours(emp, empShift);
-      const shiftBadge = getShiftCategoryBadge(empShift, lang);
+      const shiftHoursText = getEmployeeWorkingHours(emp, empShift, lang);
+      const shiftBadge = getShiftCategoryBadge(empShift?.id || emp.shiftId || '', lang);
       const isDayOffToday = isEmployeeDayOff(emp, now);
       const dayOffName = getEmployeeDayOffName(emp, lang);
 
@@ -1552,7 +1552,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   (e) =>
                     e.id === tr.employeeId ||
                     e.code === tr.employeeCode ||
-                    (tr.employeeNameEn && e.nameEn.toLowerCase() === tr.employeeNameEn.toLowerCase())
+                    (tr.employeeNameEn && e.nameEn && String(e.nameEn).toLowerCase() === String(tr.employeeNameEn).toLowerCase())
                 );
                 const avatarSrc =
                   tr.employeeAvatar ||
@@ -1661,7 +1661,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               : (r.employeeId && r.employeeId === selectedStaffInfoRecord.employeeId) ||
                 (r.employeeCode &&
                   selectedStaffInfoRecord.employeeCode &&
-                  r.employeeCode.toLowerCase() === selectedStaffInfoRecord.employeeCode.toLowerCase())
+                  String(r.employeeCode).toLowerCase() === String(selectedStaffInfoRecord.employeeCode).toLowerCase())
           )
           .filter((r) => Boolean(r.timestamp))
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -2187,13 +2187,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (rollCallTab !== 'all' && item.rollCallStatus !== rollCallTab) {
             return false;
           }
-          if (rollCallSearchQuery.trim()) {
-            const q = rollCallSearchQuery.toLowerCase();
-            const matchNameKh = (item.employee.nameKh || '').toLowerCase().includes(q);
-            const matchNameEn = (item.employee.nameEn || '').toLowerCase().includes(q);
-            const matchCode = (item.employee.code || '').toLowerCase().includes(q);
-            const matchPhone = (item.employee.phone || '').includes(q);
-            const matchDept = (item.employee.department || item.employee.departmentKh || '').toLowerCase().includes(q);
+          if (rollCallSearchQuery && rollCallSearchQuery.trim()) {
+            const q = String(rollCallSearchQuery).toLowerCase().trim();
+            const matchNameKh = String(item.employee.nameKh || '').toLowerCase().includes(q);
+            const matchNameEn = String(item.employee.nameEn || '').toLowerCase().includes(q);
+            const matchCode = String(item.employee.code || '').toLowerCase().includes(q);
+            const matchPhone = String(item.employee.phone || '').includes(q);
+            const matchDept = String(item.employee.department || item.employee.departmentKh || '').toLowerCase().includes(q);
             return matchNameKh || matchNameEn || matchCode || matchPhone || matchDept;
           }
           return true;

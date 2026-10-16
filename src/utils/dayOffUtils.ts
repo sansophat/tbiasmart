@@ -135,20 +135,37 @@ export function getEmployeeWorkingHours(emp: Employee, shift?: Shift, lang: Lang
 
 /**
  * Returns badge styling and icon name for an employee's shift category.
+ * Defensively supports both shiftId string and Shift object.
  */
-export function getShiftCategoryBadge(shiftId: string = '', lang: Language = 'km'): {
+export function getShiftCategoryBadge(
+  shiftOrId?: string | Shift | null,
+  lang: Language = 'km'
+): {
   badgeBg: string;
   badgeText: string;
   badgeBorder: string;
+  bgColor: string;
+  color: string;
+  borderColor: string;
   label: string;
   iconType: 'morning' | 'afternoon' | 'full_time' | 'night' | 'standard';
 } {
-  const s = shiftId.toLowerCase();
+  const rawStr =
+    typeof shiftOrId === 'string'
+      ? shiftOrId
+      : shiftOrId && typeof shiftOrId === 'object'
+      ? (shiftOrId.id || shiftOrId.shiftCategory || shiftOrId.nameEn || '')
+      : '';
+  const s = String(rawStr || '').toLowerCase();
+
   if (s.includes('morning') || s.includes('ព្រឹក')) {
     return {
       badgeBg: 'bg-amber-50',
       badgeText: 'text-amber-800',
       badgeBorder: 'border-amber-200',
+      bgColor: 'bg-amber-50',
+      color: 'text-amber-800',
+      borderColor: 'border-amber-200',
       label: lang === 'km' ? 'វេនព្រឹក (Morning)' : 'Morning Shift',
       iconType: 'morning',
     };
@@ -158,6 +175,9 @@ export function getShiftCategoryBadge(shiftId: string = '', lang: Language = 'km
       badgeBg: 'bg-orange-50',
       badgeText: 'text-orange-800',
       badgeBorder: 'border-orange-200',
+      bgColor: 'bg-orange-50',
+      color: 'text-orange-800',
+      borderColor: 'border-orange-200',
       label: lang === 'km' ? 'វេនរសៀល (Afternoon)' : 'Afternoon Shift',
       iconType: 'afternoon',
     };
@@ -167,6 +187,9 @@ export function getShiftCategoryBadge(shiftId: string = '', lang: Language = 'km
       badgeBg: 'bg-emerald-50',
       badgeText: 'text-emerald-800',
       badgeBorder: 'border-emerald-200',
+      bgColor: 'bg-emerald-50',
+      color: 'text-emerald-800',
+      borderColor: 'border-emerald-200',
       label: lang === 'km' ? 'វេនពេញម៉ោង (Full-Time)' : 'Full-Time Shift',
       iconType: 'full_time',
     };
@@ -176,6 +199,9 @@ export function getShiftCategoryBadge(shiftId: string = '', lang: Language = 'km
       badgeBg: 'bg-purple-50',
       badgeText: 'text-purple-800',
       badgeBorder: 'border-purple-200',
+      bgColor: 'bg-purple-50',
+      color: 'text-purple-800',
+      borderColor: 'border-purple-200',
       label: lang === 'km' ? 'វេនយប់ (Night Shift)' : 'Night Shift',
       iconType: 'night',
     };
@@ -184,6 +210,9 @@ export function getShiftCategoryBadge(shiftId: string = '', lang: Language = 'km
     badgeBg: 'bg-blue-50',
     badgeText: 'text-blue-800',
     badgeBorder: 'border-blue-200',
+    bgColor: 'bg-blue-50',
+    color: 'text-blue-800',
+    borderColor: 'border-blue-200',
     label: lang === 'km' ? 'វេនស្តង់ដារ' : 'Standard Shift',
     iconType: 'standard',
   };

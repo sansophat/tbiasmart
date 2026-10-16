@@ -31,8 +31,8 @@ export function doesRecordMatchEmployee(
 
   // 3. Employee Code match (case-insensitive, trimmed)
   if (record.employeeCode && employee.code) {
-    const recCode = record.employeeCode.trim().toLowerCase();
-    const empCode = employee.code.trim().toLowerCase();
+    const recCode = String(record.employeeCode).trim().toLowerCase();
+    const empCode = String(employee.code).trim().toLowerCase();
     if (recCode && empCode && recCode === empCode) {
       return true;
     }
@@ -40,8 +40,8 @@ export function doesRecordMatchEmployee(
 
   // 4. Exact Khmer Name match
   if (record.employeeNameKh && employee.nameKh) {
-    const recKh = record.employeeNameKh.trim();
-    const empKh = employee.nameKh.trim();
+    const recKh = String(record.employeeNameKh).trim();
+    const empKh = String(employee.nameKh).trim();
     if (recKh && empKh && recKh === empKh) {
       return true;
     }
@@ -49,8 +49,8 @@ export function doesRecordMatchEmployee(
 
   // 5. English Name match (case-insensitive, trimmed)
   if (record.employeeNameEn && employee.nameEn) {
-    const recEn = record.employeeNameEn.trim().toLowerCase();
-    const empEn = employee.nameEn.trim().toLowerCase();
+    const recEn = String(record.employeeNameEn).trim().toLowerCase();
+    const empEn = String(employee.nameEn).trim().toLowerCase();
     if (recEn && empEn && recEn === empEn) {
       return true;
     }
