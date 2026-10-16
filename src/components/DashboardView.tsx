@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Users, 
   UserCheck, 
@@ -30,6 +30,9 @@ import {
   RefreshCw,
   Check,
   Zap,
+  Bell,
+  ShieldAlert,
+  ExternalLink,
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest, Shift } from '../types';
 import { INITIAL_SHIFTS } from '../data/initialData';
@@ -64,6 +67,8 @@ interface DashboardViewProps {
   setSelectedBranchId: (id: string) => void;
   onNavigateTab: (tab: string) => void;
   onOpenTransferModal?: (emp?: Employee) => void;
+  onRingStaffReminder?: (targetEmp: Employee, reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call' | 'custom', customMsg?: string) => void;
+  onRingBulkStaffReminders?: (targetEmps: Employee[], reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call') => void;
   onManualSync?: () => Promise<void> | void;
   isSyncing?: boolean;
   lang: Language;
@@ -90,6 +95,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setSelectedBranchId,
   onNavigateTab,
   onOpenTransferModal,
+  onRingStaffReminder,
+  onRingBulkStaffReminders,
   lang,
 }) => {
   const now = new Date();
@@ -107,9 +114,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Category filter state (all, club, warehouse, cafe, office)
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'club' | 'warehouse' | 'cafe' | 'office'>('all');
   
-  // Emergency Roll Call Modal
+  // Emergency Roll Call Modal State
   const [showEmergencyRollCall, setShowEmergencyRollCall] = useState<boolean>(false);
   const [rollCallBranchId, setRollCallBranchId] = useState<string>('all');
+  const [rollCallTab, setRollCallTab] = useState<'all' | 'on_site' | 'forgot_checkout' | 'missing_checkin' | 'checked_out' | 'day_off_leave'>('all');
+  const [rollCallSearchQuery, setRollCallSearchQuery] = useState<string>('');
 
   // Filter records by selected branch if not 'all'
   const relevantRecords = selectedBranchId === 'all'
@@ -399,21 +408,125 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  // Roll call: Currently on-site employees (checked in today and haven't checked out yet)
-  const currentlyOnSiteList = employees.map((emp) => {
-    const empToday = attendanceRecords
-      .filter((r) => doesRecordMatchEmployee(r, emp) && isSameLocalDate(r.timestamp, now))
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    const lastRec = empToday[0]; // sorted latest first
-    const isOnSite = lastRec && lastRec.type === 'check_in';
-    const branch = branches.find((b) => b.id === emp.branchId);
-    return {
-      employee: emp,
-      branch,
-      lastRecord: lastRec,
-      isOnSite,
-    };
-  }).filter((item) => {
+  // Comprehensive Emergency Safety Roll Call Personnel Analysis
+  const rollCallPersonnelList = useMemo(() => {
+    return employees.map((emp) => {
+      const branch = branches.find((b) => b.id === emp.branchId) || branches[0];
+      const empShift = shifts.find((s) => s.id === emp.shiftId) || shifts[0];
+      const startTime = emp.shiftStartTime || empShift?.startTime || '08:00';
+      const endTime = emp.shiftEndTime || empShift?.endTime || '17:00';
+      const shiftHoursText = getEmployeeWorkingHours(emp, empShift);
+      const shiftBadge = getShiftCategoryBadge(empShift, lang);
+      const isDayOffToday = isEmployeeDayOff(emp, now);
+      const dayOffName = getEmployeeDayOffName(emp, lang);
+
+      const hasApprovedLeaveToday = leaveRequests.some(
+        (l) =>
+          (l.employeeId === emp.id || l.employeeCode === emp.code) &&
+          l.status === 'approved' &&
+          today >= l.startDate &&
+          today <= l.endDate
+      );
+
+      const [startH, startM] = startTime.split(':').map(Number);
+      const [endH, endM] = endTime.split(':').map(Number);
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const shiftStartMinutes = startH * 60 + startM;
+      const shiftEndMinutes = endH * 60 + endM;
+      const isPastShiftStart = currentMinutes >= shiftStartMinutes;
+      const isPastShiftEnd = currentMinutes >= shiftEndMinutes;
+
+      // Today's punches for this employee
+      const empPunchesToday = attendanceRecords
+        .filter((r) => doesRecordMatchEmployee(r, emp) && isSameLocalDate(r.timestamp, now))
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      let firstCheckIn = empPunchesToday.find((r) => r.type === 'check_in');
+      if (!firstCheckIn && empPunchesToday.length > 0) {
+        if (new Date(empPunchesToday[0].timestamp).getHours() < 12 || empPunchesToday.length >= 2) {
+          firstCheckIn = empPunchesToday[0];
+        }
+      }
+
+      let lastCheckOut = [...empPunchesToday]
+        .reverse()
+        .find((r) => r.type === 'check_out' && (!firstCheckIn || r.id !== firstCheckIn.id));
+      if (!lastCheckOut && firstCheckIn && empPunchesToday.length >= 2) {
+        const candidate = empPunchesToday[empPunchesToday.length - 1];
+        if (candidate.id !== firstCheckIn.id) {
+          lastCheckOut = candidate;
+        }
+      }
+
+      const hasCheckedInToday = Boolean(firstCheckIn);
+      const hasCheckedOutToday = Boolean(lastCheckOut);
+
+      // Accurate roll call status classification
+      let rollCallStatus: 'on_site' | 'forgot_checkout' | 'missing_checkin' | 'checked_out' | 'day_off_leave';
+      if (hasCheckedInToday && hasCheckedOutToday) {
+        rollCallStatus = 'checked_out';
+      } else if (hasCheckedInToday && !hasCheckedOutToday) {
+        if (isPastShiftEnd) {
+          rollCallStatus = 'forgot_checkout'; // Past scheduled shift end, hasn't checked out
+        } else {
+          rollCallStatus = 'on_site'; // Actively on duty within shift
+        }
+      } else if (isDayOffToday || hasApprovedLeaveToday) {
+        rollCallStatus = 'day_off_leave';
+      } else if (isPastShiftStart) {
+        rollCallStatus = 'missing_checkin'; // Past shift start but haven't punched in
+      } else {
+        rollCallStatus = 'missing_checkin'; // Upcoming or not punched
+      }
+
+      // Elapsed time on site
+      let elapsedTimeText = '';
+      if (firstCheckIn) {
+        const inTime = new Date(firstCheckIn.timestamp).getTime();
+        const outTime = lastCheckOut ? new Date(lastCheckOut.timestamp).getTime() : now.getTime();
+        const diffMs = Math.max(0, outTime - inTime);
+        const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+        elapsedTimeText = `${diffHrs}h ${diffMins}m`;
+      }
+
+      const checkInTimeStr = firstCheckIn
+        ? new Date(firstCheckIn.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '--:--';
+      const checkOutTimeStr = lastCheckOut
+        ? new Date(lastCheckOut.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '--:--';
+
+      const latestRecord = empPunchesToday[empPunchesToday.length - 1] || null;
+
+      return {
+        employee: emp,
+        branch,
+        empShift,
+        shiftHoursText,
+        shiftBadge,
+        isDayOffToday,
+        dayOffName,
+        hasApprovedLeaveToday,
+        firstCheckIn,
+        lastCheckOut,
+        hasCheckedInToday,
+        hasCheckedOutToday,
+        isPastShiftStart,
+        isPastShiftEnd,
+        endTimeStr: endTime,
+        rollCallStatus,
+        elapsedTimeText,
+        checkInTimeStr,
+        checkOutTimeStr,
+        latestRecord,
+        isOnSite: rollCallStatus === 'on_site' || rollCallStatus === 'forgot_checkout',
+      };
+    });
+  }, [employees, branches, shifts, attendanceRecords, leaveRequests, now, today, lang]);
+
+  // Roll call: Currently on-site employees (actively on duty OR forgot check-out overdue)
+  const currentlyOnSiteList = rollCallPersonnelList.filter((item) => {
     if (!item.isOnSite) return false;
     if (rollCallBranchId !== 'all' && item.employee.branchId !== rollCallBranchId) return false;
     return true;
@@ -1318,14 +1431,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </span>
                         </span>
                       ) : isPastShiftEnd ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                          <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
-                          <span>
-                            {lang === 'km'
-                              ? `ម៉ោងចេញ: មិនទាន់ស្កេនចេញ / ភ្លេចស្កេនចេញ (ផុតម៉ោង ${endTimeStr})`
-                              : `Out: Not Checked Out / Forgot (Shift ended ${endTimeStr})`}
+                        <div className="inline-flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                            <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                            <span>
+                              {lang === 'km'
+                                ? `ម៉ោងចេញ: មិនទាន់ស្កេនចេញ / ភ្លេចស្កេនចេញ (ផុតម៉ោង ${endTimeStr})`
+                                : `Out: Not Checked Out / Forgot (Shift ended ${endTimeStr})`}
+                            </span>
                           </span>
-                        </span>
+
+                          {matchedEmp && onRingStaffReminder && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRingStaffReminder(matchedEmp, 'forgot_checkout');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer shrink-0"
+                              title={lang === 'km' ? 'រោទិ៍សំឡេងរំលឹកទៅកាន់ទូរស័ព្ទបុគ្គលិកនេះ' : 'Ring reminder alarm on this staff member device'}
+                            >
+                              <Bell className="w-3 h-3 animate-bounce" />
+                              <span>{lang === 'km' ? '🔔 រោទិ៍រំលឹក' : '🔔 Ring Staff'}</span>
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                           <Clock className="w-3 h-3 text-amber-600 shrink-0" />
@@ -1793,6 +1923,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         ? `កំពុងបំពេញការងារក្នុងវេន (ម៉ោងចេញកំណត់: ${endTimeStr})`
                         : `Currently on shift (Scheduled end time: ${endTimeStr})`}
                     </p>
+
+                    {isPastShiftEnd && !hasCheckedOutToday && matchedEmp && onRingStaffReminder && (
+                      <button
+                        type="button"
+                        onClick={() => onRingStaffReminder(matchedEmp, 'forgot_checkout')}
+                        className="w-full mt-2 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                      >
+                        <Bell className="w-3.5 h-3.5 animate-bounce" />
+                        <span>{lang === 'km' ? '🔔 រោទិ៍ទូរស័ព្ទរំលឹកស្កេនចេញឥឡូវនេះ' : '🔔 Ring Staff Device to Check-Out'}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1983,6 +2124,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>{lang === 'km' ? 'មើលរបាយការណ៍លម្អិត' : 'Full Timesheet Report'}</span>
                   </button>
+
+                  {matchedEmp && onRingStaffReminder && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onRingStaffReminder(
+                          matchedEmp,
+                          isPastShiftEnd && !hasCheckedOutToday
+                            ? 'forgot_checkout'
+                            : !hasCheckedInToday
+                            ? 'forgot_checkin'
+                            : 'custom'
+                        )
+                      }
+                      className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Bell className="w-3.5 h-3.5 text-rose-600" />
+                      <span>{lang === 'km' ? 'រោទិ៍រំលឹកឧបករណ៍' : 'Ring Device'}</span>
+                    </button>
+                  )}
                 </div>
 
                 <button
@@ -1998,118 +2159,597 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         );
       })()}
 
-      {/* Emergency Roll Call Modal */}
-      {showEmergencyRollCall && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-                  <AlertCircle className="w-6 h-6 animate-pulse" />
+      {/* Enhanced Emergency Safety Roll Call Modal */}
+      {showEmergencyRollCall && (() => {
+        const branchPersonnelList = rollCallPersonnelList.filter(
+          (p) => rollCallBranchId === 'all' || p.employee.branchId === rollCallBranchId
+        );
+
+        const totalCount = branchPersonnelList.length;
+        const onSiteCount = branchPersonnelList.filter((p) => p.rollCallStatus === 'on_site').length;
+        const forgotCheckoutCount = branchPersonnelList.filter((p) => p.rollCallStatus === 'forgot_checkout').length;
+        const missingCheckInCount = branchPersonnelList.filter((p) => p.rollCallStatus === 'missing_checkin').length;
+        const checkedOutCount = branchPersonnelList.filter((p) => p.rollCallStatus === 'checked_out').length;
+        const dayOffLeaveCount = branchPersonnelList.filter((p) => p.rollCallStatus === 'day_off_leave').length;
+        const totalInsideBuilding = onSiteCount + forgotCheckoutCount;
+
+        const forgotCheckoutEmps = branchPersonnelList
+          .filter((p) => p.rollCallStatus === 'forgot_checkout')
+          .map((p) => p.employee);
+
+        const missingCheckInEmps = branchPersonnelList
+          .filter((p) => p.rollCallStatus === 'missing_checkin')
+          .map((p) => p.employee);
+
+        const onSiteEmps = branchPersonnelList.filter((p) => p.isOnSite).map((p) => p.employee);
+
+        const displayedRollCallList = branchPersonnelList.filter((item) => {
+          if (rollCallTab !== 'all' && item.rollCallStatus !== rollCallTab) {
+            return false;
+          }
+          if (rollCallSearchQuery.trim()) {
+            const q = rollCallSearchQuery.toLowerCase();
+            const matchNameKh = (item.employee.nameKh || '').toLowerCase().includes(q);
+            const matchNameEn = (item.employee.nameEn || '').toLowerCase().includes(q);
+            const matchCode = (item.employee.code || '').toLowerCase().includes(q);
+            const matchPhone = (item.employee.phone || '').includes(q);
+            const matchDept = (item.employee.department || item.employee.departmentKh || '').toLowerCase().includes(q);
+            return matchNameKh || matchNameEn || matchCode || matchPhone || matchDept;
+          }
+          return true;
+        });
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+            onClick={() => setShowEmergencyRollCall(false)}
+          >
+            <div
+              className="bg-white border border-slate-200 rounded-3xl max-w-4xl w-full p-4 sm:p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[94vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Top Header */}
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-3">
+                  <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center shrink-0 shadow-sm">
+                    <ShieldAlert className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-900 text-base sm:text-lg flex items-center gap-2">
+                      <span>{lang === 'km' ? 'បញ្ជីឈ្មោះបុគ្គលិកមានវត្តមានជាក់ស្តែង (Safety Emergency Roll Call)' : 'Emergency Safety Roll Call'}</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                        {totalInsideBuilding} {lang === 'km' ? 'នាក់ក្នុងអាគារ' : 'On-Site / Overdue'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      {lang === 'km'
+                        ? 'ត្រួតពិនិត្យវត្តមានបុគ្គលិកកំពុងបំពេញការងារ ផ្ទៀងផ្ទាត់ GPS អ្នកភ្លេចស្កេនចេញ និងរោទិ៍រំលឹកឧបករណ៍បន្ទាន់'
+                        : 'Accurate personnel headcount, GPS geofence verification, overdue shifts & remote alarm ringing.'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 text-base">
-                    {lang === 'km' ? 'បញ្ជីឈ្មោះបុគ្គលិកមានវត្តមានជាក់ស្តែង (Safety Roll Call)' : 'Emergency Safety Roll Call'}
-                  </h3>
-                  <p className="text-xs text-slate-500 font-medium">
-                    {lang === 'km'
-                      ? 'បុគ្គលិកដែលមានវត្តមានក្នុងអាគារ/ទីតាំងពេលនេះ'
-                      : 'Live roster of personnel currently checked-in on-site.'}
-                  </p>
-                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmergencyRollCall(false)}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <button
-                onClick={() => setShowEmergencyRollCall(false)}
-                className="p-1 text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+              {/* Branch Filter & Search Input Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 flex-1">
+                  {/* Branch selector */}
+                  <select
+                    value={rollCallBranchId}
+                    onChange={(e) => setRollCallBranchId(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500 shrink-0"
+                  >
+                    <option value="all">{lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All Branches'}</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {lang === 'km' ? b.nameKh : b.nameEn}
+                      </option>
+                    ))}
+                  </select>
 
-            {/* Filter by branch */}
-            <div className="flex items-center justify-between gap-3">
-              <select
-                value={rollCallBranchId}
-                onChange={(e) => setRollCallBranchId(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              >
-                <option value="all">{lang === 'km' ? 'គ្រប់សាខាទាំងអស់' : 'All 7 Branches'}</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {lang === 'km' ? b.nameKh : b.nameEn}
-                  </option>
-                ))}
-              </select>
-
-              <span className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
-                {currentlyOnSiteList.length} {lang === 'km' ? 'នាក់កំពុងមានវត្តមាន' : 'Personnel On-Site'}
-              </span>
-            </div>
-
-            {/* Roll call items */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {currentlyOnSiteList.map(({ employee, branch, lastRecord }) => (
-                <div
-                  key={employee.id}
-                  className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200"
-                >
-                  <div className="flex items-center space-x-3">
-                    <img
-                      src={employee.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                      alt={employee.nameEn || 'Employee'}
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src =
-                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                      }}
-                      className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-xs bg-slate-200"
+                  {/* Search query input */}
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={rollCallSearchQuery}
+                      onChange={(e) => setRollCallSearchQuery(e.target.value)}
+                      placeholder={lang === 'km' ? 'ស្វែងរកឈ្មោះ លេខកូដ ទូរស័ព្ទ ឬតួនាទី...' : 'Search staff by name, code, phone, role...'}
+                      className="w-full pl-8 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500"
                     />
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-slate-800 text-xs">
-                          {lang === 'km' ? employee.nameKh : employee.nameEn}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-600 bg-slate-200 px-1 rounded font-bold">
-                          {employee.code}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        {branch?.nameEn} • {employee.departmentKh}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="text-right space-y-1">
-                    <a
-                      href={`tel:${employee.phone}`}
-                      className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold text-xs hover:bg-indigo-100 transition"
-                    >
-                      <Phone className="w-3 h-3" />
-                      <span>{employee.phone}</span>
-                    </a>
-                    {lastRecord && (
-                      <div className="text-[10px] font-mono text-slate-400">
-                        In: {new Date(lastRecord.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                    {rollCallSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setRollCallSearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                      >
+                        ✕
+                      </button>
                     )}
                   </div>
                 </div>
-              ))}
-            </div>
 
-            <div className="pt-2 border-t border-slate-100 flex justify-end">
-              <button
-                onClick={() => setShowEmergencyRollCall(false)}
-                className="px-6 py-2.5 rounded-xl bg-slate-800 text-white font-bold text-xs hover:bg-slate-900 transition"
-              >
-                {lang === 'km' ? 'បិទ' : 'Close'}
-              </button>
+                {/* Bulk Actions: Ring Missing / Forgot Check-Out Staff */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {forgotCheckoutCount > 0 && onRingBulkStaffReminders && (
+                    <button
+                      type="button"
+                      onClick={() => onRingBulkStaffReminders(forgotCheckoutEmps, 'forgot_checkout')}
+                      className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                      title={lang === 'km' ? 'រោទិ៍សំឡេងរំលឹកទៅកាន់ទូរស័ព្ទអ្នកភ្លេចស្កេនចេញទាំងអស់' : 'Ring alarm on devices of all staff who forgot to check out'}
+                    >
+                      <Bell className="w-3.5 h-3.5 animate-bounce" />
+                      <span>{lang === 'km' ? `រោទិ៍អ្នកភ្លេចចេញ (${forgotCheckoutCount})` : `Ring Forgot Out (${forgotCheckoutCount})`}</span>
+                    </button>
+                  )}
+
+                  {missingCheckInCount > 0 && onRingBulkStaffReminders && (
+                    <button
+                      type="button"
+                      onClick={() => onRingBulkStaffReminders(missingCheckInEmps, 'forgot_checkin')}
+                      className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                      title={lang === 'km' ? 'រោទិ៍សំឡេងរំលឹកទៅកាន់ទូរស័ព្ទអ្នកមិនទាន់ស្កេនចូលទាំងអស់' : 'Ring alarm on devices of all missing check-in staff'}
+                    >
+                      <Bell className="w-3.5 h-3.5" />
+                      <span>{lang === 'km' ? `រោទិ៍អ្នកអវត្តមាន (${missingCheckInCount})` : `Ring Missing In (${missingCheckInCount})`}</span>
+                    </button>
+                  )}
+
+                  {totalInsideBuilding > 0 && onRingBulkStaffReminders && (
+                    <button
+                      type="button"
+                      onClick={() => onRingBulkStaffReminders(onSiteEmps, 'emergency_roll_call')}
+                      className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-black text-white font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                      title={lang === 'km' ? 'រោទិ៍សំឡេងអាសន្នទៅកាន់បុគ្គលិកទាំងអស់ក្នុងអាគារ' : 'Ring emergency safety alarm on all personnel devices'}
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                      <span>{lang === 'km' ? `រោទិ៍បន្ទាន់ (${totalInsideBuilding})` : `Ring All On-Site (${totalInsideBuilding})`}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Status Classification Tabs with Live Counts */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('all')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'all'
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>{lang === 'km' ? 'ទាំងអស់' : 'All Roster'}</span>
+                  <span className="text-[10px] opacity-80 font-mono">({totalCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('on_site')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'on_site'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>{lang === 'km' ? 'កំពុងមានវត្តមាន' : 'On-Site Now'}</span>
+                  <span className="text-[10px] font-mono">({onSiteCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('forgot_checkout')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'forgot_checkout'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>{lang === 'km' ? 'ភ្លេចស្កេនចេញ / ផុតម៉ោង' : 'Forgot Check-Out'}</span>
+                  <span className="text-[10px] font-mono font-bold">({forgotCheckoutCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('missing_checkin')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'missing_checkin'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>{lang === 'km' ? 'អវត្តមាន / មិនទាន់ចូល' : 'Missing Check-In'}</span>
+                  <span className="text-[10px] font-mono">({missingCheckInCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('checked_out')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'checked_out'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{lang === 'km' ? 'ចេញរួច (Safe)' : 'Checked Out'}</span>
+                  <span className="text-[10px] font-mono">({checkedOutCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRollCallTab('day_off_leave')}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    rollCallTab === 'day_off_leave'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>{lang === 'km' ? 'សម្រាក / ច្បាប់' : 'Day Off / Leave'}</span>
+                  <span className="text-[10px] font-mono">({dayOffLeaveCount})</span>
+                </button>
+              </div>
+
+              {/* Roster Cards List */}
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 max-h-[58vh]">
+                {displayedRollCallList.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 space-y-2">
+                    <p className="text-sm font-bold text-slate-600">
+                      {lang === 'km' ? 'រកមិនឃើញបុគ្គលិកក្នុងផ្នែកនេះទេ' : 'No personnel found matching this filter'}
+                    </p>
+                    <p className="text-xs">
+                      {lang === 'km' ? 'សូមជ្រើសរើសសាខា ឬផ្នែកផ្សេងទៀត' : 'Try selecting another branch or status tab'}
+                    </p>
+                  </div>
+                ) : (
+                  displayedRollCallList.map((item) => {
+                    const {
+                      employee,
+                      branch,
+                      empShift,
+                      shiftHoursText,
+                      shiftBadge,
+                      isDayOffToday,
+                      dayOffName,
+                      hasApprovedLeaveToday,
+                      firstCheckIn,
+                      lastCheckOut,
+                      hasCheckedInToday,
+                      hasCheckedOutToday,
+                      isPastShiftEnd,
+                      endTimeStr,
+                      rollCallStatus,
+                      elapsedTimeText,
+                      checkInTimeStr,
+                      checkOutTimeStr,
+                      latestRecord,
+                    } = item;
+
+                    const avatarSrc =
+                      employee.avatar ||
+                      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+
+                    const hasGps = latestRecord && latestRecord.lat && latestRecord.lng;
+                    const googleMapsUrl = hasGps
+                      ? `https://www.google.com/maps?q=${latestRecord.lat},${latestRecord.lng}`
+                      : null;
+
+                    return (
+                      <div
+                        key={employee.id}
+                        className={`p-3.5 rounded-2xl border transition-all space-y-2.5 ${
+                          rollCallStatus === 'forgot_checkout'
+                            ? 'bg-rose-50/50 border-rose-300 hover:border-rose-400 shadow-xs'
+                            : rollCallStatus === 'on_site'
+                            ? 'bg-emerald-50/40 border-emerald-200 hover:border-emerald-300'
+                            : rollCallStatus === 'missing_checkin'
+                            ? 'bg-amber-50/40 border-amber-200 hover:border-amber-300'
+                            : rollCallStatus === 'checked_out'
+                            ? 'bg-blue-50/30 border-blue-200'
+                            : 'bg-slate-50 border-slate-200 opacity-80'
+                        }`}
+                      >
+                        {/* Top Card Row: Avatar, Identity, Status Badges & Direct Actions */}
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div className="flex items-center space-x-3 min-w-0">
+                            {/* Clickable Avatar: opens full Staff Info Popup Modal */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (latestRecord) {
+                                  setSelectedStaffInfoRecord(latestRecord);
+                                } else {
+                                  // Synthetic record to open profile
+                                  setSelectedStaffInfoRecord({
+                                    id: `rollcall_${employee.id}`,
+                                    employeeId: employee.id,
+                                    employeeCode: employee.code,
+                                    employeeNameKh: employee.nameKh,
+                                    employeeNameEn: employee.nameEn,
+                                    employeeAvatar: employee.avatar,
+                                    branchId: employee.branchId,
+                                    branchNameKh: branch.nameKh,
+                                    branchNameEn: branch.nameEn,
+                                    type: 'check_in',
+                                    timestamp: new Date().toISOString(),
+                                    lat: 0,
+                                    lng: 0,
+                                    distanceToBranch: 0,
+                                    isWithinGeofence: true,
+                                    method: 'qr_mobile',
+                                    status: 'on_time',
+                                  });
+                                }
+                              }}
+                              className="relative shrink-0 group/avatar cursor-pointer"
+                              title={lang === 'km' ? 'ចុចដើម្បីមើលព័ត៌មានលម្អិត' : 'Click to view full staff profile'}
+                            >
+                              <img
+                                src={avatarSrc}
+                                alt={employee.nameEn || 'Staff'}
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src =
+                                    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                                }}
+                                className={`w-12 h-12 rounded-2xl object-cover border-2 shadow-xs bg-slate-200 group-hover/avatar:scale-105 transition-all ${
+                                  rollCallStatus === 'forgot_checkout'
+                                    ? 'border-rose-400'
+                                    : rollCallStatus === 'on_site'
+                                    ? 'border-emerald-500'
+                                    : 'border-slate-300'
+                                }`}
+                              />
+                              <span
+                                className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white flex items-center justify-center text-[8px] font-bold text-white shadow-xs ${
+                                  rollCallStatus === 'on_site'
+                                    ? 'bg-emerald-500'
+                                    : rollCallStatus === 'forgot_checkout'
+                                    ? 'bg-rose-600'
+                                    : rollCallStatus === 'checked_out'
+                                    ? 'bg-blue-600'
+                                    : 'bg-slate-400'
+                                }`}
+                              >
+                                {rollCallStatus === 'on_site' ? '✓' : rollCallStatus === 'forgot_checkout' ? '!' : '•'}
+                              </span>
+                            </button>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center flex-wrap gap-1.5">
+                                <span className="font-black text-slate-900 text-sm truncate max-w-[170px]">
+                                  {lang === 'km' ? employee.nameKh : employee.nameEn}
+                                </span>
+                                <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-bold border border-indigo-200">
+                                  {employee.code}
+                                </span>
+                                <span className="text-[10px] font-semibold text-slate-600 bg-slate-200/80 px-1.5 py-0.5 rounded">
+                                  {employee.roleKh || employee.role || 'Staff'}
+                                </span>
+                              </div>
+
+                              <p className="text-xs text-slate-500 truncate mt-0.5">
+                                <span className="text-indigo-600 font-bold">{branch.nameEn}</span>
+                                {employee.departmentKh && (
+                                  <>
+                                    <span> • </span>
+                                    <span>{lang === 'km' ? employee.departmentKh : employee.department}</span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Quick Action Buttons: Call Phone & Ring Device */}
+                          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                            {/* Call phone */}
+                            {employee.phone && (
+                              <a
+                                href={`tel:${employee.phone}`}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition"
+                                title={lang === 'km' ? `ខលទៅ ${employee.phone}` : `Call ${employee.phone}`}
+                              >
+                                <Phone className="w-3.5 h-3.5" />
+                                <span>{employee.phone}</span>
+                              </a>
+                            )}
+
+                            {/* Ring device button */}
+                            {onRingStaffReminder && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onRingStaffReminder(
+                                    employee,
+                                    rollCallStatus === 'forgot_checkout'
+                                      ? 'forgot_checkout'
+                                      : rollCallStatus === 'missing_checkin'
+                                      ? 'forgot_checkin'
+                                      : 'emergency_roll_call'
+                                  )
+                                }
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer ${
+                                  rollCallStatus === 'forgot_checkout'
+                                    ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse'
+                                    : rollCallStatus === 'missing_checkin'
+                                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                    : 'bg-slate-800 hover:bg-slate-900 text-white'
+                                }`}
+                                title={lang === 'km' ? 'រោទិ៍សំឡេងរំលឹកទៅកាន់ទូរស័ព្ទរបស់បុគ្គលិកនេះ' : 'Trigger loud ringing alarm on staff device'}
+                              >
+                                <Bell className="w-3.5 h-3.5" />
+                                <span>{lang === 'km' ? 'រោទិ៍ឧបករណ៍' : 'Ring Device'}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Middle Row: Paired Punches & Workshift Details Strip */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs bg-white/70 p-2.5 rounded-xl border border-slate-200/80">
+                          {/* Check-In */}
+                          <span className="inline-flex items-center gap-1 font-mono font-bold text-slate-800">
+                            <span className="text-emerald-700">{lang === 'km' ? 'ចូល:' : 'In:'}</span>
+                            <span className={hasCheckedInToday ? 'text-emerald-700 font-black' : 'text-slate-400'}>
+                              {checkInTimeStr}
+                            </span>
+                          </span>
+
+                          <span className="text-slate-300">|</span>
+
+                          {/* Check-Out */}
+                          <span className="inline-flex items-center gap-1 font-mono font-bold">
+                            <span className="text-blue-700">{lang === 'km' ? 'ចេញ:' : 'Out:'}</span>
+                            {hasCheckedOutToday ? (
+                              <span className="text-blue-700 font-black">{checkOutTimeStr}</span>
+                            ) : isPastShiftEnd ? (
+                              <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
+                                {lang === 'km' ? `⚠️ ភ្លេចស្កេនចេញ (ផុត ${endTimeStr})` : `⚠️ Overdue (Ends ${endTimeStr})`}
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 font-medium">
+                                {hasCheckedInToday
+                                  ? lang === 'km'
+                                    ? `កំពុងធ្វើការ (ចេញ ${endTimeStr})`
+                                    : `Working (Ends ${endTimeStr})`
+                                  : '--:--'}
+                              </span>
+                            )}
+                          </span>
+
+                          {/* Elapsed time on site */}
+                          {hasCheckedInToday && elapsedTimeText && (
+                            <>
+                              <span className="text-slate-300">|</span>
+                              <span className="text-indigo-700 font-semibold text-[11px] bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
+                                ⏱️ {elapsedTimeText} {lang === 'km' ? 'ក្នុងទីតាំង' : 'on-site'}
+                              </span>
+                            </>
+                          )}
+
+                          <span className="text-slate-300">|</span>
+
+                          {/* Workshift Info */}
+                          <span className="text-[11px] text-slate-600 font-medium">
+                            <span className="font-bold">{empShift ? (lang === 'km' ? empShift.nameKh : empShift.nameEn) : shiftBadge.label}</span>
+                            <span className="text-slate-500 font-mono ml-1">({shiftHoursText})</span>
+                          </span>
+
+                          {/* Day Off badge */}
+                          {isDayOffToday && (
+                            <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded border border-purple-200">
+                              {lang === 'km' ? 'សម្រាកប្រចាំសប្តាហ៍' : 'Day Off'}
+                            </span>
+                          )}
+
+                          {hasApprovedLeaveToday && (
+                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded border border-indigo-200">
+                              {lang === 'km' ? 'ច្បាប់អនុម័ត' : 'Approved Leave'}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Bottom Row: GPS Accuracy, Distance & Google Maps Link */}
+                        {latestRecord && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-0.5">
+                            <div className="flex items-center flex-wrap gap-2">
+                              <span className="inline-flex items-center gap-1 font-medium">
+                                <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                <span>
+                                  {lang === 'km' ? 'ទីតាំងស្កេន:' : 'Scan Location:'}{' '}
+                                  <strong className="text-slate-700">
+                                    {formatDistance(latestRecord.distanceToBranch, lang)}
+                                  </strong>
+                                </span>
+                              </span>
+
+                              <span
+                                className={`px-2 py-0.2 rounded text-[10px] font-bold border ${
+                                  latestRecord.isWithinGeofence
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                                }`}
+                              >
+                                {latestRecord.isWithinGeofence
+                                  ? lang === 'km'
+                                    ? '✓ ក្នុងបរិវេណ Geofence'
+                                    : '✓ Within Geofence'
+                                  : lang === 'km'
+                                  ? '⚠️ ក្រៅបរិវេណ'
+                                  : '⚠️ Out of Range'}
+                              </span>
+
+                              {latestRecord.accuracyMeters && (
+                                <span className="font-mono text-slate-400 text-[10px]">
+                                  (±{Math.round(latestRecord.accuracyMeters)}m accuracy)
+                                </span>
+                              )}
+                            </div>
+
+                            {googleMapsUrl && (
+                              <a
+                                href={googleMapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-bold hover:underline transition"
+                              >
+                                <span>{lang === 'km' ? 'មើលទីតាំងលើ Google Maps' : 'View on Google Maps'}</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer Summary */}
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-600">
+                  <span className="text-emerald-700">
+                    🟢 {lang === 'km' ? 'វត្តមានជាក់ស្តែង:' : 'Active On-Site:'} {onSiteCount}
+                  </span>
+                  <span>•</span>
+                  <span className="text-rose-600">
+                    ⚠️ {lang === 'km' ? 'ភ្លេចស្កេនចេញ:' : 'Forgot Check-Out:'} {forgotCheckoutCount}
+                  </span>
+                  <span>•</span>
+                  <span className="text-amber-700">
+                    🔴 {lang === 'km' ? 'អវត្តមាន:' : 'Missing In:'} {missingCheckInCount}
+                  </span>
+                  <span>•</span>
+                  <span className="text-blue-700">
+                    🔵 {lang === 'km' ? 'ចេញរួច:' : 'Checked Out:'} {checkedOutCount}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmergencyRollCall(false)}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition cursor-pointer"
+                >
+                  {lang === 'km' ? 'បិទផ្ទាំងសុវត្ថិភាព' : 'Close Safety Roster'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

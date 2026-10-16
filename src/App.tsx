@@ -35,7 +35,8 @@ import {
   AuditLogEntry,
   SystemBackupData,
   ConnectedPeer,
-  SyncMessage
+  SyncMessage,
+  StaffReminderPayload
 } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -53,13 +54,14 @@ import { BranchTransferModal } from './components/BranchTransferModal';
 import { LoginModal } from './components/LoginModal';
 import { InstallAppModal } from './components/InstallAppModal';
 import { DigitalIdCardModal } from './components/DigitalIdCardModal';
+import { StaffReminderAlertModal } from './components/StaffReminderAlertModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
 import { mergeDatasets } from './utils/backupRestoreUtils';
-import { playAlertChime } from './utils/soundUtils';
-import { validatePunchAllowance } from './utils/dayOffUtils';
+import { playAlertChime, playReminderRingtone, triggerBrowserReminderNotification } from './utils/soundUtils';
+import { validatePunchAllowance, isEmployeeDayOff } from './utils/dayOffUtils';
 import { ActionAlertItem } from './components/RealtimeActionAlertCenter';
 import { Cloud, Loader2 } from 'lucide-react';
 import { 
@@ -430,6 +432,11 @@ export default function App() {
     } catch {}
     return Array.isArray(saved) ? saved : [];
   });
+
+  // Staff Device Reminder Alert State (rings phone/device for Check-In / Check-Out)
+  const [activeStaffReminder, setActiveStaffReminder] = useState<StaffReminderPayload | null>(null);
+  const autoRemindedCheckInRef = useRef<string>('');
+  const autoRemindedCheckOutRef = useRef<string>('');
 
   const addActionAlert = (alert: Omit<ActionAlertItem, 'id' | 'timestamp'> & { id?: string; timestamp?: string; rawTimestamp?: number }) => {
     const rawTime = alert.rawTimestamp || Date.now();
@@ -1446,6 +1453,24 @@ export default function App() {
           `Restored ${b.summary?.branchesCount || 0} branches & ${b.summary?.attendanceRecordsCount || 0} punches.`,
           'system'
         );
+      } else if (type === 'RING_STAFF_REMINDER' && payload) {
+        const reminder: StaffReminderPayload = payload;
+        const isTarget =
+          reminder.isBroadcastAll ||
+          (currentUser &&
+            (currentUser.employeeId === reminder.targetEmployeeId ||
+              currentUser.employeeCode === reminder.targetEmployeeCode ||
+              currentUser.id === reminder.targetEmployeeId ||
+              `user_${reminder.targetEmployeeId}` === currentUser.id));
+
+        if (isTarget) {
+          playReminderRingtone(3);
+          triggerBrowserReminderNotification(
+            lang === 'km' ? reminder.titleKh : reminder.titleEn,
+            lang === 'km' ? reminder.messageKh : reminder.messageEn
+          );
+          setActiveStaffReminder(reminder);
+        }
       }
     });
 
@@ -1666,6 +1691,24 @@ export default function App() {
         );
       } else if (event === 'STAFF_LOGIN' && payload?.alert) {
         addActionAlert(payload.alert);
+      } else if (event === 'RING_STAFF_REMINDER' && payload) {
+        const reminder: StaffReminderPayload = payload;
+        const isTarget =
+          reminder.isBroadcastAll ||
+          (currentUser &&
+            (currentUser.employeeId === reminder.targetEmployeeId ||
+              currentUser.employeeCode === reminder.targetEmployeeCode ||
+              currentUser.id === reminder.targetEmployeeId ||
+              `user_${reminder.targetEmployeeId}` === currentUser.id));
+
+        if (isTarget) {
+          playReminderRingtone(3);
+          triggerBrowserReminderNotification(
+            lang === 'km' ? reminder.titleKh : reminder.titleEn,
+            lang === 'km' ? reminder.messageKh : reminder.messageEn
+          );
+          setActiveStaffReminder(reminder);
+        }
       }
     });
 
@@ -3188,6 +3231,222 @@ export default function App() {
     });
   };
 
+  // Automatic device schedule reminder for logged-in employees (Forgot Check-In & Forgot Check-Out)
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'employee') return;
+
+    const matchedEmp = employees.find(
+      (e) =>
+        e.id === currentUser.employeeId ||
+        e.code === currentUser.employeeCode ||
+        e.id === currentUser.id ||
+        `user_${e.id}` === currentUser.id
+    );
+    if (!matchedEmp) return;
+
+    const checkSchedule = () => {
+      const now = new Date();
+      const todayStr = now.toLocaleDateString('en-CA');
+      const dayOff = isEmployeeDayOff(matchedEmp, now);
+      if (dayOff) return; // Do not nag staff on their regular Day Off
+
+      // Check if on approved leave
+      const hasApprovedLeave = leaveRequests.some(
+        (l) =>
+          (l.employeeId === matchedEmp.id || l.employeeCode === matchedEmp.code) &&
+          l.status === 'approved' &&
+          todayStr >= l.startDate &&
+          todayStr <= l.endDate
+      );
+      if (hasApprovedLeave) return;
+
+      const empShift = shifts.find((s) => s.id === matchedEmp.shiftId) || shifts[0];
+      const startTime = matchedEmp.shiftStartTime || empShift?.startTime || '08:00';
+      const endTime = matchedEmp.shiftEndTime || empShift?.endTime || '17:00';
+
+      const [startH, startM] = startTime.split(':').map(Number);
+      const [endH, endM] = endTime.split(':').map(Number);
+
+      const shiftStartMinutes = startH * 60 + startM;
+      const shiftEndMinutes = endH * 60 + endM;
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+      // Today's records for this employee
+      const myPunchesToday = attendanceRecords.filter(
+        (r) =>
+          (r.employeeId === matchedEmp.id || r.employeeCode === matchedEmp.code) &&
+          r.timestamp &&
+          new Date(r.timestamp).toLocaleDateString('en-CA') === todayStr
+      );
+
+      const hasCheckedIn = myPunchesToday.some((r) => r.type === 'check_in') || myPunchesToday.length > 0;
+      const hasCheckedOut = myPunchesToday.some((r) => r.type === 'check_out');
+
+      // 1. Forgot Check-In: Shift started > 10 mins ago and hasn't checked in
+      if (!hasCheckedIn && currentMinutes >= shiftStartMinutes + 10 && currentMinutes < shiftEndMinutes) {
+        if (autoRemindedCheckInRef.current !== todayStr && !activeStaffReminder) {
+          autoRemindedCheckInRef.current = todayStr;
+          const reminderPayload: StaffReminderPayload = {
+            reminderId: `auto_in_${todayStr}_${matchedEmp.id}`,
+            targetEmployeeId: matchedEmp.id,
+            targetEmployeeCode: matchedEmp.code,
+            targetBranchId: matchedEmp.branchId,
+            reminderType: 'forgot_checkin',
+            titleKh: '🔔 រំលឹក៖ ដល់ម៉ោងចូលធ្វើការហើយ! សូមស្កេនវត្តមាន (Check-In)',
+            titleEn: '🔔 Reminder: Shift Started — Please Scan Check-In',
+            messageKh: `ជំរាបសួរ ${matchedEmp.nameKh || matchedEmp.nameEn}! វេនការងាររបស់អ្នក (${empShift?.nameKh || 'វេនធម្មតា'} ${startTime} - ${endTime}) បានចាប់ផ្តើមហើយ ប៉ុន្តែប្រព័ន្ធមិនទាន់ឃើញកំណត់ត្រាស្កេនចូលរបស់អ្នកនៅឡើយទេ។ សូមចុចស្កេនវត្តមានឥឡូវនេះ។`,
+            messageEn: `Hello ${matchedEmp.nameEn || 'Staff'}! Your scheduled shift (${startTime} - ${endTime}) has started, but no Check-In was recorded yet today. Please scan your attendance now.`,
+            sentBy: lang === 'km' ? 'ប្រព័ន្ធស្វ័យប្រវត្ត (Auto-Reminder)' : 'System Auto-Reminder',
+            timestamp: new Date().toISOString(),
+            shiftName: lang === 'km' ? empShift?.nameKh : empShift?.nameEn,
+            shiftHours: `${startTime} - ${endTime}`,
+          };
+          triggerBrowserReminderNotification(reminderPayload.titleKh, reminderPayload.messageKh);
+          playReminderRingtone(3);
+          setActiveStaffReminder(reminderPayload);
+        }
+      }
+
+      // 2. Forgot Check-Out: Shift ended > 5 mins ago, checked in, but hasn't checked out
+      if (hasCheckedIn && !hasCheckedOut && currentMinutes >= shiftEndMinutes + 5) {
+        if (autoRemindedCheckOutRef.current !== todayStr && !activeStaffReminder) {
+          autoRemindedCheckOutRef.current = todayStr;
+          const reminderPayload: StaffReminderPayload = {
+            reminderId: `auto_out_${todayStr}_${matchedEmp.id}`,
+            targetEmployeeId: matchedEmp.id,
+            targetEmployeeCode: matchedEmp.code,
+            targetBranchId: matchedEmp.branchId,
+            reminderType: 'forgot_checkout',
+            titleKh: '🔔 រំលឹក៖ ផុតម៉ោងចេញវេនហើយ! សូមកុំភ្លេចស្កេនចេញ (Check-Out)',
+            titleEn: '🔔 Reminder: Shift Ended — Please Scan Check-Out',
+            messageKh: `ជំរាបសួរ ${matchedEmp.nameKh || matchedEmp.nameEn}! វេនការងាររបស់អ្នក (${empShift?.nameKh || 'វេនធម្មតា'}) បានផុតម៉ោងកំណត់ (${endTime}) ហើយ។ ប្រសិនបើអ្នកចប់ការងារហើយ សូមកុំភ្លេចស្កេនចេញ (Check-Out) ដើម្បីកត់ត្រាម៉ោងការងារបានត្រឹមត្រូវ។`,
+            messageEn: `Hello ${matchedEmp.nameEn || 'Staff'}! Your scheduled shift ended at ${endTime}. Please scan Check-Out now to ensure your working hours and timesheet are accurately recorded.`,
+            sentBy: lang === 'km' ? 'ប្រព័ន្ធស្វ័យប្រវត្ត (Auto-Reminder)' : 'System Auto-Reminder',
+            timestamp: new Date().toISOString(),
+            shiftName: lang === 'km' ? empShift?.nameKh : empShift?.nameEn,
+            shiftHours: `${startTime} - ${endTime}`,
+          };
+          triggerBrowserReminderNotification(reminderPayload.titleKh, reminderPayload.messageKh);
+          playReminderRingtone(3);
+          setActiveStaffReminder(reminderPayload);
+        }
+      }
+    };
+
+    checkSchedule();
+    const interval = setInterval(checkSchedule, 45000);
+    return () => clearInterval(interval);
+  }, [currentUser, employees, shifts, attendanceRecords, leaveRequests, lang, activeStaffReminder]);
+
+  // Admin Manual Remote Ring to Staff Device
+  const handleSendStaffReminder = (
+    targetEmp: Employee,
+    reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call' | 'custom' = 'forgot_checkout',
+    customMsg?: string
+  ) => {
+    const reminderId = `remind_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const shiftInfo = shifts.find((s) => s.id === targetEmp.shiftId);
+    const senderName = (currentUser ? (lang === 'km' ? currentUser.nameKh || currentUser.nameEn : currentUser.nameEn) : 'Administrator') || 'Administrator';
+
+    const titleKh = reminderType === 'emergency_roll_call'
+      ? '🚨 ការប្រកាសបន្ទាន់ (Emergency Roll Call)'
+      : reminderType === 'forgot_checkin'
+      ? '🔔 រំលឹក៖ ដល់ម៉ោងចូលធ្វើការហើយ! សូមស្កេនវត្តមាន (Check-In)'
+      : '🔔 រំលឹក៖ ផុតម៉ោងចេញវេនហើយ! សូមកុំភ្លេចស្កេនចេញ (Check-Out)';
+    const titleEn = reminderType === 'emergency_roll_call'
+      ? '🚨 Emergency Safety Roll Call'
+      : reminderType === 'forgot_checkin'
+      ? '🔔 Reminder: Shift Started — Please Scan Check-In'
+      : '🔔 Reminder: Shift Ended — Please Scan Check-Out';
+
+    const messageKh = customMsg || (
+      reminderType === 'emergency_roll_call'
+        ? `ការហៅឈ្មោះបន្ទាន់ដើម្បីសុវត្ថិភាព! សូមបញ្ជាក់វត្តមានជាក់ស្តែងរបស់អ្នកជាបន្ទាន់។`
+        : reminderType === 'forgot_checkin'
+        ? `លោក/លោកស្រី ${targetEmp.nameKh || targetEmp.nameEn} មិនទាន់បានស្កេនចូលធ្វើការនៅឡើយទេ។ សូមស្កេនវត្តមាន (Check-In) ឥឡូវនេះ។`
+        : `លោក/លោកស្រី ${targetEmp.nameKh || targetEmp.nameEn} បានផុតម៉ោងចេញវេនហើយ ប៉ុន្តែមិនទាន់បានស្កេនចេញ (Check-Out) នៅឡើយទេ។ សូមស្កេនចេញឥឡូវនេះ។`
+    );
+    const messageEn = customMsg || (
+      reminderType === 'emergency_roll_call'
+        ? `Emergency Roll Call in progress. Please verify your presence and safety immediately!`
+        : reminderType === 'forgot_checkin'
+        ? `Hello ${targetEmp.nameEn || 'Staff'}, your shift has started but you haven't checked in yet. Please scan Check-In now.`
+        : `Hello ${targetEmp.nameEn || 'Staff'}, your shift has ended but you haven't checked out yet. Please scan Check-Out now.`
+    );
+
+    const reminderPayload: StaffReminderPayload = {
+      reminderId,
+      targetEmployeeId: targetEmp.id,
+      targetEmployeeCode: targetEmp.code,
+      targetBranchId: targetEmp.branchId,
+      reminderType,
+      titleKh,
+      titleEn,
+      messageKh,
+      messageEn,
+      sentBy: senderName,
+      timestamp: new Date().toISOString(),
+      shiftName: shiftInfo ? (lang === 'km' ? shiftInfo.nameKh : shiftInfo.nameEn) : undefined,
+      shiftHours: shiftInfo ? `${shiftInfo.startTime} - ${shiftInfo.endTime}` : undefined,
+    };
+
+    // 1. Emit via Supabase Realtime
+    broadcastSupabaseEvent('RING_STAFF_REMINDER', reminderPayload);
+
+    // 2. Emit via realtimeService
+    realtimeService.emit('RING_STAFF_REMINDER', reminderPayload);
+
+    // 3. Save to Turso & Supabase staff_alerts
+    const alertRecord: ActionAlertItem = {
+      id: `alert_${reminderId}`,
+      type: 'reminder',
+      titleKh,
+      titleEn,
+      detailKh: `${targetEmp.nameKh || targetEmp.nameEn} (${targetEmp.code}): ${messageKh}`,
+      detailEn: `${targetEmp.nameEn} (${targetEmp.code}): ${messageEn}`,
+      actorName: senderName,
+      actorAvatar: targetEmp.avatar,
+      branchId: targetEmp.branchId,
+      branchName: branches.find((b) => b.id === targetEmp.branchId)?.nameEn,
+      timestamp: new Date().toLocaleTimeString(),
+      rawTimestamp: Date.now(),
+      isUnread: true,
+    };
+    saveStaffAlertToTurso(alertRecord);
+    saveStaffAlertToSupabase(alertRecord);
+    addActionAlert(alertRecord);
+
+    // If current user is on this device, trigger local alert immediately
+    if (
+      currentUser &&
+      (currentUser.employeeId === targetEmp.id ||
+        currentUser.employeeCode === targetEmp.code ||
+        currentUser.id === targetEmp.id)
+    ) {
+      playReminderRingtone(3);
+      setActiveStaffReminder(reminderPayload);
+    }
+
+    setLiveToast({
+      title: lang === 'km' ? '🔔 បានផ្ញើសំឡេងរោទិ៍រំលឹកជោគជ័យ' : '🔔 Staff Device Alert Sent',
+      message: `${lang === 'km' ? 'បានបញ្ជូនសំឡេងរោទិ៍ទៅកាន់ឧបករណ៍របស់' : 'Alert ringing triggered for'} ${targetEmp.nameKh || targetEmp.nameEn} (${targetEmp.code})`,
+      type: 'punch',
+    });
+  };
+
+  const handleSendBulkStaffReminders = (
+    targetEmps: Employee[],
+    reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call' = 'forgot_checkout'
+  ) => {
+    if (!targetEmps || targetEmps.length === 0) return;
+    targetEmps.forEach((emp) => handleSendStaffReminder(emp, reminderType));
+    setLiveToast({
+      title: lang === 'km' ? '🔔 បានផ្ញើសំឡេងរោទិ៍រំលឹកជាក្រុមជោគជ័យ' : '🔔 Bulk Alerts Dispatched',
+      message: `${lang === 'km' ? `បានផ្ញើទៅកាន់បុគ្គលិកចំនួន ${targetEmps.length} នាក់` : `Sent ringing reminder alerts to ${targetEmps.length} staff members`}`,
+      type: 'punch',
+    });
+  };
+
   // RESTORE BACKUP DATA
   const handleRestoreBackup = (backupData: SystemBackupData, mode: 'merge' | 'overwrite') => {
     let nextBranches = branches;
@@ -3568,6 +3827,8 @@ export default function App() {
               setSelectedBranchId={setSelectedBranchId}
               onNavigateTab={setActiveTab}
               onOpenTransferModal={handleOpenTransferModal}
+              onRingStaffReminder={handleSendStaffReminder}
+              onRingBulkStaffReminders={handleSendBulkStaffReminders}
               lang={lang}
               onManualSync={handleManualSync}
               isSyncing={isManualSyncing}
@@ -3884,6 +4145,25 @@ export default function App() {
             if (onlineCardEmp.id === empId) {
               setOnlineCardEmp((prev) => prev ? { ...prev, avatar: newUrl } : null);
             }
+          }}
+        />
+      )}
+
+      {/* Staff Device Ringing Attendance Reminder Modal (Auto-Reminder & Admin Trigger) */}
+      {activeStaffReminder && (
+        <StaffReminderAlertModal
+          reminder={activeStaffReminder}
+          lang={lang}
+          onClose={() => setActiveStaffReminder(null)}
+          onNavigateToScan={() => {
+            setActiveStaffReminder(null);
+            setActiveTab('scan');
+          }}
+          onSnooze={(mins) => {
+            setActiveStaffReminder(null);
+            setTimeout(() => {
+              setActiveStaffReminder(activeStaffReminder);
+            }, mins * 60 * 1000);
           }}
         />
       )}

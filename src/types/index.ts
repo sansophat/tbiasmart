@@ -358,7 +358,25 @@ export type SyncEventType =
   | 'SYSTEM_RESTORE'
   | 'PRESENCE_PING'
   | 'PRESENCE_STATE'
-  | 'QUICK_PUNCH_NOTIFY';
+  | 'QUICK_PUNCH_NOTIFY'
+  | 'RING_STAFF_REMINDER';
+
+export interface StaffReminderPayload {
+  reminderId: string;
+  targetEmployeeId?: string;
+  targetEmployeeCode?: string;
+  targetBranchId?: string;
+  reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call' | 'custom';
+  titleKh: string;
+  titleEn: string;
+  messageKh: string;
+  messageEn: string;
+  sentBy: string;
+  timestamp: string;
+  shiftName?: string;
+  shiftHours?: string;
+  isBroadcastAll?: boolean;
+}
 
 export interface SyncMessage<T = any> {
   type: SyncEventType;

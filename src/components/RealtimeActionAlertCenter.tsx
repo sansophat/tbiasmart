@@ -28,7 +28,7 @@ import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
 
 export interface ActionAlertItem {
   id: string;
-  type: 'leave_submit' | 'leave_status' | 'punch' | 'transfer' | 'system' | 'login';
+  type: 'leave_submit' | 'leave_status' | 'punch' | 'transfer' | 'system' | 'login' | 'reminder';
   titleKh: string;
   titleEn: string;
   detailKh: string;

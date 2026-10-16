@@ -96,3 +96,87 @@ export function playAlertChime(type: AlertSoundType = 'alert'): void {
     // Graceful fallback if autoplay restrictions apply
   }
 }
+
+/**
+ * Plays a loud, unmistakable multi-pulse ringing alarm on a staff device
+ * when they forget to Check-In / Check-Out or when Admin rings their device.
+ * Also vibrates mobile devices if supported.
+ */
+export function playReminderRingtone(bursts: number = 3): void {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([450, 150, 450, 150, 650, 250, 450]);
+    }
+  } catch {
+    // Ignore vibration errors
+  }
+
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+
+    const playRingTone = (freq: number, startTime: number, duration: number, gainVal = 0.28) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, startTime);
+
+      gain.gain.setValueAtTime(0.001, startTime);
+      gain.gain.linearRampToValueAtTime(gainVal, startTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(startTime);
+      osc.stop(startTime + duration + 0.02);
+    };
+
+    // Multi-burst phone/alarm ring pattern (A5 <-> D6 rapid trills per burst)
+    for (let b = 0; b < bursts; b++) {
+      const offset = b * 0.85;
+      playRingTone(880, now + offset, 0.11, 0.28);
+      playRingTone(1174.66, now + offset + 0.11, 0.11, 0.28);
+      playRingTone(880, now + offset + 0.22, 0.11, 0.28);
+      playRingTone(1174.66, now + offset + 0.33, 0.18, 0.3);
+      playRingTone(1318.51, now + offset + 0.52, 0.22, 0.28);
+    }
+  } catch {
+    // Graceful fallback if autoplay restrictions apply
+  }
+}
+
+/**
+ * Fires a native browser/OS notification on the staff member's device if permitted.
+ */
+export function triggerBrowserReminderNotification(title: string, body: string): void {
+  try {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        tag: 'tbia-attendance-reminder',
+        requireInteraction: true,
+      });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission()
+        .then((perm) => {
+          if (perm === 'granted') {
+            new Notification(title, {
+              body,
+              icon: '/favicon.ico',
+              tag: 'tbia-attendance-reminder',
+              requireInteraction: true,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  } catch {
+    // Ignore notification errors
+  }
+}
+
