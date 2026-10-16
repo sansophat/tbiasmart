@@ -122,13 +122,6 @@ export async function syncPendingPunches(): Promise<{ synced: number; failed: nu
       // 3. Firebase Cloud Firestore
       saveAttendanceRecordToCloud(record).catch(() => {});
 
-      // 4. Local Express server if running
-      fetch('/api/attendance/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ record }),
-      }).catch(() => {});
-
       if (tursoOk || sbOk) {
         markPunchAsSynced(record.id);
         synced++;
@@ -190,25 +183,11 @@ export async function fetchComprehensiveAttendance(limitCount: number = 500): Pr
     console.warn('[SyncManager] Supabase fetch warning:', e);
   }
 
-  try {
-    // 3. Fetch from local backend server if active
-    const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    if (res?.success && Array.isArray(res?.state?.attendanceRecords)) {
-      res.state.attendanceRecords.forEach((r: AttendanceRecord) => {
-        if (r && r.id && !recordsMap.has(r.id)) {
-          recordsMap.set(r.id, r);
-        }
-      });
-    }
-  } catch (e) {
-    // ignore
-  }
-
   return Array.from(recordsMap.values());
 }
 
 /**
- * Fetch all canonical employees directly from Turso SQLite Cloud, Supabase, and Server,
+ * Fetch all canonical employees directly from Turso SQLite Cloud and Supabase,
  * ensuring newly registered staff are immediately available on all mobile devices.
  */
 export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
@@ -249,14 +228,6 @@ export async function fetchComprehensiveEmployees(): Promise<Employee[]> {
   } catch (err) {
     console.warn('[SyncManager] Peer employees request warning:', err);
   }
-
-  // 4. Fourth attempt: Local server endpoint if available
-  try {
-    const res = await fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    if (res?.success && Array.isArray(res?.state?.employees) && res.state.employees.length > 0) {
-      return res.state.employees;
-    }
-  } catch (_) {}
 
   return [];
 }

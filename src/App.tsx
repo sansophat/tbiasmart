@@ -91,8 +91,14 @@ import {
 import {
   fetchInitialTursoData,
   saveEmployeeToTurso,
+  deleteEmployeeFromTurso,
   saveAttendancePunchToTurso,
   saveLeaveRequestToTurso,
+  deleteLeaveRequestsFromTurso,
+  deleteBranchFromTurso,
+  saveStaffAlertToTurso,
+  clearStaffAlertsFromTurso,
+  deleteSingleStaffAlertFromTurso,
   syncStateToTurso,
 } from './utils/tursoSync';
 import {
@@ -452,8 +458,8 @@ export default function App() {
       safeSetJson('attend_staff_alerts', JSON.stringify([]));
     } catch {}
     setActionAlerts([]);
+    clearStaffAlertsFromTurso(now);
     clearStaffAlertsFromSupabase(now);
-    fetch('/api/staff/alerts', { method: 'DELETE' }).catch(() => {});
     realtimeService.emit('ACTION_ALERT', { action: 'CLEAR_ALL', clearedAt: now });
   };
 
@@ -463,6 +469,7 @@ export default function App() {
       safeSetJson('attend_staff_alerts', JSON.stringify(nextAlerts));
       return nextAlerts;
     });
+    deleteSingleStaffAlertFromTurso(alertId);
     deleteSingleStaffAlertFromSupabase(alertId);
     realtimeService.emit('ACTION_ALERT', { action: 'DISMISS_ONE', alertId });
   };
@@ -655,18 +662,14 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Turso SQLite Cloud, Cloud Firestore, Local Server state, and Supabase PostgreSQL concurrently
-        const [cloudStateRes, serverRes, supabaseRes, tursoRes] = await Promise.allSettled([
+        // Fetch Turso SQLite Cloud (Primary), Supabase PostgreSQL, and Cloud Firestore concurrently
+        const [cloudStateRes, supabaseRes, tursoRes] = await Promise.allSettled([
           getCloudDatabaseState(),
-          fetch('/api/system/state').then((r) => (r.ok ? r.json() : null)).catch(() => null),
           fetchInitialSupabaseData(),
           fetchInitialTursoData(),
         ]);
 
         const cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
-        const sState = (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.state)
-          ? serverRes.value.state
-          : null;
         const suState = (supabaseRes.status === 'fulfilled' && supabaseRes.value)
           ? supabaseRes.value
           : null;
@@ -676,16 +679,14 @@ export default function App() {
 
         if (!isMounted) return;
 
-        // Prioritize populated datasets to ensure no empty overwrites (Turso first)
+        // Prioritize populated datasets to ensure no empty overwrites (Turso SQLite Cloud first)
         const bestBranches = (tState && Array.isArray(tState.branches) && tState.branches.length > 0)
           ? tState.branches
           : (suState && Array.isArray(suState.branches) && suState.branches.length > 0)
             ? suState.branches
             : (cState && Array.isArray(cState.branches) && cState.branches.length > 0)
               ? cState.branches
-              : (sState && Array.isArray(sState.branches) && sState.branches.length > 0)
-                ? sState.branches
-                : null;
+              : null;
 
         const bestEmployees = (tState && Array.isArray(tState.employees) && tState.employees.length > 0)
           ? tState.employees
@@ -693,18 +694,13 @@ export default function App() {
             ? suState.employees
             : (cState && Array.isArray(cState.employees) && cState.employees.length > 0)
               ? cState.employees
-              : (sState && Array.isArray(sState.employees) && sState.employees.length > 0)
-                ? sState.employees
-                : null;
+              : null;
 
         const bestRecords = mergeDatasets(
           (tState?.attendanceRecords || []),
           mergeDatasets(
             (suState?.attendanceRecords || []),
-            mergeDatasets(
-              (cState?.attendanceRecords || []),
-              (sState?.attendanceRecords || [])
-            )
+            (cState?.attendanceRecords || [])
           )
         );
 
@@ -712,57 +708,48 @@ export default function App() {
           ? tState.leaveRequests
           : (suState && Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0)
             ? suState.leaveRequests
-            : (cState && Array.isArray(cState.leaveRequests) && cState.leaveRequests.length > 0)
-              ? cState.leaveRequests
-              : (sState?.leaveRequests || []);
+            : (cState?.leaveRequests || []);
 
         const bestTransfers = (tState && Array.isArray(tState.transferRecords) && tState.transferRecords.length > 0)
           ? tState.transferRecords
           : (suState && Array.isArray(suState.transferRecords) && suState.transferRecords.length > 0)
             ? suState.transferRecords
-            : (cState && Array.isArray(cState.transferRecords) && cState.transferRecords.length > 0)
-              ? cState.transferRecords
-              : (sState?.transferRecords || []);
+            : (cState?.transferRecords || []);
 
         const bestBranchTypes = (tState && Array.isArray(tState.branchTypes) && tState.branchTypes.length > 0)
           ? tState.branchTypes
           : (suState && Array.isArray(suState.branchTypes) && suState.branchTypes.length > 0)
             ? suState.branchTypes
-            : (cState && Array.isArray(cState.branchTypes) && cState.branchTypes.length > 0)
-              ? cState.branchTypes
-              : (sState?.branchTypes || []);
+            : (cState?.branchTypes || []);
 
-        const bestBranding = tState?.branding || suState?.branding || cState?.branding || sState?.branding;
+        const bestBranding = tState?.branding || suState?.branding || cState?.branding;
         const bestRolePerms = (tState && Array.isArray(tState.rolePermissions) && tState.rolePermissions.length > 0)
           ? tState.rolePermissions
           : (suState && Array.isArray(suState.rolePermissions) && suState.rolePermissions.length > 0)
             ? suState.rolePermissions
-            : (cState && Array.isArray(cState.rolePermissions) && cState.rolePermissions.length > 0)
-              ? cState.rolePermissions
-              : (sState?.rolePermissions || []);
-        const bestSettings = tState?.systemSettings || suState?.systemSettings || cState?.systemSettings || sState?.systemSettings;
-        const bestAdmin = tState?.adminProfile || suState?.adminProfile || cState?.adminProfile || sState?.adminProfile;
+            : (cState?.rolePermissions || []);
+        const bestSettings = tState?.systemSettings || suState?.systemSettings || cState?.systemSettings;
+        const bestAdmin = tState?.adminProfile || suState?.adminProfile || cState?.adminProfile;
         const bestAudit = (tState && Array.isArray(tState.auditLogs) && tState.auditLogs.length > 0)
           ? tState.auditLogs
           : (suState && Array.isArray(suState.auditLogs) && suState.auditLogs.length > 0)
             ? suState.auditLogs
-            : (cState && Array.isArray(cState.auditLogs) && cState.auditLogs.length > 0)
-              ? cState.auditLogs
-              : (sState?.auditLogs || []);
-        const bestShifts = (suState && Array.isArray(suState.shifts) && suState.shifts.length > 0)
-          ? suState.shifts
-          : (cState && Array.isArray(cState.shifts) && cState.shifts.length > 0)
-            ? cState.shifts
-            : (sState?.shifts || []);
-        const bestAlerts = (suState && Array.isArray(suState.staffAlerts) && suState.staffAlerts.length > 0)
-          ? suState.staffAlerts
-          : (cState && Array.isArray(cState.staffAlerts) && cState.staffAlerts.length > 0)
-            ? cState.staffAlerts
-            : (sState?.staffAlerts || []);
+            : (cState?.auditLogs || []);
+        const bestShifts = (tState && Array.isArray(tState.shifts) && tState.shifts.length > 0)
+          ? tState.shifts
+          : (suState && Array.isArray(suState.shifts) && suState.shifts.length > 0)
+            ? suState.shifts
+            : (cState?.shifts || []);
+        const bestAlerts = (tState && Array.isArray(tState.staffAlerts) && tState.staffAlerts.length > 0)
+          ? tState.staffAlerts
+          : (suState && Array.isArray(suState.staffAlerts) && suState.staffAlerts.length > 0)
+            ? suState.staffAlerts
+            : (cState?.staffAlerts || []);
 
         const effectiveClearedAt = Math.max(
           alertsClearedAt,
           Number(localStorage.getItem('attend_alerts_cleared_at') || 0),
+          Number((tState as any)?.alertsClearedAt || 0),
           Number((suState as any)?.alertsClearedAt || 0)
         );
         if (effectiveClearedAt > alertsClearedAt) {
@@ -917,13 +904,9 @@ export default function App() {
             shifts: bestShifts,
           };
 
-          // Re-sync server if server had 0 emps
-          if (!sState || !Array.isArray(sState.employees) || sState.employees.length === 0) {
-            fetch('/api/system/state', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ state: reconciledPayload, senderId: 'client_reconcile' }),
-            }).catch(() => {});
+          // Re-sync Turso SQLite Cloud if Turso had 0 emps
+          if (!tState || !Array.isArray(tState.employees) || tState.employees.length === 0) {
+            syncStateToTurso(reconciledPayload);
           }
 
           // Re-sync Firestore if Firestore had 0 emps
@@ -1744,64 +1727,87 @@ export default function App() {
 
   // Proactive Tab Visibility & Focus Sync
   // When Admin unlocks mobile device, wakes PC, or switches back to tab after being offline overnight,
-  // immediately pulls canonical records, leaves, employees, and branches from Supabase PostgreSQL.
+  // immediately pulls canonical records, leaves, employees, and branches from Turso SQLite Cloud & Supabase.
   useEffect(() => {
     let isFetching = false;
     const handleVisibilityOrFocus = async () => {
       if (document.visibilityState === 'visible' && !isFetching) {
         isFetching = true;
         try {
-          const suState = await fetchInitialSupabaseData();
-          if (suState) {
-            if (Array.isArray(suState.attendanceRecords) && suState.attendanceRecords.length > 0) {
+          const [tState, suState] = await Promise.all([
+            fetchInitialTursoData().catch(() => null),
+            fetchInitialSupabaseData().catch(() => null),
+          ]);
+          const canonicalState = tState || suState;
+          if (canonicalState) {
+            const incomingRecords = mergeDatasets(
+              tState?.attendanceRecords || [],
+              suState?.attendanceRecords || []
+            );
+            if (incomingRecords.length > 0) {
               setAttendanceRecords((prev) => {
-                const merged = mergeDatasets(prev, suState.attendanceRecords!);
+                const merged = mergeDatasets(prev, incomingRecords);
                 try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
             }
-            if (Array.isArray(suState.employees) && suState.employees.length > 0) {
+            const incomingEmps = (tState?.employees && tState.employees.length > 0)
+              ? tState.employees
+              : (suState?.employees || []);
+            if (incomingEmps.length > 0) {
               setEmployees((prev) => {
                 const currentTombstones = new Set([
                   ...safeGetJson<string[]>('attend_deleted_employee_ids', []),
                   ...KNOWN_DELETED_EMPLOYEE_IDS,
+                  ...(Array.isArray((tState as any)?.deletedEmployeeIds) ? (tState as any).deletedEmployeeIds : []),
                   ...(Array.isArray((suState as any)?.deletedEmployeeIds) ? (suState as any).deletedEmployeeIds : []),
                 ]);
-                const merged = mergeDatasets(prev, suState.employees!);
+                const merged = mergeDatasets(prev, incomingEmps);
                 const cleaned = deduplicateAndFilterEmployees(merged, currentTombstones);
                 try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
                 return cleaned;
               });
             }
-            if (Array.isArray(suState.branches) && suState.branches.length > 0) {
+            const incomingBranches = (tState?.branches && tState.branches.length > 0)
+              ? tState.branches
+              : (suState?.branches || []);
+            if (incomingBranches.length > 0) {
               setBranches((prev) => {
                 const tombstones = new Set([
                   ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+                  ...(Array.isArray((tState as any)?.deletedBranchIds) ? (tState as any).deletedBranchIds : []),
                   ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
                 ]);
-                const merged = mergeDatasets(prev, suState.branches!).filter((b: Branch) => !tombstones.has(b.id));
+                const merged = mergeDatasets(prev, incomingBranches).filter((b: Branch) => !tombstones.has(b.id));
                 try { safeSetJson('attend_branches', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
             }
-            if (Array.isArray(suState.leaveRequests) && suState.leaveRequests.length > 0) {
+            const incomingLeaves = (tState?.leaveRequests && tState.leaveRequests.length > 0)
+              ? tState.leaveRequests
+              : (suState?.leaveRequests || []);
+            if (incomingLeaves.length > 0) {
               setLeaveRequests((prev) => {
                 const tombstones = new Set([
                   ...safeGetJson<string[]>('attend_deleted_leave_ids', []),
+                  ...(Array.isArray((tState as any)?.deletedLeaveIds) ? (tState as any).deletedLeaveIds : []),
                   ...(Array.isArray((suState as any)?.deletedLeaveIds) ? (suState as any).deletedLeaveIds : []),
                 ]);
-                const merged = mergeDatasets(prev, suState.leaveRequests!).filter((l: LeaveRequest) => !tombstones.has(l.id));
+                const merged = mergeDatasets(prev, incomingLeaves).filter((l: LeaveRequest) => !tombstones.has(l.id));
                 try { safeSetJson('attend_leaves', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
             }
-            if ((suState as any)?.alertsClearedAt) {
-              const suClearedAt = Number((suState as any).alertsClearedAt);
+            const remoteClearedAt = Math.max(
+              Number((tState as any)?.alertsClearedAt || 0),
+              Number((suState as any)?.alertsClearedAt || 0)
+            );
+            if (remoteClearedAt > 0) {
               const localClearedAt = Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
-              if (suClearedAt > localClearedAt) {
-                setAlertsClearedAt(suClearedAt);
-                try { safeSetJson('attend_alerts_cleared_at', String(suClearedAt)); } catch (_) {}
-                setActionAlerts((prev) => prev.filter((a) => (a.rawTimestamp || 0) > suClearedAt));
+              if (remoteClearedAt > localClearedAt) {
+                setAlertsClearedAt(remoteClearedAt);
+                try { safeSetJson('attend_alerts_cleared_at', String(remoteClearedAt)); } catch (_) {}
+                setActionAlerts((prev) => prev.filter((a) => (a.rawTimestamp || 0) > remoteClearedAt));
               }
             }
           }
@@ -2048,23 +2054,16 @@ export default function App() {
     };
   }, [lang]);
 
-  // Periodic background fallback sync (every 5 seconds) to guarantee real-time staff alerts across all devices
+  // Periodic background Turso SQLite Cloud sync (every 6 seconds) to guarantee real-time staff alerts & records across all devices
   useEffect(() => {
     const pollInterval = setInterval(() => {
-      fetch('/api/system/state')
-        .then((res) => {
-          if (!res.ok) return null;
-          const ct = res.headers.get('content-type') || '';
-          if (!ct.includes('application/json')) return null;
-          return res.json();
-        })
-        .then((data) => {
-          if (data && data.success && data.state) {
-            const serverState = data.state;
-            if (Array.isArray(serverState.attendanceRecords)) {
+      fetchInitialTursoData()
+        .then((tursoState) => {
+          if (tursoState) {
+            if (Array.isArray(tursoState.attendanceRecords) && tursoState.attendanceRecords.length > 0) {
               setAttendanceRecords((prevRecords) => {
                 const prevIds = new Set(prevRecords.map((r) => r.id));
-                const newPunches = serverState.attendanceRecords.filter((r: AttendanceRecord) => !prevIds.has(r.id));
+                const newPunches = tursoState.attendanceRecords.filter((r: AttendanceRecord) => !prevIds.has(r.id));
                 if (newPunches.length > 0) {
                   playAlertChime('punch');
                   newPunches.forEach((record: AttendanceRecord) => {
@@ -2089,35 +2088,38 @@ export default function App() {
                       'punch'
                     );
                   });
-                  safeSetJson('attend_records', JSON.stringify(serverState.attendanceRecords));
-                  return serverState.attendanceRecords;
+                  const merged = mergeDatasets(prevRecords, tursoState.attendanceRecords);
+                  safeSetJson('attend_records', JSON.stringify(merged));
+                  return merged;
                 }
                 return prevRecords;
               });
             }
-            // Auto-heal: If local employees is unexpectedly empty but server has employees, restore them immediately!
-            if (Array.isArray(serverState.employees) && serverState.employees.length > 0) {
+            if (Array.isArray(tursoState.employees) && tursoState.employees.length > 0) {
               setEmployees((currentEmps) => {
                 if (!currentEmps || currentEmps.length === 0) {
-                  safeSetJson('attend_employees', JSON.stringify(serverState.employees));
-                  return serverState.employees;
+                  safeSetJson('attend_employees', JSON.stringify(tursoState.employees));
+                  return tursoState.employees;
                 }
                 return currentEmps;
               });
             }
-            if (Array.isArray(serverState.branches) && serverState.branches.length > 0) {
+            if (Array.isArray(tursoState.branches) && tursoState.branches.length > 0) {
               setBranches((currentBranches) => {
                 if (!currentBranches || currentBranches.length === 0) {
-                  safeSetJson('attend_branches', JSON.stringify(serverState.branches));
-                  return serverState.branches;
+                  safeSetJson('attend_branches', JSON.stringify(tursoState.branches));
+                  return tursoState.branches;
                 }
                 return currentBranches;
               });
             }
-            if (Array.isArray(serverState.staffAlerts) && serverState.staffAlerts.length > 0) {
+            if (Array.isArray(tursoState.staffAlerts) && tursoState.staffAlerts.length > 0) {
+              const clearedTime = alertsClearedAt || Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
               setActionAlerts((prev) => {
                 const prevIds = new Set(prev.map((a) => a.id));
-                const newAlerts = serverState.staffAlerts.filter((a: any) => !prevIds.has(a.id));
+                const newAlerts = tursoState.staffAlerts.filter(
+                  (a: any) => !prevIds.has(a.id) && (a.rawTimestamp || 0) > clearedTime
+                );
                 if (newAlerts.length > 0) {
                   const merged = [...newAlerts, ...prev];
                   merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
@@ -2129,12 +2131,12 @@ export default function App() {
           }
         })
         .catch(() => {});
-    }, 4000);
+    }, 6000);
 
     return () => clearInterval(pollInterval);
-  }, [lang]);
+  }, [lang, alertsClearedAt]);
 
-  // Sync to local storage and Cloud Firestore
+  // Sync to local storage and Cloud Databases
   useEffect(() => {
     safeSetJson('attend_lang', lang);
   }, [lang]);
@@ -2207,7 +2209,7 @@ export default function App() {
     safeSetJson('attend_shifts', JSON.stringify(shifts));
   }, [shifts]);
 
-  // Automatically sync any local modifications to Firebase Cloud Firestore
+  // Automatically sync any local modifications to Turso SQLite Cloud, Supabase, and Cloud Firestore
   useEffect(() => {
     // Only push to cloud if:
     // 1. Initial cloud fetch has finished
@@ -2224,6 +2226,20 @@ export default function App() {
     if (branches.length === 0 || employees.length === 0) {
       return;
     }
+
+    syncStateToTurso({
+      branches,
+      employees,
+      leaveRequests,
+      transferRecords,
+      branchTypes,
+      branding,
+      rolePermissions,
+      systemSettings,
+      adminProfile,
+      auditLogs,
+      shifts,
+    });
 
     syncStateToCloudDatabase({
       branches,
@@ -2263,6 +2279,7 @@ export default function App() {
     systemSettings,
     adminProfile,
     auditLogs,
+    shifts,
   ]);
 
   // Handlers with Real-time synchronization
@@ -2321,12 +2338,13 @@ export default function App() {
       'punch'
     );
 
-    // 0. Instantly save individual punch record to Turso SQLite Cloud (Always-on)
+    // 0. Instantly save individual punch record & alert to Turso SQLite Cloud (Always-on)
     saveAttendancePunchToTurso(newRecord).then((ok) => {
       if (ok) {
         markPunchAsSynced(newRecord.id);
       }
     });
+    saveStaffAlertToTurso(punchAlert);
 
     // 1. Instantly save individual punch record directly to Supabase & broadcast in real-time
     saveAttendancePunchToSupabase(newRecord).then((res) => {
@@ -2349,13 +2367,6 @@ export default function App() {
 
     // 4. Background batch sync
     syncStateToCloudDatabase({ attendanceRecords: newRecordsList });
-
-    // 5. Persist to server system_database.json if running
-    fetch('/api/attendance/punch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ record: newRecord, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
@@ -2366,7 +2377,7 @@ export default function App() {
       // 1. Flush any pending unsynced punches from outbox
       await syncPendingPunches();
 
-      // 2. Comprehensive fetch from Supabase and Server
+      // 2. Comprehensive fetch from Turso SQLite Cloud and Supabase
       const comprehensiveRecords = await fetchComprehensiveAttendance(500);
 
       if (comprehensiveRecords.length > 0) {
@@ -2377,11 +2388,18 @@ export default function App() {
         });
       }
 
-      // 3. Also refresh initial data
-      const suState = await fetchInitialSupabaseData();
-      if (suState?.attendanceRecords && suState.attendanceRecords.length > 0) {
+      // 3. Also refresh initial data from Turso SQLite Cloud
+      const [tState, suState] = await Promise.all([
+        fetchInitialTursoData().catch(() => null),
+        fetchInitialSupabaseData().catch(() => null),
+      ]);
+      const extraRecords = mergeDatasets(
+        tState?.attendanceRecords || [],
+        suState?.attendanceRecords || []
+      );
+      if (extraRecords.length > 0) {
         setAttendanceRecords((prev) => {
-          const merged = mergeDatasets(prev, suState.attendanceRecords!);
+          const merged = mergeDatasets(prev, extraRecords);
           try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
           return merged;
         });
@@ -2390,8 +2408,8 @@ export default function App() {
       showLiveAlert(
         lang === 'km' ? '✅ សមកាលកម្មវត្តមានជោគជ័យ' : '✅ Punches Synced Successfully',
         lang === 'km' 
-          ? `បានទាញយក និងផ្គូផ្គងកំណត់ត្រាវត្តមានចុងក្រោយបង្អស់ពីប្រព័ន្ធកណ្តាល ${comprehensiveRecords.length > 0 ? `(${comprehensiveRecords.length} កំណត់ត្រា)` : ''}`
-          : `Fetched and reconciled the latest attendance punches from cloud database.`,
+          ? `បានទាញយក និងផ្គូផ្គងកំណត់ត្រាវត្តមានចុងក្រោយបង្អស់ពីប្រព័ន្ធ Turso Cloud ${comprehensiveRecords.length > 0 ? `(${comprehensiveRecords.length} កំណត់ត្រា)` : ''}`
+          : `Fetched and reconciled the latest attendance punches from Turso Cloud database.`,
         'system'
       );
     } catch (err) {
@@ -2424,6 +2442,7 @@ export default function App() {
     safeSetJson('attend_records', JSON.stringify(nextRecords));
 
     if (targetRecord) {
+      saveAttendancePunchToTurso(targetRecord);
       saveAttendanceRecordToCloud(targetRecord);
       saveAttendancePunchToSupabase(targetRecord);
     }
@@ -2470,17 +2489,12 @@ export default function App() {
     broadcastSupabaseEvent('ADD_EMPLOYEE', preparedEmp);
     broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', nextEmployees);
 
-    // 2. Firebase Cloud Firestore
+    // 3. Firebase Cloud Firestore
     saveEmployeeToCloud(preparedEmp);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
 
-    // 3. Realtime socket & fallback
+    // 4. Realtime socket
     realtimeService.emit('ADD_EMPLOYEE', preparedEmp);
-    fetch('/api/employees/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee: preparedEmp, isNew: true, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateEmployee = (updatedEmp: Employee) => {
@@ -2546,12 +2560,6 @@ export default function App() {
       employees: sanitizeForFirestore(nextEmployees),
       attendanceRecords: sanitizeForFirestore(nextRecords),
     });
-
-    fetch('/api/employees/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleBatchUpdateEmployees = useCallback((newEmployeesList: Employee[]) => {
@@ -2582,17 +2590,16 @@ export default function App() {
       return nextEmployees;
     });
 
-    // Supabase Sync & Broadcast
+    // 1. Turso SQLite Cloud
+    deleteEmployeeFromTurso(id, nextEmployees);
+    syncStateToTurso({ employees: nextEmployees, deletedEmployeeIds: deletedArr });
+
+    // 2. Supabase Sync & Broadcast
     syncStateToSupabase({ employees: nextEmployees, deletedEmployeeIds: deletedArr } as any);
     broadcastSupabaseEvent('DELETE_EMPLOYEE', { id });
 
     realtimeService.emit('DELETE_EMPLOYEE', { id });
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(nextEmployees) });
-    fetch('/api/employees/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employeeId: id, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateEmployeesList = (nextEmployees: Employee[]) => {
@@ -2600,17 +2607,15 @@ export default function App() {
     setEmployees(cleaned);
     safeSetJson('attend_employees', JSON.stringify(cleaned));
 
+    // Turso SQLite Cloud
+    syncStateToTurso({ employees: cleaned });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ employees: cleaned });
     broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', cleaned);
 
     realtimeService.emit('UPDATE_EMPLOYEES_BATCH', cleaned);
     syncStateToCloudImmediate({ employees: sanitizeForFirestore(cleaned) });
-    fetch('/api/employees/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employees: cleaned, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateBranch = (updatedBranch: Branch) => {
@@ -2621,17 +2626,15 @@ export default function App() {
       return nextBranches;
     });
 
+    // Turso SQLite Cloud
+    syncStateToTurso({ branches: nextBranches });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ branches: nextBranches });
     broadcastSupabaseEvent('UPDATE_BRANCH', updatedBranch);
 
     realtimeService.emit('UPDATE_BRANCH', updatedBranch);
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
-    fetch('/api/branches/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: updatedBranch, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateBranchLocation = (
@@ -2666,17 +2669,13 @@ export default function App() {
         setEmployees((prev) =>
           prev.map((e) => (e.id === actingEmpId ? updatedEmp : e))
         );
+        saveEmployeeToTurso(updatedEmp);
         realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
-        fetch('/api/employees/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ employee: updatedEmp, senderId: realtimeService.getClientId() }),
-        }).catch(() => {});
 
         // 2. Update branch coordinates
         let branchName = '';
-        setBranches((prev) =>
-          prev.map((b) => {
+        setBranches((prev) => {
+          const next = prev.map((b) => {
             if (b.id === branchId) {
               branchName = lang === 'km' ? b.nameKh : b.nameEn;
               const updated: Branch = { 
@@ -2687,16 +2686,13 @@ export default function App() {
                 gpsSetAt: new Date().toISOString()
               };
               realtimeService.emit('UPDATE_BRANCH', updated);
-              fetch('/api/branches/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ branch: updated, senderId: realtimeService.getClientId() }),
-              }).catch(() => {});
               return updated;
             }
             return b;
-          })
-        );
+          });
+          syncStateToTurso({ branches: next });
+          return next;
+        });
 
         // 3. Add Audit Log
         handleAddAuditLog({
@@ -2722,22 +2718,19 @@ export default function App() {
 
     // Admin / Manager / Generic Update
     let updatedBranchName = '';
-    setBranches((prev) =>
-      prev.map((b) => {
+    setBranches((prev) => {
+      const next = prev.map((b) => {
         if (b.id === branchId) {
           updatedBranchName = lang === 'km' ? b.nameKh : b.nameEn;
           const updated = { ...b, lat, lng };
           realtimeService.emit('UPDATE_BRANCH', updated);
-          fetch('/api/branches/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ branch: updated, senderId: realtimeService.getClientId() }),
-          }).catch(() => {});
           return updated;
         }
         return b;
-      })
-    );
+      });
+      syncStateToTurso({ branches: next });
+      return next;
+    });
 
     return {
       success: true,
@@ -2755,17 +2748,15 @@ export default function App() {
       return nextBranches;
     });
 
+    // Turso SQLite Cloud
+    syncStateToTurso({ branches: nextBranches });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ branches: nextBranches });
     broadcastSupabaseEvent('UPDATE_BRANCH', newBranch);
 
     realtimeService.emit('UPDATE_BRANCH', newBranch);
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
-    fetch('/api/branches/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: newBranch, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleDeleteBranch = (branchId: string) => {
@@ -2782,86 +2773,61 @@ export default function App() {
       return nextBranches;
     });
 
+    // Turso SQLite Cloud
+    deleteBranchFromTurso(branchId, nextBranches);
+    syncStateToTurso({ branches: nextBranches, deletedBranchIds: deletedArr });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ branches: nextBranches, deletedBranchIds: deletedArr } as any);
     broadcastSupabaseEvent('DELETE_BRANCH', { id: branchId });
 
     realtimeService.emit('DELETE_BRANCH', { id: branchId });
     syncStateToCloudImmediate({ branches: sanitizeForFirestore(nextBranches) });
-    fetch('/api/branches/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branchId, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleAddBranchType = (typeConfig: BranchTypeConfig) => {
     setBranchTypes((prev) => {
       const updated = [...prev, typeConfig];
       safeSetJson('attend_branch_types', JSON.stringify(updated));
+      syncStateToTurso({ branchTypes: updated });
       return updated;
     });
-    fetch('/api/branch-types/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branchType: typeConfig, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateBranchType = (typeConfig: BranchTypeConfig) => {
     setBranchTypes((prev) => {
       const updated = prev.map((t) => (t.id === typeConfig.id ? typeConfig : t));
       safeSetJson('attend_branch_types', JSON.stringify(updated));
+      syncStateToTurso({ branchTypes: updated });
       return updated;
     });
-    fetch('/api/branch-types/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branchType: typeConfig, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleDeleteBranchType = (typeId: string) => {
     setBranchTypes((prev) => {
       const updated = prev.filter((t) => t.id !== typeId);
       safeSetJson('attend_branch_types', JSON.stringify(updated));
+      syncStateToTurso({ branchTypes: updated });
       return updated;
     });
-    fetch('/api/branch-types/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ typeId, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateBranding = (newBranding: CompanyBranding) => {
     setBranding(newBranding);
+    syncStateToTurso({ branding: newBranding });
     realtimeService.emit('UPDATE_BRANDING', newBranding);
-    fetch('/api/system/branding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branding: newBranding, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateSystemSettings = (newSettings: SystemSettings) => {
     setSystemSettings(newSettings);
+    syncStateToTurso({ systemSettings: newSettings });
     realtimeService.emit('UPDATE_SETTINGS', newSettings);
-    fetch('/api/system/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: newSettings, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateRolePermissions = (newRoles: RolePermission[]) => {
     setRolePermissions(newRoles);
+    syncStateToTurso({ rolePermissions: newRoles });
     realtimeService.emit('UPDATE_ROLE_PERMISSIONS', newRoles);
-    fetch('/api/system/state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: { rolePermissions: newRoles }, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleSubmitLeaveRequest = (newRequest: LeaveRequest) => {
@@ -2915,16 +2881,10 @@ export default function App() {
 
     // Sync to Turso SQLite Cloud
     saveLeaveRequestToTurso(cleanRequest);
-    syncStateToTurso({ leaveRequests: nextLeaves });
+    syncStateToTurso({ leaveRequests: nextLeaves, auditLogs: [logEntry, ...auditLogs] });
 
     syncStateToSupabase({ leaveRequests: nextLeaves });
     broadcastSupabaseEvent('SUBMIT_LEAVE', cleanRequest);
-
-    fetch('/api/leaves/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request: cleanRequest, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleUpdateLeaveStatus = (requestId: string, newStatus: 'approved' | 'rejected', comment?: string) => {
@@ -3023,13 +2983,8 @@ export default function App() {
               sickLeaveUsed: nextSickUsed,
             };
 
+            saveEmployeeToTurso(updatedEmp);
             realtimeService.emit('UPDATE_EMPLOYEE', updatedEmp);
-            fetch('/api/employees/save', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ employee: updatedEmp, isNew: false, senderId: realtimeService.getClientId() }),
-            }).catch(() => {});
-
             return updatedEmp;
           }
           return emp;
@@ -3046,18 +3001,12 @@ export default function App() {
     });
 
     // Sync to Turso SQLite Cloud
-    syncStateToTurso({ leaveRequests: nextLeaves, employees: nextEmployees });
+    syncStateToTurso({ leaveRequests: nextLeaves, employees: nextEmployees, auditLogs: [logEntry, ...auditLogs] });
 
     syncStateToSupabase({ leaveRequests: nextLeaves, employees: nextEmployees });
     broadcastSupabaseEvent('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
 
     realtimeService.emit('UPDATE_LEAVE_STATUS', { requestId, status: newStatus, approvedBy: approver, comment });
-
-    fetch('/api/leaves/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId, status: newStatus, approvedBy: approver, comment, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleDeleteLeaveRequest = (requestId: string) => {
@@ -3081,17 +3030,16 @@ export default function App() {
       return nextAlerts;
     });
 
+    // Turso SQLite Cloud
+    deleteLeaveRequestsFromTurso([requestId], nextLeaves);
+    syncStateToTurso({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr } as any);
     broadcastSupabaseEvent('DELETE_LEAVE', { id: requestId });
 
     realtimeService.emit('DELETE_LEAVE', { id: requestId });
     syncStateToCloudImmediate({ leaveRequests: sanitizeForFirestore(nextLeaves) });
-    fetch('/api/leaves/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleClearLeaveApprovals = (scope: 'processed' | 'all' = 'processed') => {
@@ -3126,17 +3074,16 @@ export default function App() {
       });
     }
 
+    // Turso SQLite Cloud
+    deleteLeaveRequestsFromTurso(idsToDelete, nextLeaves);
+    syncStateToTurso({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr });
+
     // Supabase Sync & Broadcast
     syncStateToSupabase({ leaveRequests: nextLeaves, deletedLeaveIds: deletedArr } as any);
     broadcastSupabaseEvent('CLEAR_LEAVES', { scope, deletedIds: idsToDelete });
 
     realtimeService.emit('CLEAR_LEAVES', { scope, deletedIds: idsToDelete });
     syncStateToCloudImmediate({ leaveRequests: sanitizeForFirestore(nextLeaves) });
-    fetch('/api/leaves/clear', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope, senderId: realtimeService.getClientId() }),
-    }).catch(() => {});
   };
 
   const handleAddAuditLog = (log: AuditLogEntry) => {
@@ -3217,16 +3164,15 @@ export default function App() {
       });
     }
 
+    syncStateToTurso({
+      employees: nextEmployees,
+      transferRecords: nextTransfers,
+    });
     realtimeService.emit('TRANSFER_EMPLOYEE', record);
     syncStateToCloudImmediate({
       employees: sanitizeForFirestore(nextEmployees),
       transferRecords: sanitizeForFirestore(nextTransfers),
     });
-    fetch('/api/employees/transfer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ record }),
-    }).catch(() => {});
 
     handleAddAuditLog({
       id: `log_${Date.now()}`,
@@ -3289,8 +3235,7 @@ export default function App() {
       if (backupData.transferRecords) setTransferRecords((prev) => { nextTransfers = mergeDatasets(prev, backupData.transferRecords!); return nextTransfers; });
     }
 
-    // Persist immediately to Firebase Cloud Firestore for all devices & incognito
-    syncStateToCloudImmediate({
+    const restorePayload = {
       branches: nextBranches,
       employees: nextEmployees,
       attendanceRecords: nextRecords,
@@ -3301,14 +3246,13 @@ export default function App() {
       systemSettings: backupData.systemSettings || systemSettings,
       adminProfile: nextAdminProfile,
       auditLogs: backupData.auditLogs || auditLogs,
-    });
+    };
+
+    // Persist immediately to Turso SQLite Cloud & Cloud Firestore
+    syncStateToTurso(restorePayload);
+    syncStateToCloudImmediate(restorePayload);
 
     realtimeService.emit('SYSTEM_RESTORE', { backupData, restoreMode: mode });
-    fetch('/api/system/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ backupData, restoreMode: mode }),
-    }).catch(() => {});
 
     handleAddAuditLog({
       id: `log_${Date.now()}`,
@@ -3318,7 +3262,7 @@ export default function App() {
       action: 'Restored System Database',
       actionKh: 'ស្តារទិន្នន័យប្រព័ន្ធឡើងវិញ (Database Restore)',
       module: 'backup',
-      details: `Restored ${backupData.summary?.branchesCount || 0} branches, ${backupData.summary?.employeesCount || 0} staff via ${mode.toUpperCase()} mode to Cloud Firestore.`,
+      details: `Restored ${backupData.summary?.branchesCount || 0} branches, ${backupData.summary?.employeesCount || 0} staff via ${mode.toUpperCase()} mode to Turso Cloud.`,
       detailsKh: `បានស្តារទិន្នន័យប្រព័ន្ធ (${mode === 'overwrite' ? 'ជំនួសទាំងស្រុង' : 'បញ្ចូលបន្ថែម'}) ចំនួន ${backupData.summary?.branchesCount || 0} សាខាទៅកាន់ Cloud។`,
       status: 'success',
     });
@@ -3368,8 +3312,7 @@ export default function App() {
       safeSetJson('attend_audit_logs', JSON.stringify([]));
     }
 
-    // Sync reset to Cloud Firestore
-    syncStateToCloudDatabase({
+    const resetPayload = {
       branches: freshBranches,
       employees: freshEmployees,
       attendanceRecords: freshRecords,
@@ -3378,14 +3321,13 @@ export default function App() {
       branding: type === 'demo_seed' ? INITIAL_BRANDING : branding,
       rolePermissions: type === 'demo_seed' ? INITIAL_ROLE_PERMISSIONS : rolePermissions,
       systemSettings: type === 'demo_seed' ? INITIAL_SYSTEM_SETTINGS : systemSettings,
-    });
+    };
+
+    // Sync reset to Turso SQLite Cloud & Cloud Firestore
+    syncStateToTurso(resetPayload);
+    syncStateToCloudDatabase(resetPayload);
 
     realtimeService.emit('SYSTEM_RESET', { resetType: type });
-    fetch('/api/system/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resetType: type }),
-    }).catch(() => {});
 
     handleAddAuditLog({
       id: `log_${Date.now()}`,
@@ -3408,6 +3350,7 @@ export default function App() {
     if (updatedUser.role === 'admin' || updatedUser.id === 'user_admin' || updatedUser.username === 'admin') {
       setAdminProfile(updatedUser);
       safeSetJson('attend_admin_profile', JSON.stringify(updatedUser));
+      syncStateToTurso({ adminProfile: updatedUser });
       syncStateToCloudImmediate({ adminProfile: updatedUser });
     }
 
@@ -3439,16 +3382,6 @@ export default function App() {
     }
 
     realtimeService.emit('UPDATE_USER_PROFILE', { user: updatedUser, employee: finalMergedEmp || matchedEmployee });
-
-    fetch('/api/user/profile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user: updatedUser,
-        employee: finalMergedEmp || matchedEmployee,
-        senderId: realtimeService.getClientId(),
-      }),
-    }).catch(() => {});
   };
 
   const handleLogin = (user: AuthUser) => {
@@ -3505,7 +3438,8 @@ export default function App() {
     };
     handleAddAuditLog(auditLog);
 
-    // Broadcast to Supabase Realtime
+    // Persist to Turso SQLite Cloud & Broadcast to Supabase Realtime
+    saveStaffAlertToTurso(loginAlert as ActionAlertItem);
     saveStaffAlertToSupabase(loginAlert as ActionAlertItem);
     broadcastSupabaseEvent('STAFF_LOGIN', {
       user,
@@ -3523,20 +3457,6 @@ export default function App() {
       alert: loginAlert,
       auditLog,
     });
-
-    // Notify server endpoint to store in serverDb.staffAlerts and auditLogs
-    fetch('/api/staff/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user,
-        employee: matchedEmp,
-        branch: empBranch,
-        alert: loginAlert,
-        auditLog,
-        senderId: realtimeService.getClientId(),
-      }),
-    }).catch(() => {});
   };
 
   const handleLogout = () => {
