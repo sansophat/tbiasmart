@@ -150,20 +150,41 @@ export function generateDailyTimesheetRows(
       const isSunRest = isSunday && isEmployeeSundayRest(emp);
       const empLeave = getEmployeeLeaveOnDate(emp, dateStr, leaveRequests);
       
-      // Find punches for this employee on this date (timezone-aware)
-      const dayPunches = records.filter((r) => {
-        if (!r || !r.timestamp) return false;
-        if (!doesRecordMatchEmployee(r, emp)) return false;
-        const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
-        return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
-      });
+      // Find punches for this employee on this date (timezone-aware in local time)
+      const dayPunches = records
+        .filter((r) => {
+          if (!r || !r.timestamp) return false;
+          if (!doesRecordMatchEmployee(r, emp)) return false;
+          const parsed = new Date(r.timestamp);
+          if (!isNaN(parsed.getTime())) {
+            return parsed.toLocaleDateString('en-CA') === dateStr;
+          }
+          return r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
+        })
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-      const checkIns = dayPunches.filter((p) => p.type === 'check_in').sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-      const checkOuts = dayPunches.filter((p) => p.type === 'check_out').sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
+      let firstIn = dayPunches.find((p) => p.type === 'check_in');
+      if (!firstIn && dayPunches.length > 0) {
+        const earliest = dayPunches[0];
+        if (new Date(earliest.timestamp).getHours() < 11 || dayPunches.length >= 2) {
+          firstIn = earliest;
+        }
+      }
+
+      let lastOut = [...dayPunches]
+        .reverse()
+        .find((p) => p.type === 'check_out' && (!firstIn || p.id !== firstIn.id));
+      if (!lastOut && firstIn && dayPunches.length >= 2) {
+        const latest = dayPunches[dayPunches.length - 1];
+        const gapHours =
+          (new Date(latest.timestamp).getTime() - new Date(firstIn.timestamp).getTime()) / (1000 * 60 * 60);
+        if (latest.id !== firstIn.id && gapHours >= 1) {
+          lastOut = latest;
+        }
+      }
+
+      const checkIns = firstIn ? [firstIn] : [];
+      const checkOuts = lastOut ? [lastOut] : [];
 
       let timeInStr = '--:--';
       let timeOutStr = '--:--';
@@ -173,8 +194,7 @@ export function generateDailyTimesheetRows(
       let isDayOffFlag = false;
       let isLeaveFlag = false;
 
-      if (checkIns.length > 0) {
-        const firstIn = checkIns[0];
+      if (firstIn) {
         const inDate = new Date(firstIn.timestamp);
         timeInStr = inDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
         
@@ -183,8 +203,7 @@ export function generateDailyTimesheetRows(
           ? `Verified GPS (${firstIn.distanceToBranch}m from venue)`
           : `⚠️ Geofence Warning (${firstIn.distanceToBranch}m away)`;
 
-        if (checkOuts.length > 0) {
-          const lastOut = checkOuts[0];
+        if (lastOut) {
           const outDate = new Date(lastOut.timestamp);
           timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
@@ -198,8 +217,7 @@ export function generateDailyTimesheetRows(
             }
           }
         }
-      } else if (checkOuts.length > 0) {
-        const lastOut = checkOuts[0];
+      } else if (lastOut) {
         const outDate = new Date(lastOut.timestamp);
         timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
         statusStr = 'Check-Out Only';

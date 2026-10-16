@@ -211,13 +211,16 @@ export function getEmployeeRosterDay(
     if (!rec || !rec.timestamp) return false;
     const isSameEmp = 
       (safeEmp.id && rec.employeeId === safeEmp.id) || 
-      (safeEmp.code && rec.employeeCode === safeEmp.code) ||
+      (safeEmp.code && rec.employeeCode && rec.employeeCode.toLowerCase() === safeEmp.code.toLowerCase()) ||
       (safeEmp.id && rec.employeeId === safeEmp.id.replace('user_', '')) ||
       (safeEmp.nameEn && rec.employeeNameEn && safeEmp.nameEn.toLowerCase() === rec.employeeNameEn.toLowerCase());
     if (!isSameEmp) return false;
-    const localRecDate = new Date(rec.timestamp).toLocaleDateString('en-CA');
+    const parsed = new Date(rec.timestamp);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString('en-CA') === targetDateStr;
+    }
     const rawDate = typeof rec.timestamp === 'string' ? rec.timestamp.slice(0, 10) : '';
-    return localRecDate === targetDateStr || rawDate === targetDateStr;
+    return rawDate === targetDateStr;
   });
 
   // Sort chronologically safely
@@ -227,8 +230,25 @@ export function getEmployeeRosterDay(
     return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
   });
 
-  const checkInRecord = records.find((r) => r && r.type === 'check_in');
-  const checkOutRecord = records.find((r) => r && r.type === 'check_out');
+  let checkInRecord = records.find((r) => r && r.type === 'check_in');
+  if (!checkInRecord && records.length > 0) {
+    const earliest = records[0];
+    if (new Date(earliest.timestamp).getHours() < 11 || records.length >= 2) {
+      checkInRecord = earliest;
+    }
+  }
+
+  let checkOutRecord = [...records]
+    .reverse()
+    .find((r) => r && r.type === 'check_out' && (!checkInRecord || r.id !== checkInRecord.id));
+  if (!checkOutRecord && checkInRecord && records.length >= 2) {
+    const latest = records[records.length - 1];
+    const gapHours =
+      (new Date(latest.timestamp).getTime() - new Date(checkInRecord.timestamp).getTime()) / (1000 * 60 * 60);
+    if (latest.id !== checkInRecord.id && gapHours >= 1) {
+      checkOutRecord = latest;
+    }
+  }
 
   const hasScannedIn = Boolean(checkInRecord);
   const hasScannedOut = Boolean(checkOutRecord);

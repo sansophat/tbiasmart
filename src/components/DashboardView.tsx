@@ -143,7 +143,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const pendingLocationExceptions = todayRecords.filter((r) => r.locationExceptionStatus === 'pending');
 
   // Real-Time Attendance Feed filter state
-  const [feedFilter, setFeedFilter] = useState<'all' | 'morning' | 'afternoon' | 'dayoff' | 'ot'>('all');
+  const [feedFilter, setFeedFilter] = useState<'all' | 'morning' | 'afternoon' | 'checked_out' | 'no_checkout' | 'dayoff' | 'ot'>('all');
+
+  // Staff Information Popup Modal state (triggered when clicking on staff images in Today's Real-Time Attendance Feed)
+  const [selectedStaffInfoRecord, setSelectedStaffInfoRecord] = useState<AttendanceRecord | null>(null);
 
   // Real-Time Attendance Feed: ONLY show punches recorded TODAY
   const todayFeedRecords = relevantRecords
@@ -153,7 +156,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Staff scheduled for weekly Day Off today
   const staffOnDayOffToday = relevantEmployees.filter((emp) => isEmployeeDayOff(emp, now));
 
-  // Helper to compute Workshift, Day Off, and OT details for any attendance record
+  // Helper to compute Workshift, Day Off, OT, and paired Check-In / Check-Out details for any attendance record
   const getRecordShiftDayOffAndOt = (rec: AttendanceRecord) => {
     const matchedEmp = employees.find((e) => doesRecordMatchEmployee(rec, e));
     const empShift = shifts.find((s) => s.id === matchedEmp?.shiftId) || shifts[0];
@@ -188,19 +191,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const approvedOtReq = empOtRequests.find((r) => r.status === 'approved');
     const pendingOtReq = empOtRequests.find((r) => r.status === 'pending');
 
-    // 2) Calculate actual worked hours & post-shift overtime from today's punches
+    // 2) Find all punches today for this employee (sorted chronologically: earliest first)
     const empPunchesToday = todayRecords
       .filter((r) =>
         matchedEmp
           ? doesRecordMatchEmployee(r, matchedEmp)
-          : r.employeeId === rec.employeeId || r.employeeCode === rec.employeeCode
+          : (r.employeeId && r.employeeId === rec.employeeId) ||
+            (r.employeeCode && rec.employeeCode && r.employeeCode.toLowerCase() === rec.employeeCode.toLowerCase())
       )
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    const firstCheckIn = empPunchesToday.find((r) => r.type === 'check_in');
-    const lastCheckOut = [...empPunchesToday].reverse().find((r) => r.type === 'check_out');
+    // Smart pairing for Check-In and Check-Out:
+    // - Explicit check_in (or if employee accidentally tapped check_out at 6 AM with no check_in, treat earliest morning punch as check_in)
+    let firstCheckIn = empPunchesToday.find((r) => r.type === 'check_in');
+    if (!firstCheckIn && empPunchesToday.length > 0) {
+      const earliest = empPunchesToday[0];
+      const earliestHour = new Date(earliest.timestamp).getHours();
+      if (earliestHour < 11 || empPunchesToday.length >= 2) {
+        firstCheckIn = earliest;
+      }
+    }
 
+    // - Explicit check_out that occurred after firstCheckIn (or if employee tapped check_in twice with >1h gap, treat latest punch as check_out)
+    let lastCheckOut = [...empPunchesToday]
+      .reverse()
+      .find((r) => r.type === 'check_out' && (!firstCheckIn || r.id !== firstCheckIn.id));
+
+    if (!lastCheckOut && firstCheckIn && empPunchesToday.length >= 2) {
+      const latestPunch = empPunchesToday[empPunchesToday.length - 1];
+      const gapHours =
+        (new Date(latestPunch.timestamp).getTime() - new Date(firstCheckIn.timestamp).getTime()) / (1000 * 60 * 60);
+      if (latestPunch.id !== firstCheckIn.id && gapHours >= 1) {
+        lastCheckOut = latestPunch;
+      }
+    }
+
+    const hasCheckedInToday = Boolean(firstCheckIn);
+    const hasCheckedOutToday = Boolean(lastCheckOut);
+
+    const checkInTimeStr = firstCheckIn
+      ? new Date(firstCheckIn.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '--:--';
+    const checkOutTimeStr = lastCheckOut
+      ? new Date(lastCheckOut.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '--:--';
+
+    // Determine if employee's shift has already ended today without checking out (e.g. Morning Shift forgot check-out)
+    const sId = (matchedEmp?.shiftId || empShift?.id || '').toLowerCase();
+    const firstInHour = firstCheckIn ? new Date(firstCheckIn.timestamp).getHours() : 12;
+    const isMorningWorker = sId.includes('morning') || sId.includes('s1') || firstInHour < 9;
+
+    const endTimeStr =
+      matchedEmp?.shiftEndTime ||
+      matchedEmp?.customEndTime ||
+      empShift?.endTime ||
+      (isMorningWorker ? '13:00' : '19:00');
+    const [endH, endM] = endTimeStr.split(':').map(Number);
+    const scheduledEndDate = new Date(now);
+    scheduledEndDate.setHours(endH || (isMorningWorker ? 13 : 19), endM || 0, 0, 0);
+
+    // If morning worker checked in early (<9 AM), their shift typically ends at 13:00 or 14:00 (or after 7h-8h of work)
+    const hoursSinceCheckIn = firstCheckIn
+      ? (now.getTime() - new Date(firstCheckIn.timestamp).getTime()) / (1000 * 60 * 60)
+      : 0;
     const scheduledDailyHours = matchedEmp?.scheduledDailyHours || empShift?.workHours || 8;
+
+    const isPastShiftEnd =
+      !hasCheckedOutToday &&
+      hasCheckedInToday &&
+      (now.getTime() > scheduledEndDate.getTime() + 15 * 60 * 1000 ||
+        hoursSinceCheckIn >= scheduledDailyHours + 0.25 ||
+        (isMorningWorker && now.getHours() >= 14));
+
     let workedHoursToday = 0;
     let calculatedOtHours = 0;
 
@@ -210,13 +272,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (workedHoursToday > scheduledDailyHours + 0.25) {
         calculatedOtHours = Number((workedHoursToday - scheduledDailyHours).toFixed(1));
       }
+    } else if (firstCheckIn && !lastCheckOut) {
+      const diffMs = now.getTime() - new Date(firstCheckIn.timestamp).getTime();
+      workedHoursToday = Math.max(0, diffMs / (1000 * 60 * 60));
     }
 
     // Also check if check-out punch is after scheduled shift end time
-    const endTimeStr = matchedEmp?.customEndTime || empShift?.endTime;
-    if (rec.type === 'check_out' && endTimeStr && calculatedOtHours === 0) {
-      const [endH, endM] = endTimeStr.split(':').map(Number);
-      const punchDate = new Date(rec.timestamp);
+    if (lastCheckOut && endTimeStr && calculatedOtHours === 0) {
+      const punchDate = new Date(lastCheckOut.timestamp);
       const shiftEndDate = new Date(punchDate);
       shiftEndDate.setHours(endH || 0, endM || 0, 0, 0);
       const extraHours = (punchDate.getTime() - shiftEndDate.getTime()) / (1000 * 60 * 60);
@@ -268,6 +331,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       totalOtHours,
       otDisplayLabel,
       workedHoursToday: Number(workedHoursToday.toFixed(1)),
+      empPunchesToday,
+      firstCheckIn,
+      lastCheckOut,
+      hasCheckedInToday,
+      hasCheckedOutToday,
+      checkInTimeStr,
+      checkOutTimeStr,
+      isPastShiftEnd,
+      isMorningWorker,
+      endTimeStr,
     };
   };
 
@@ -276,11 +349,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     meta: getRecordShiftDayOffAndOt(rec),
   }));
 
-  const filteredFeedItems = enrichedFeedRecords.filter(({ meta }) => {
+  const filteredFeedItems = enrichedFeedRecords.filter(({ rec, meta }) => {
     if (feedFilter === 'all') return true;
     const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
-    if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1');
-    if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2');
+    if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
+    if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2') || (!meta.isMorningWorker && !sId.includes('office'));
+    if (feedFilter === 'checked_out') return rec.type === 'check_out' || meta.hasCheckedOutToday;
+    if (feedFilter === 'no_checkout') return meta.hasCheckedInToday && !meta.hasCheckedOutToday;
     if (feedFilter === 'dayoff') return meta.isWorkingOnDayOff;
     if (feedFilter === 'ot') return meta.hasOt;
     return true;
@@ -288,12 +363,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const morningFeedCount = enrichedFeedRecords.filter(({ meta }) => {
     const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
-    return sId.includes('morning') || sId.includes('s1');
+    return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
   }).length;
   const afternoonFeedCount = enrichedFeedRecords.filter(({ meta }) => {
     const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
     return sId.includes('afternoon') || sId.includes('s2');
   }).length;
+  const checkedOutFeedCount = enrichedFeedRecords.filter(({ rec, meta }) => rec.type === 'check_out' || meta.hasCheckedOutToday).length;
+  const noCheckOutFeedCount = enrichedFeedRecords.filter(({ meta }) => meta.hasCheckedInToday && !meta.hasCheckedOutToday).length;
   const workingOnDayOffFeedCount = enrichedFeedRecords.filter(({ meta }) => meta.isWorkingOnDayOff).length;
   const otFeedCount = enrichedFeedRecords.filter(({ meta }) => meta.hasOt).length;
   
@@ -1055,14 +1132,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 { id: 'all', labelKh: `ទាំងអស់ (${todayFeedRecords.length})`, labelEn: `All (${todayFeedRecords.length})` },
                 { id: 'morning', labelKh: `វេនព្រឹក (${morningFeedCount})`, labelEn: `Morning Shift (${morningFeedCount})` },
                 { id: 'afternoon', labelKh: `វេនរសៀល (${afternoonFeedCount})`, labelEn: `Afternoon Shift (${afternoonFeedCount})` },
+                { id: 'checked_out', labelKh: `បានស្កេនចេញ (${checkedOutFeedCount})`, labelEn: `Checked Out (${checkedOutFeedCount})` },
+                { id: 'no_checkout', labelKh: `មិនទាន់ស្កេនចេញ (${noCheckOutFeedCount})`, labelEn: `No Check-Out (${noCheckOutFeedCount})` },
                 { id: 'dayoff', labelKh: `ធ្វើការថ្ងៃសម្រាក (${workingOnDayOffFeedCount})`, labelEn: `Day-Off Work (${workingOnDayOffFeedCount})` },
                 { id: 'ot', labelKh: `ថែមម៉ោង OT (${otFeedCount})`, labelEn: `Overtime OT (${otFeedCount})` },
               ].map((pill) => (
                 <button
                   key={pill.id}
                   type="button"
-                  onClick={() => setFeedFilter(pill.id as 'all' | 'morning' | 'afternoon' | 'dayoff' | 'ot')}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition border ${
+                  onClick={() => setFeedFilter(pill.id as 'all' | 'morning' | 'afternoon' | 'checked_out' | 'no_checkout' | 'dayoff' | 'ot')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition border cursor-pointer ${
                     feedFilter === pill.id
                       ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
@@ -1074,7 +1153,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <div className="p-4 space-y-2.5 max-h-[480px] overflow-y-auto">
+          <div className="p-4 space-y-2.5 max-h-[520px] overflow-y-auto">
             {filteredFeedItems.length === 0 ? (
               <div className="py-12 px-4 text-center">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-500 flex items-center justify-center mx-auto mb-3">
@@ -1106,6 +1185,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   hasOt,
                   otDisplayLabel,
                   workedHoursToday,
+                  hasCheckedInToday,
+                  hasCheckedOutToday,
+                  checkInTimeStr,
+                  checkOutTimeStr,
+                  isPastShiftEnd,
+                  endTimeStr,
                 } = meta;
 
                 const avatarSrc =
@@ -1116,26 +1201,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 return (
                   <div
                     key={rec.id}
-                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition space-y-2.5"
+                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 hover:border-indigo-200 transition space-y-2.5"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center space-x-3 min-w-0">
-                        <img
-                          src={avatarSrc}
-                          alt={rec.employeeNameEn || 'Employee'}
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src =
-                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                          }}
-                          className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-200 shrink-0"
-                        />
+                        {/* Clickable Staff Avatar -> Opens Staff Information Popup Modal */}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStaffInfoRecord(rec)}
+                          title={
+                            lang === 'km'
+                              ? 'ចុចលើរូបភាពដើម្បីមើលព័ត៌មានលម្អិតបុគ្គលិក និងម៉ោងចូល/ចេញ'
+                              : 'Click image to view full staff profile & Check-In / Check-Out details'
+                          }
+                          className="relative group/avatar shrink-0 cursor-pointer focus:outline-none"
+                        >
+                          <img
+                            src={avatarSrc}
+                            alt={rec.employeeNameEn || 'Employee'}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src =
+                                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                            }}
+                            className="w-11 h-11 rounded-xl object-cover border-2 border-indigo-200 shadow-sm bg-slate-200 group-hover/avatar:ring-2 group-hover/avatar:ring-indigo-500 group-hover/avatar:scale-105 transition-all"
+                          />
+                          <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs group-hover/avatar:bg-indigo-700">
+                            i
+                          </span>
+                        </button>
+
                         <div className="min-w-0">
                           <div className="flex items-center flex-wrap gap-1.5">
-                            <span className="text-sm font-bold text-slate-800 truncate">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedStaffInfoRecord(rec)}
+                              className="text-sm font-bold text-slate-800 hover:text-indigo-600 truncate cursor-pointer transition text-left"
+                            >
                               {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
-                            </span>
+                            </button>
                             <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded font-semibold">
                               {rec.employeeCode || matchedEmp?.code}
                             </span>
@@ -1194,8 +1299,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Workshift, Day Off & Overtime (OT) Details Strip */}
+                    {/* Paired Check-In & Check-Out Status Bar + Workshift, Day Off & OT Strip */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/70">
+                      {/* Paired Check-In Time Badge */}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>
+                          {lang === 'km' ? 'ម៉ោងចូល:' : 'In:'} {hasCheckedInToday ? checkInTimeStr : '--:--'}
+                        </span>
+                      </span>
+
+                      {/* Paired Check-Out Time / Missing Check-Out Status Badge */}
+                      {hasCheckedOutToday ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                          <span>
+                            {lang === 'km' ? 'ម៉ោងចេញ:' : 'Out:'} {checkOutTimeStr}
+                          </span>
+                        </span>
+                      ) : isPastShiftEnd ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                          <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                          <span>
+                            {lang === 'km'
+                              ? `ម៉ោងចេញ: មិនទាន់ស្កេនចេញ / ភ្លេចស្កេនចេញ (ផុតម៉ោង ${endTimeStr})`
+                              : `Out: Not Checked Out / Forgot (Shift ended ${endTimeStr})`}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          <Clock className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>
+                            {lang === 'km'
+                              ? `ម៉ោងចេញ: កំពុងធ្វើការ (ចេញម៉ោង ${endTimeStr})`
+                              : `Out: Working (Ends ${endTimeStr})`}
+                          </span>
+                        </span>
+                      )}
+
                       {/* 1. Workshift Badge */}
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border ${shiftBadge.bgColor} ${shiftBadge.color} ${shiftBadge.borderColor}`}
@@ -1348,6 +1489,514 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Staff Information & Check-In/Check-Out Details Popup Modal (Triggered by clicking staff image in Today's Real-Time Attendance Feed) */}
+      {selectedStaffInfoRecord && (() => {
+        const modalMeta = getRecordShiftDayOffAndOt(selectedStaffInfoRecord);
+        const {
+          matchedEmp,
+          empShift,
+          shiftBadge,
+          shiftHoursText,
+          dayOffName,
+          isWorkingOnDayOff,
+          hasOt,
+          otDisplayLabel,
+          workedHoursToday,
+          empPunchesToday,
+          firstCheckIn,
+          lastCheckOut,
+          hasCheckedInToday,
+          hasCheckedOutToday,
+          checkInTimeStr,
+          checkOutTimeStr,
+          isPastShiftEnd,
+          endTimeStr,
+        } = modalMeta;
+
+        const staffBranch =
+          branches.find((b) => b.id === (matchedEmp?.branchId || selectedStaffInfoRecord.branchId)) ||
+          branches[0];
+
+        const avatarSrc =
+          selectedStaffInfoRecord.employeeAvatar ||
+          matchedEmp?.avatar ||
+          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80';
+
+        // Recent attendance history across all days for this staff member (grouped by local date)
+        const allStaffRecords = attendanceRecords
+          .filter((r) =>
+            matchedEmp
+              ? doesRecordMatchEmployee(r, matchedEmp)
+              : (r.employeeId && r.employeeId === selectedStaffInfoRecord.employeeId) ||
+                (r.employeeCode &&
+                  selectedStaffInfoRecord.employeeCode &&
+                  r.employeeCode.toLowerCase() === selectedStaffInfoRecord.employeeCode.toLowerCase())
+          )
+          .filter((r) => Boolean(r.timestamp))
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        const recentDaysMap = new Map<string, AttendanceRecord[]>();
+        allStaffRecords.forEach((r) => {
+          const dKey = new Date(r.timestamp).toLocaleDateString('en-CA');
+          if (!recentDaysMap.has(dKey)) recentDaysMap.set(dKey, []);
+          recentDaysMap.get(dKey)!.push(r);
+        });
+        const recentDailyHistory = Array.from(recentDaysMap.entries()).slice(0, 7);
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+            onClick={() => setSelectedStaffInfoRecord(null)}
+          >
+            <div
+              className="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full p-5 sm:p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Top Header with Staff Image & Identity */}
+              <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="flex items-center space-x-4 min-w-0">
+                  <div className="relative shrink-0">
+                    <img
+                      src={avatarSrc}
+                      alt={selectedStaffInfoRecord.employeeNameEn || 'Staff'}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src =
+                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80';
+                      }}
+                      className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border-2 border-indigo-200 shadow-md bg-slate-100"
+                    />
+                    <span
+                      className={`absolute -bottom-1.5 -right-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-xs ${
+                        hasCheckedOutToday
+                          ? 'bg-blue-600 text-white border-white'
+                          : 'bg-emerald-500 text-white border-white'
+                      }`}
+                    >
+                      {hasCheckedOutToday
+                        ? lang === 'km'
+                          ? 'ចេញរួច'
+                          : 'Out'
+                        : lang === 'km'
+                        ? 'កំពុងធ្វើការ'
+                        : 'On-Site'}
+                    </span>
+                  </div>
+
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center flex-wrap gap-2">
+                      <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200">
+                        {selectedStaffInfoRecord.employeeCode || matchedEmp?.code || 'ID'}
+                      </span>
+                      <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-lg border border-slate-200">
+                        {matchedEmp?.roleKh || matchedEmp?.role || (lang === 'km' ? 'បុគ្គលិក' : 'Staff')}
+                      </span>
+                    </div>
+
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 truncate">
+                      {selectedStaffInfoRecord.employeeNameKh || matchedEmp?.nameKh || selectedStaffInfoRecord.employeeNameEn}
+                    </h3>
+                    <p className="text-xs font-semibold text-slate-500 truncate">
+                      {selectedStaffInfoRecord.employeeNameEn || matchedEmp?.nameEn} •{' '}
+                      <span className="text-indigo-600 font-bold">
+                        {lang === 'km'
+                          ? staffBranch?.nameKh || selectedStaffInfoRecord.branchNameKh || selectedStaffInfoRecord.branchNameEn
+                          : staffBranch?.nameEn || selectedStaffInfoRecord.branchNameEn}
+                      </span>
+                    </p>
+
+                    <div className="flex items-center flex-wrap gap-2 pt-1 text-xs text-slate-600">
+                      {matchedEmp?.phone && (
+                        <a
+                          href={`tel:${matchedEmp.phone}`}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 transition"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                          <span>{matchedEmp.phone}</span>
+                        </a>
+                      )}
+                      {matchedEmp?.departmentKh && (
+                        <span className="text-[11px] text-slate-500 font-medium bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                          {lang === 'km' ? matchedEmp.departmentKh : matchedEmp.department}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedStaffInfoRecord(null)}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Section 1: Today's Check-In AND Check-Out Status Comparison Box */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-indigo-600" />
+                    <span>
+                      {lang === 'km'
+                        ? 'ស្ថានភាពស្កេនវត្តមានថ្ងៃនេះ (ម៉ោងចូល & ម៉ោងចេញ)'
+                        : "Today's Check-In & Check-Out Status"}
+                    </span>
+                  </h4>
+                  {workedHoursToday > 0 && (
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      {lang === 'km'
+                        ? `ម៉ោងធ្វើការសរុបថ្ងៃនេះ: ${workedHoursToday} ម៉ោង`
+                        : `Total Worked Today: ${workedHoursToday} hrs`}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Check-In Card */}
+                  <div
+                    className={`p-4 rounded-2xl border ${
+                      hasCheckedInToday
+                        ? 'bg-emerald-50/70 border-emerald-200'
+                        : 'bg-slate-50 border-slate-200'
+                    } space-y-1.5`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>{lang === 'km' ? 'ម៉ោងស្កេនចូល (Check-In)' : 'Check-In Time'}</span>
+                      </span>
+                      {firstCheckIn && (
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            firstCheckIn.status === 'late'
+                              ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                              : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          }`}
+                        >
+                          {firstCheckIn.status === 'late'
+                            ? lang === 'km'
+                              ? 'មកយឺត (Late)'
+                              : 'Late'
+                            : lang === 'km'
+                            ? 'ទាន់ម៉ោង (On-Time)'
+                            : 'On-Time'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-2xl font-black font-mono text-slate-900">
+                      {hasCheckedInToday ? checkInTimeStr : '--:--'}
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 font-medium">
+                      {firstCheckIn
+                        ? `${lang === 'km' ? 'ទីតាំង GPS:' : 'GPS Distance:'} ${formatDistance(
+                            firstCheckIn.distanceToBranch,
+                            lang
+                          )} (${
+                            firstCheckIn.isWithinGeofence
+                              ? lang === 'km'
+                                ? 'ក្នុងបរិវេណសាខា'
+                                : 'Within Geofence'
+                              : lang === 'km'
+                              ? 'ក្រៅបរិវេណ'
+                              : 'Out of Range'
+                          })`
+                        : lang === 'km'
+                        ? 'មិនទាន់មានកំណត់ត្រាស្កេនចូល'
+                        : 'No Check-In recorded today'}
+                    </p>
+                  </div>
+
+                  {/* Check-Out Card */}
+                  <div
+                    className={`p-4 rounded-2xl border ${
+                      hasCheckedOutToday
+                        ? 'bg-blue-50/70 border-blue-200'
+                        : isPastShiftEnd
+                        ? 'bg-rose-50/80 border-rose-300'
+                        : 'bg-amber-50/70 border-amber-200'
+                    } space-y-1.5`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span
+                        className={`text-xs font-bold flex items-center gap-1.5 ${
+                          hasCheckedOutToday
+                            ? 'text-blue-800'
+                            : isPastShiftEnd
+                            ? 'text-rose-800'
+                            : 'text-amber-800'
+                        }`}
+                      >
+                        {hasCheckedOutToday ? (
+                          <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                        ) : isPastShiftEnd ? (
+                          <AlertTriangle className="w-4 h-4 text-rose-600" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-amber-600" />
+                        )}
+                        <span>{lang === 'km' ? 'ម៉ោងស្កេនចេញ (Check-Out)' : 'Check-Out Time'}</span>
+                      </span>
+
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          hasCheckedOutToday
+                            ? 'bg-blue-100 text-blue-800 border-blue-200'
+                            : isPastShiftEnd
+                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                            : 'bg-amber-100 text-amber-800 border-amber-200'
+                        }`}
+                      >
+                        {hasCheckedOutToday
+                          ? lang === 'km'
+                            ? 'បានស្កេនចេញរួច'
+                            : 'Checked Out'
+                          : isPastShiftEnd
+                          ? lang === 'km'
+                            ? '⚠️ ភ្លេចស្កេនចេញ / មិនទាន់ចេញ'
+                            : '⚠️ Forgot Check-Out'
+                          : lang === 'km'
+                          ? 'កំពុងធ្វើការ (On Duty)'
+                          : 'Still Working'}
+                      </span>
+                    </div>
+
+                    <div className="text-2xl font-black font-mono text-slate-900">
+                      {hasCheckedOutToday
+                        ? checkOutTimeStr
+                        : isPastShiftEnd
+                        ? lang === 'km'
+                          ? 'មិនទាន់ស្កេនចេញ'
+                          : 'Not Checked Out'
+                        : '--:--'}
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 font-medium">
+                      {lastCheckOut
+                        ? `${lang === 'km' ? 'ទីតាំង GPS:' : 'GPS Distance:'} ${formatDistance(
+                            lastCheckOut.distanceToBranch,
+                            lang
+                          )} • ${
+                            lang === 'km'
+                              ? `សរុប ${workedHoursToday} ម៉ោង`
+                              : `Worked ${workedHoursToday} hrs`
+                          }`
+                        : isPastShiftEnd
+                        ? lang === 'km'
+                          ? `ផុតម៉ោងចេញវេន (${endTimeStr}) ហើយ ប៉ុន្តែបុគ្គលិកមិនទាន់ស្កេនចេញ ឬភ្លេចស្កេនចេញ`
+                          : `Shift ended at ${endTimeStr}, but employee has not scanned Check-Out yet`
+                        : lang === 'km'
+                        ? `កំពុងបំពេញការងារក្នុងវេន (ម៉ោងចេញកំណត់: ${endTimeStr})`
+                        : `Currently on shift (Scheduled end time: ${endTimeStr})`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Workshift, Weekly Day Off & Overtime (OT) Info Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{lang === 'km' ? 'វេនការងារ (Workshift)' : 'Assigned Workshift'}</span>
+                  </div>
+                  <div className="text-xs font-bold text-slate-800">
+                    {empShift
+                      ? lang === 'km'
+                        ? empShift.nameKh
+                        : empShift.nameEn
+                      : shiftBadge.label}
+                  </div>
+                  <div className="text-[11px] font-mono font-semibold text-indigo-600">
+                    {shiftHoursText}
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{lang === 'km' ? 'ថ្ងៃឈប់ប្រចាំសប្តាហ៍ (Day Off)' : 'Weekly Day Off'}</span>
+                  </div>
+                  <div className="text-xs font-bold text-slate-800">{dayOffName}</div>
+                  <div
+                    className={`text-[11px] font-bold ${
+                      isWorkingOnDayOff ? 'text-amber-700' : 'text-emerald-700'
+                    }`}
+                  >
+                    {isWorkingOnDayOff
+                      ? lang === 'km'
+                        ? '⚡ មកធ្វើការនៅថ្ងៃសម្រាក'
+                        : '⚡ Working on Day Off'
+                      : lang === 'km'
+                      ? '✓ ថ្ងៃធ្វើការធម្មតា'
+                      : '✓ Regular Working Day'}
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1">
+                    <Zap className="w-3.5 h-3.5 text-purple-600" />
+                    <span>{lang === 'km' ? 'ថែមម៉ោង (Overtime / OT)' : 'Overtime (OT) Status'}</span>
+                  </div>
+                  <div className={`text-xs font-bold ${hasOt ? 'text-purple-700' : 'text-slate-700'}`}>
+                    {otDisplayLabel}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    {hasOt
+                      ? lang === 'km'
+                        ? 'មានកំណត់ត្រាថែមម៉ោងថ្ងៃនេះ'
+                        : 'Overtime recorded today'
+                      : lang === 'km'
+                      ? 'ម៉ោងការងារធម្មតា'
+                      : 'Standard shift hours'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: All Punches Today + Recent 7-Day Attendance History */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                  <span>
+                    {lang === 'km'
+                      ? 'ប្រវត្តិស្កេនចូល និងស្កេនចេញថ្មីៗ (Recent Check-In & Check-Out History)'
+                      : 'Recent Check-In & Check-Out History'}
+                  </span>
+                  <span className="text-[11px] text-indigo-600 font-semibold">
+                    {empPunchesToday.length} {lang === 'km' ? 'ដងថ្ងៃនេះ' : 'punches today'}
+                  </span>
+                </h4>
+
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase text-slate-500">
+                      <tr>
+                        <th className="py-2.5 px-3">{lang === 'km' ? 'កាលបរិច្ឆេទ' : 'Date'}</th>
+                        <th className="py-2.5 px-3">{lang === 'km' ? 'ម៉ោងចូល (Check-In)' : 'Check-In'}</th>
+                        <th className="py-2.5 px-3">{lang === 'km' ? 'ម៉ោងចេញ (Check-Out)' : 'Check-Out'}</th>
+                        <th className="py-2.5 px-3 text-right">{lang === 'km' ? 'ស្ថានភាព' : 'Status'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {recentDailyHistory.map(([dateKey, dayRecs]) => {
+                        const sortedAsc = [...dayRecs].sort(
+                          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                        );
+                        let dayIn = sortedAsc.find((r) => r.type === 'check_in');
+                        if (!dayIn && sortedAsc.length > 0 && (new Date(sortedAsc[0].timestamp).getHours() < 11 || sortedAsc.length >= 2)) {
+                          dayIn = sortedAsc[0];
+                        }
+                        let dayOut = [...sortedAsc]
+                          .reverse()
+                          .find((r) => r.type === 'check_out' && (!dayIn || r.id !== dayIn.id));
+                        if (!dayOut && dayIn && sortedAsc.length >= 2) {
+                          const latest = sortedAsc[sortedAsc.length - 1];
+                          if (latest.id !== dayIn.id) dayOut = latest;
+                        }
+
+                        const inStr = dayIn
+                          ? new Date(dayIn.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : '--:--';
+                        const outStr = dayOut
+                          ? new Date(dayOut.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : '--:--';
+                        const isTodayRow = dateKey === today;
+
+                        return (
+                          <tr key={dateKey} className={isTodayRow ? 'bg-indigo-50/40 font-semibold' : 'hover:bg-slate-50'}>
+                            <td className="py-2.5 px-3 font-mono text-slate-700">
+                              {dateKey}
+                              {isTodayRow && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">
+                                  {lang === 'km' ? 'ថ្ងៃនេះ' : 'Today'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-emerald-700 font-bold">{inStr}</td>
+                            <td className="py-2.5 px-3 font-mono">
+                              {dayOut ? (
+                                <span className="text-blue-700 font-bold">{outStr}</span>
+                              ) : (
+                                <span className="text-rose-600 text-[11px] font-semibold">
+                                  {isTodayRow && !isPastShiftEnd
+                                    ? lang === 'km'
+                                      ? 'កំពុងធ្វើការ'
+                                      : 'Working'
+                                    : lang === 'km'
+                                    ? 'មិនបានស្កេនចេញ'
+                                    : 'No Check-Out'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              {dayIn && dayOut ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  {lang === 'km' ? 'ចូល & ចេញរួច' : 'Completed'}
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  {isTodayRow && !isPastShiftEnd
+                                    ? lang === 'km'
+                                      ? 'កំពុងធ្វើការ'
+                                      : 'On Duty'
+                                    : lang === 'km'
+                                    ? 'ភ្លេចស្កេនចេញ'
+                                    : 'Missing Out'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Modal Footer Actions */}
+              <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  {matchedEmp && onOpenTransferModal && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedStaffInfoRecord(null);
+                        onOpenTransferModal(matchedEmp);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                      <span>{lang === 'km' ? 'ផ្ទេរសាខា' : 'Transfer Branch'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedStaffInfoRecord(null);
+                      onNavigateTab('reports');
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>{lang === 'km' ? 'មើលរបាយការណ៍លម្អិត' : 'Full Timesheet Report'}</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedStaffInfoRecord(null)}
+                  className="px-6 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition cursor-pointer"
+                >
+                  {lang === 'km' ? 'បិទផ្ទាំង' : 'Close'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Emergency Roll Call Modal */}
       {showEmergencyRollCall && (

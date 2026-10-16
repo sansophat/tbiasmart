@@ -58,6 +58,7 @@ import {
 import { playAlertChime } from '../utils/soundUtils';
 import { validatePunchAllowance, PunchAllowanceResult } from '../utils/dayOffUtils';
 import { isSameLocalDate } from '../utils/dateUtils';
+import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
 import { detectClientIp, isIpInBranchWhitelist } from '../utils/networkUtils';
 import { compressImageFile } from '../utils/imageCompressor';
 
@@ -296,7 +297,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const selectedEmpTodayRecords = (attendanceRecords || [])
     .filter(
       (r) =>
-        (r.employeeId === selectedEmp.id || r.employeeCode === selectedEmp.code) &&
+        doesRecordMatchEmployee(r, selectedEmp) &&
         r.timestamp &&
         isSameLocalDate(r.timestamp)
     )
@@ -618,9 +619,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     // Check recent punches today for this specific employee using local timezone date
     const empTodayPunches = attendanceRecords
       .filter((r) => {
-        if (!r.employeeId && !r.employeeCode) return false;
-        const matchesEmp = (r.employeeId === emp.id || r.employeeCode === emp.code);
-        if (!matchesEmp || !r.timestamp) return false;
+        if (!r || !r.timestamp) return false;
+        if (!doesRecordMatchEmployee(r, emp)) return false;
         return isSameLocalDate(r.timestamp);
       })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
