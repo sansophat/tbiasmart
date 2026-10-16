@@ -3632,6 +3632,7 @@ export default function App() {
             <DashboardView
               branches={branches}
               employees={employees}
+              shifts={shifts}
               attendanceRecords={attendanceRecords}
               transferRecords={transferRecords}
               leaveRequests={leaveRequests}
@@ -3831,6 +3832,7 @@ export default function App() {
               <DashboardView
                 branches={branches}
                 employees={employees}
+                shifts={shifts}
                 attendanceRecords={attendanceRecords}
                 transferRecords={transferRecords}
                 leaveRequests={leaveRequests}

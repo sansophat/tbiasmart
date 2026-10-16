@@ -29,17 +29,26 @@ import {
   HeartPulse,
   RefreshCw,
   Check,
+  Zap,
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest } from '../types';
+import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest, Shift } from '../types';
+import { INITIAL_SHIFTS } from '../data/initialData';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
 import { isSameLocalDate } from '../utils/dateUtils';
 import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
+import {
+  getEmployeeDayOffName,
+  getEmployeeWorkingHours,
+  getShiftCategoryBadge,
+  isEmployeeDayOff,
+} from '../utils/dayOffUtils';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { RealtimeActionAlertCenter, ActionAlertItem } from './RealtimeActionAlertCenter';
 
 interface DashboardViewProps {
   branches: Branch[];
   employees: Employee[];
+  shifts?: Shift[];
   attendanceRecords: AttendanceRecord[];
   transferRecords?: BranchTransferRecord[];
   leaveRequests?: LeaveRequest[];
@@ -63,6 +72,7 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({
   branches,
   employees,
+  shifts = INITIAL_SHIFTS,
   attendanceRecords,
   transferRecords = [],
   leaveRequests = [],
@@ -132,10 +142,160 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const overtimeCount = todayRecords.filter((r) => r.status === 'overtime').length;
   const pendingLocationExceptions = todayRecords.filter((r) => r.locationExceptionStatus === 'pending');
 
+  // Real-Time Attendance Feed filter state
+  const [feedFilter, setFeedFilter] = useState<'all' | 'morning' | 'afternoon' | 'dayoff' | 'ot'>('all');
+
   // Real-Time Attendance Feed: ONLY show punches recorded TODAY
   const todayFeedRecords = relevantRecords
     .filter((r) => isSameLocalDate(r.timestamp, now))
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Staff scheduled for weekly Day Off today
+  const staffOnDayOffToday = relevantEmployees.filter((emp) => isEmployeeDayOff(emp, now));
+
+  // Helper to compute Workshift, Day Off, and OT details for any attendance record
+  const getRecordShiftDayOffAndOt = (rec: AttendanceRecord) => {
+    const matchedEmp = employees.find((e) => doesRecordMatchEmployee(rec, e));
+    const empShift = shifts.find((s) => s.id === matchedEmp?.shiftId) || shifts[0];
+    const shiftBadge = getShiftCategoryBadge(matchedEmp?.shiftId, lang);
+    const shiftHoursText = getEmployeeWorkingHours(
+      matchedEmp || { shiftId: empShift?.id },
+      empShift,
+      lang
+    );
+
+    const dayOffName = matchedEmp
+      ? getEmployeeDayOffName(matchedEmp, lang)
+      : lang === 'km'
+      ? 'ថ្ងៃអាទិត្យ'
+      : 'Sunday';
+    const isWorkingOnDayOff = matchedEmp ? isEmployeeDayOff(matchedEmp, rec.timestamp) : false;
+
+    // Calculate OT from:
+    // 1) Overtime leaveRequests for this employee on this date
+    const empOtRequests = leaveRequests.filter((req) => {
+      const isOtReq = req.category === 'overtime' || req.type === 'overtime';
+      if (!isOtReq || req.status === 'rejected') return false;
+      const matchesEmp =
+        (matchedEmp && (req.employeeId === matchedEmp.id || req.employeeCode === matchedEmp.code)) ||
+        (rec.employeeId && req.employeeId === rec.employeeId) ||
+        (rec.employeeCode && req.employeeCode === rec.employeeCode);
+      if (!matchesEmp) return false;
+      return req.startDate === today || isSameLocalDate(req.createdAt, rec.timestamp);
+    });
+
+    const requestedOtHours = empOtRequests.reduce((sum, r) => sum + (Number(r.hours) || 0), 0);
+    const approvedOtReq = empOtRequests.find((r) => r.status === 'approved');
+    const pendingOtReq = empOtRequests.find((r) => r.status === 'pending');
+
+    // 2) Calculate actual worked hours & post-shift overtime from today's punches
+    const empPunchesToday = todayRecords
+      .filter((r) =>
+        matchedEmp
+          ? doesRecordMatchEmployee(r, matchedEmp)
+          : r.employeeId === rec.employeeId || r.employeeCode === rec.employeeCode
+      )
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const firstCheckIn = empPunchesToday.find((r) => r.type === 'check_in');
+    const lastCheckOut = [...empPunchesToday].reverse().find((r) => r.type === 'check_out');
+
+    const scheduledDailyHours = matchedEmp?.scheduledDailyHours || empShift?.workHours || 8;
+    let workedHoursToday = 0;
+    let calculatedOtHours = 0;
+
+    if (firstCheckIn && lastCheckOut) {
+      const diffMs = new Date(lastCheckOut.timestamp).getTime() - new Date(firstCheckIn.timestamp).getTime();
+      workedHoursToday = Math.max(0, diffMs / (1000 * 60 * 60));
+      if (workedHoursToday > scheduledDailyHours + 0.25) {
+        calculatedOtHours = Number((workedHoursToday - scheduledDailyHours).toFixed(1));
+      }
+    }
+
+    // Also check if check-out punch is after scheduled shift end time
+    const endTimeStr = matchedEmp?.customEndTime || empShift?.endTime;
+    if (rec.type === 'check_out' && endTimeStr && calculatedOtHours === 0) {
+      const [endH, endM] = endTimeStr.split(':').map(Number);
+      const punchDate = new Date(rec.timestamp);
+      const shiftEndDate = new Date(punchDate);
+      shiftEndDate.setHours(endH || 0, endM || 0, 0, 0);
+      const extraHours = (punchDate.getTime() - shiftEndDate.getTime()) / (1000 * 60 * 60);
+      if (extraHours >= 0.25 && extraHours <= 12) {
+        calculatedOtHours = Number(extraHours.toFixed(1));
+      }
+    }
+
+    // If working on weekly Day Off, hours worked count as Day-Off OT
+    if (isWorkingOnDayOff && calculatedOtHours === 0 && workedHoursToday > 0) {
+      calculatedOtHours = Number(workedHoursToday.toFixed(1));
+    }
+
+    const totalOtHours = Math.max(requestedOtHours, calculatedOtHours);
+    const hasOt = rec.status === 'overtime' || totalOtHours > 0 || isWorkingOnDayOff || empOtRequests.length > 0;
+
+    let otDisplayLabel = '';
+    if (totalOtHours > 0) {
+      otDisplayLabel =
+        lang === 'km'
+          ? `ថែមម៉ោង (OT): +${totalOtHours}ម៉ោង`
+          : `OT: +${totalOtHours}h`;
+      if (approvedOtReq) {
+        otDisplayLabel += lang === 'km' ? ' (អនុម័ត)' : ' (Approved)';
+      } else if (pendingOtReq) {
+        otDisplayLabel += lang === 'km' ? ' (រង់ចាំអនុម័ត)' : ' (Pending)';
+      } else if (isWorkingOnDayOff) {
+        otDisplayLabel += lang === 'km' ? ' (ថ្ងៃសម្រាក)' : ' (Day-Off)';
+      }
+    } else if (isWorkingOnDayOff) {
+      otDisplayLabel =
+        lang === 'km' ? 'ថែមម៉ោងថ្ងៃសម្រាក (Day-Off OT)' : 'Day-Off OT Active';
+    } else if (rec.status === 'overtime') {
+      otDisplayLabel =
+        lang === 'km' ? 'ថែមម៉ោង (Overtime)' : 'Overtime (OT)';
+    } else {
+      otDisplayLabel =
+        lang === 'km' ? 'ថែមម៉ោង (OT): 0ម៉ោង' : 'OT: 0h (Regular)';
+    }
+
+    return {
+      matchedEmp,
+      empShift,
+      shiftBadge,
+      shiftHoursText,
+      dayOffName,
+      isWorkingOnDayOff,
+      hasOt,
+      totalOtHours,
+      otDisplayLabel,
+      workedHoursToday: Number(workedHoursToday.toFixed(1)),
+    };
+  };
+
+  const enrichedFeedRecords = todayFeedRecords.map((rec) => ({
+    rec,
+    meta: getRecordShiftDayOffAndOt(rec),
+  }));
+
+  const filteredFeedItems = enrichedFeedRecords.filter(({ meta }) => {
+    if (feedFilter === 'all') return true;
+    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1');
+    if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2');
+    if (feedFilter === 'dayoff') return meta.isWorkingOnDayOff;
+    if (feedFilter === 'ot') return meta.hasOt;
+    return true;
+  });
+
+  const morningFeedCount = enrichedFeedRecords.filter(({ meta }) => {
+    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    return sId.includes('morning') || sId.includes('s1');
+  }).length;
+  const afternoonFeedCount = enrichedFeedRecords.filter(({ meta }) => {
+    const sId = (meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+    return sId.includes('afternoon') || sId.includes('s2');
+  }).length;
+  const workingOnDayOffFeedCount = enrichedFeedRecords.filter(({ meta }) => meta.isWorkingOnDayOff).length;
+  const otFeedCount = enrichedFeedRecords.filter(({ meta }) => meta.hasOt).length;
   
   const geofenceValidCount = todayRecords.filter((r) => r.isWithinGeofence).length;
   const gpsComplianceRate = todayRecords.length > 0
@@ -807,43 +967,127 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Live Attendance Audit Stream (7 cols) - ONLY SHOWN FOR TODAY */}
         <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-            <div className="flex items-center space-x-2.5">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-              </span>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h3 className="font-bold text-slate-800 text-sm">
-                    {lang === 'km' ? 'ទិន្នន័យវត្តមានថ្ងៃនេះផ្ទាល់ (Today Real-Time GPS Feed)' : "Today's Real-Time Attendance Feed"}
-                  </h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    {todayFeedRecords.length} {lang === 'km' ? 'វត្តមានថ្ងៃនេះ' : 'punches today'}
-                  </span>
+          <div className="p-5 border-b border-slate-100 space-y-3.5 bg-slate-50/50">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-2.5">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+                <div>
+                  <div className="flex items-center flex-wrap gap-2">
+                    <h3 className="font-bold text-slate-800 text-sm">
+                      {lang === 'km' ? 'ទិន្នន័យវត្តមានថ្ងៃនេះផ្ទាល់ (Today Real-Time GPS Feed)' : "Today's Real-Time Attendance Feed"}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {todayFeedRecords.length} {lang === 'km' ? 'វត្តមានថ្ងៃនេះ' : 'punches today'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    {lang === 'km'
+                      ? 'បង្ហាញវត្តមានជាក់ស្តែង វេនការងារ (Workshift) ថ្ងៃសម្រាក (Day Off) និងថែមម៉ោង (OT)'
+                      : 'Showing live GPS punches with Workshift, Weekly Day Off, and Overtime (OT) status'}
+                  </p>
                 </div>
-                <p className="text-[10px] text-slate-400 font-medium">
-                  {lang === 'km' ? 'បង្ហាញតែទិន្នន័យវត្តមានជាក់ស្តែងសម្រាប់ថ្ងៃនេះប៉ុណ្ណោះ' : 'Only showing active GPS punches recorded today'}
-                </p>
+              </div>
+              <button
+                onClick={() => onNavigateTab('reports')}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition shrink-0"
+              >
+                <span>{lang === 'km' ? 'មើលទាំងអស់' : 'View All'}</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Summary KPI Strip: Shift Breakdown, Day Off Today, & OT Status */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div className="bg-white rounded-xl p-2.5 border border-slate-200/80 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">
+                    {lang === 'km' ? 'វេនការងារ (Workshift)' : 'Workshifts Today'}
+                  </div>
+                  <div className="text-xs font-bold text-slate-700 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-amber-600">
+                      {lang === 'km' ? `ព្រឹក: ${morningFeedCount}` : `AM: ${morningFeedCount}`}
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-indigo-600">
+                      {lang === 'km' ? `រសៀល: ${afternoonFeedCount}` : `PM: ${afternoonFeedCount}`}
+                    </span>
+                  </div>
+                </div>
+                <Clock className="w-4 h-4 text-indigo-500 shrink-0" />
+              </div>
+
+              <div className="bg-white rounded-xl p-2.5 border border-slate-200/80 flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">
+                    {lang === 'km' ? 'ថ្ងៃសម្រាកថ្ងៃនេះ (Day Off)' : 'Scheduled Day Off'}
+                  </div>
+                  <div className="text-xs font-bold text-slate-700 mt-0.5 truncate" title={staffOnDayOffToday.map((e) => (lang === 'km' ? e.nameKh : e.nameEn)).join(', ')}>
+                    {staffOnDayOffToday.length} {lang === 'km' ? 'នាក់' : 'staff'}
+                    {workingOnDayOffFeedCount > 0 && (
+                      <span className="ml-1 text-[10px] text-amber-600 font-semibold">
+                        ({workingOnDayOffFeedCount} {lang === 'km' ? 'មកធ្វើការ' : 'working'})
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <Calendar className="w-4 h-4 text-emerald-500 shrink-0" />
+              </div>
+
+              <div className="bg-white rounded-xl p-2.5 border border-slate-200/80 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">
+                    {lang === 'km' ? 'ថែមម៉ោងថ្ងៃនេះ (OT)' : "Today's OT"}
+                  </div>
+                  <div className="text-xs font-bold text-purple-700 mt-0.5">
+                    {otFeedCount} {lang === 'km' ? 'កំណត់ត្រា OT' : 'OT records'}
+                  </div>
+                </div>
+                <Zap className="w-4 h-4 text-purple-600 shrink-0" />
               </div>
             </div>
-            <button
-              onClick={() => onNavigateTab('reports')}
-              className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition"
-            >
-              <span>{lang === 'km' ? 'មើលទាំងអស់' : 'View All'}</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
+
+            {/* Quick Filter Pills for Real-Time Feed */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              {[
+                { id: 'all', labelKh: `ទាំងអស់ (${todayFeedRecords.length})`, labelEn: `All (${todayFeedRecords.length})` },
+                { id: 'morning', labelKh: `វេនព្រឹក (${morningFeedCount})`, labelEn: `Morning Shift (${morningFeedCount})` },
+                { id: 'afternoon', labelKh: `វេនរសៀល (${afternoonFeedCount})`, labelEn: `Afternoon Shift (${afternoonFeedCount})` },
+                { id: 'dayoff', labelKh: `ធ្វើការថ្ងៃសម្រាក (${workingOnDayOffFeedCount})`, labelEn: `Day-Off Work (${workingOnDayOffFeedCount})` },
+                { id: 'ot', labelKh: `ថែមម៉ោង OT (${otFeedCount})`, labelEn: `Overtime OT (${otFeedCount})` },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  type="button"
+                  onClick={() => setFeedFilter(pill.id as 'all' | 'morning' | 'afternoon' | 'dayoff' | 'ot')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition border ${
+                    feedFilter === pill.id
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {lang === 'km' ? pill.labelKh : pill.labelEn}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="p-4 space-y-2.5 max-h-[380px] overflow-y-auto">
-            {todayFeedRecords.length === 0 ? (
+          <div className="p-4 space-y-2.5 max-h-[480px] overflow-y-auto">
+            {filteredFeedItems.length === 0 ? (
               <div className="py-12 px-4 text-center">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-500 flex items-center justify-center mx-auto mb-3">
                   <Radio className="w-6 h-6 animate-pulse text-indigo-600" />
                 </div>
                 <p className="text-sm font-bold text-slate-700 font-battambang">
-                  {lang === 'km' ? 'មិនទាន់មានទិន្នន័យវត្តមានសម្រាប់ថ្ងៃនេះនៅឡើយទេ' : 'No attendance punches recorded yet today'}
+                  {todayFeedRecords.length === 0
+                    ? lang === 'km'
+                      ? 'មិនទាន់មានទិន្នន័យវត្តមានសម្រាប់ថ្ងៃនេះនៅឡើយទេ'
+                      : 'No attendance punches recorded yet today'
+                    : lang === 'km'
+                    ? 'មិនមានទិន្នន័យត្រូវនឹងតម្រងជ្រើសរើសនេះទេ'
+                    : 'No attendance punches match the selected filter'}
                 </p>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto font-hanuman">
                   {lang === 'km'
@@ -852,10 +1096,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </p>
               </div>
             ) : (
-              todayFeedRecords.slice(0, 15).map((rec) => {
-                const matchedEmp = employees.find(
-                  (e) => e.id === rec.employeeId || e.code === rec.employeeCode
-                );
+              filteredFeedItems.slice(0, 60).map(({ rec, meta }) => {
+                const {
+                  matchedEmp,
+                  shiftBadge,
+                  shiftHoursText,
+                  dayOffName,
+                  isWorkingOnDayOff,
+                  hasOt,
+                  otDisplayLabel,
+                  workedHoursToday,
+                } = meta;
+
                 const avatarSrc =
                   rec.employeeAvatar ||
                   matchedEmp?.avatar ||
@@ -864,66 +1116,127 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 return (
                   <div
                     key={rec.id}
-                    className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition"
+                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition space-y-2.5"
                   >
-                    <div className="flex items-center space-x-3">
-                      <img
-                        src={avatarSrc}
-                        alt={rec.employeeNameEn || 'Employee'}
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src =
-                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                        }}
-                        className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-200"
-                      />
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm font-bold text-slate-800">
-                            {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <img
+                          src={avatarSrc}
+                          alt={rec.employeeNameEn || 'Employee'}
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src =
+                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                          }}
+                          className="w-10 h-10 rounded-xl object-cover border border-slate-200 shadow-sm bg-slate-200 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            <span className="text-sm font-bold text-slate-800 truncate">
+                              {lang === 'km' ? rec.employeeNameKh : rec.employeeNameEn}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded font-semibold">
+                              {rec.employeeCode || matchedEmp?.code}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500 flex items-center flex-wrap gap-1.5 mt-0.5">
+                            <span className="text-indigo-600 font-semibold">
+                              {lang === 'km' ? rec.branchNameKh || rec.branchNameEn : rec.branchNameEn}
+                            </span>
+                            <span>•</span>
+                            <span className="text-slate-500 font-medium">{formatDistance(rec.distanceToBranch, lang)}</span>
+                            {workedHoursToday > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="text-emerald-700 font-semibold">
+                                  {lang === 'km' ? `សរុប: ${workedHoursToday}ម៉ោង` : `Worked: ${workedHoursToday}h`}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right space-y-1 shrink-0">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            rec.type === 'check_in'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            {rec.type === 'check_in' 
+                              ? (lang === 'km' ? 'ចូលធ្វើការ' : 'Check-In') 
+                              : (lang === 'km' ? 'ចេញពីធ្វើការ' : 'Check-Out')}
                           </span>
-                          <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded font-semibold">
-                            {rec.employeeCode}
+
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                            rec.status === 'on_time'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : rec.status === 'late'
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-purple-50 text-purple-700 border border-purple-200'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${
+                              rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
+                            }`} />
+                            {rec.status === 'on_time'
+                              ? (lang === 'km' ? 'ទាន់ម៉ោង' : 'on_time')
+                              : rec.status === 'late'
+                              ? (lang === 'km' ? 'យឺតម៉ោង' : 'late')
+                              : (lang === 'km' ? 'ថែមម៉ោង (OT)' : 'overtime')}
                           </span>
                         </div>
-                        <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-                          <span className="text-indigo-600 font-semibold">{rec.branchNameEn}</span>
-                          <span>•</span>
-                          <span className="text-slate-500 font-medium">{formatDistance(rec.distanceToBranch, lang)}</span>
+
+                        <div className="text-[11px] text-slate-500 font-mono font-medium">
+                          {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     </div>
 
-                    <div className="text-right space-y-1">
-                      <div className="flex items-center justify-end space-x-1.5">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          rec.type === 'check_in'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}>
-                          {rec.type === 'check_in' 
-                            ? (lang === 'km' ? 'ចូលធ្វើការ' : 'Check-In') 
-                            : (lang === 'km' ? 'ចេញពីធ្វើការ' : 'Check-Out')}
+                    {/* Workshift, Day Off & Overtime (OT) Details Strip */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/70">
+                      {/* 1. Workshift Badge */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border ${shiftBadge.bgColor} ${shiftBadge.color} ${shiftBadge.borderColor}`}
+                      >
+                        <Clock className="w-3 h-3 shrink-0" />
+                        <span>
+                          {lang === 'km' ? 'វេន:' : 'Shift:'} {shiftBadge.label} ({shiftHoursText})
                         </span>
+                      </span>
 
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                          rec.status === 'on_time'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : rec.status === 'late'
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-purple-50 text-purple-700 border border-purple-200'
-                        }`}>
-                          <div className={`w-1.5 h-1.5 rounded-full ${
-                            rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
-                          }`} />
-                          {rec.status}
+                      {/* 2. Weekly Day Off Badge */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
+                          isWorkingOnDayOff
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <Calendar className="w-3 h-3 shrink-0" />
+                        <span>
+                          {isWorkingOnDayOff
+                            ? lang === 'km'
+                              ? `ធ្វើការថ្ងៃសម្រាក (${dayOffName})`
+                              : `Working on Day Off (${dayOffName})`
+                            : lang === 'km'
+                            ? `ថ្ងៃសម្រាក: ${dayOffName}`
+                            : `Day Off: ${dayOffName}`}
                         </span>
-                      </div>
+                      </span>
 
-                      <div className="text-[11px] text-slate-500 font-mono font-medium">
-                        {new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                      {/* 3. Overtime (OT) Badge */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
+                          hasOt
+                            ? 'bg-purple-100 text-purple-800 border-purple-300 shadow-xs'
+                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        <Zap className={`w-3 h-3 shrink-0 ${hasOt ? 'text-purple-600' : 'text-slate-400'}`} />
+                        <span>{otDisplayLabel}</span>
+                      </span>
                     </div>
                   </div>
                 );
