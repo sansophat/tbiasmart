@@ -60,6 +60,58 @@ export function doesRecordMatchEmployee(
 }
 
 /**
+ * High-performance O(1) index map matcher for bulk record matching across thousands of attendance punches.
+ */
+export class EmployeeMatcher {
+  private idMap = new Map<string, Employee>();
+  private codeMap = new Map<string, Employee>();
+  private nameEnMap = new Map<string, Employee>();
+  private nameKhMap = new Map<string, Employee>();
+
+  constructor(employees: Employee[]) {
+    if (!Array.isArray(employees)) return;
+    for (const emp of employees) {
+      if (!emp) continue;
+      if (emp.id) {
+        this.idMap.set(emp.id, emp);
+        this.idMap.set(emp.id.replace(/^user_/, ''), emp);
+        this.idMap.set(`user_${emp.id}`, emp);
+      }
+      if (emp.code) {
+        this.codeMap.set(String(emp.code).trim().toLowerCase(), emp);
+      }
+      if (emp.nameEn) {
+        this.nameEnMap.set(String(emp.nameEn).trim().toLowerCase(), emp);
+      }
+      if (emp.nameKh) {
+        this.nameKhMap.set(String(emp.nameKh).trim(), emp);
+      }
+    }
+  }
+
+  match(record: AttendanceRecord | undefined | null): Employee | undefined {
+    if (!record) return undefined;
+    if (record.employeeId) {
+      const byId = this.idMap.get(record.employeeId);
+      if (byId) return byId;
+    }
+    if (record.employeeCode) {
+      const byCode = this.codeMap.get(String(record.employeeCode).trim().toLowerCase());
+      if (byCode) return byCode;
+    }
+    if (record.employeeNameKh) {
+      const byKh = this.nameKhMap.get(String(record.employeeNameKh).trim());
+      if (byKh) return byKh;
+    }
+    if (record.employeeNameEn) {
+      const byEn = this.nameEnMap.get(String(record.employeeNameEn).trim().toLowerCase());
+      if (byEn) return byEn;
+    }
+    return undefined;
+  }
+}
+
+/**
  * Get all unsynced punches currently queued in localStorage
  */
 export function getQueuedUnsyncedPunches(): AttendanceRecord[] {

@@ -1053,10 +1053,21 @@ async function startServer() {
   const distIndexExists = import_fs.default.existsSync(import_path.default.join(distPath, "index.html"));
   const isProduction = process.env.NODE_ENV === "production" || isCloudRun || distIndexExists;
   if (isProduction || distIndexExists) {
-    app.use(import_express.default.static(distPath));
+    app.use(
+      import_express.default.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        }
+      })
+    );
     app.get("*", (req, res) => {
       const indexPath = import_path.default.join(distPath, "index.html");
       if (import_fs.default.existsSync(indexPath)) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         res.sendFile(indexPath);
       } else {
         res.status(200).send(`<!DOCTYPE html><html><head><title>Smart Attendance</title><meta http-equiv="refresh" content="2"></head><body style="font-family:sans-serif;text-align:center;padding:50px;"><h3>Starting application...</h3></body></html>`);

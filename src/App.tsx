@@ -42,20 +42,29 @@ import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { QrAttendanceView } from './components/QrAttendanceView';
-import { BranchKioskView } from './components/BranchKioskView';
-import { GpsRadarMap } from './components/GpsRadarMap';
-import { EmployeeDirectoryView } from './components/EmployeeDirectoryView';
-import { BranchManagementView } from './components/BranchManagementView';
-import { ReportsView } from './components/ReportsView';
-import { AdminSettingsView } from './components/AdminSettingsView';
 import { EmployeePortalView } from './components/EmployeePortalView';
-import { ProfileSettingsView } from './components/ProfileSettingsView';
-import { BranchTransferModal } from './components/BranchTransferModal';
 import { LoginModal } from './components/LoginModal';
-import { InstallAppModal } from './components/InstallAppModal';
-import { DigitalIdCardModal } from './components/DigitalIdCardModal';
 import { StaffReminderAlertModal } from './components/StaffReminderAlertModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+// Code-split heavy views and secondary modals for ultra-fast initial load
+const ReportsView = React.lazy(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
+const AdminSettingsView = React.lazy(() => import('./components/AdminSettingsView').then(m => ({ default: m.AdminSettingsView })));
+const GpsRadarMap = React.lazy(() => import('./components/GpsRadarMap').then(m => ({ default: m.GpsRadarMap })));
+const EmployeeDirectoryView = React.lazy(() => import('./components/EmployeeDirectoryView').then(m => ({ default: m.EmployeeDirectoryView })));
+const BranchManagementView = React.lazy(() => import('./components/BranchManagementView').then(m => ({ default: m.BranchManagementView })));
+const BranchKioskView = React.lazy(() => import('./components/BranchKioskView').then(m => ({ default: m.BranchKioskView })));
+const ProfileSettingsView = React.lazy(() => import('./components/ProfileSettingsView').then(m => ({ default: m.ProfileSettingsView })));
+const BranchTransferModal = React.lazy(() => import('./components/BranchTransferModal').then(m => ({ default: m.BranchTransferModal })));
+const InstallAppModal = React.lazy(() => import('./components/InstallAppModal').then(m => ({ default: m.InstallAppModal })));
+const DigitalIdCardModal = React.lazy(() => import('./components/DigitalIdCardModal').then(m => ({ default: m.DigitalIdCardModal })));
+
+const ViewLoadingFallback: React.FC = () => (
+  <div className="flex flex-col items-center justify-center min-h-[420px] p-8 text-slate-400">
+    <Loader2 className="w-10 h-10 animate-spin text-indigo-500 mb-3" />
+    <p className="text-sm font-medium text-slate-600 animate-pulse">កំពុងដំណើរការទិន្នន័យ... / Loading view...</p>
+  </div>
+);
 import { updateDynamicAppBranding } from './utils/pwaBrandUtils';
 import { applyKhmerTypography } from './utils/typographyUtils';
 import { realtimeService } from './utils/realtimeService';
@@ -3807,7 +3816,8 @@ export default function App() {
         {/* 3. Main Views Dynamic Router */}
         <main className="flex-1 pb-16">
           <ErrorBoundary fallbackTitleKh="កំពុងស្ដារផ្ទាំងទិដ្ឋភាពឡើងវិញ" fallbackTitleEn="Auto-Recovering View Container">
-          {activeTab === 'dashboard' && (
+            <React.Suspense fallback={<ViewLoadingFallback />}>
+            {activeTab === 'dashboard' && (
             <DashboardView
               branches={branches}
               employees={employees}
@@ -4029,6 +4039,7 @@ export default function App() {
               />
             )
           )}
+          </React.Suspense>
           </ErrorBoundary>
         </main>
 
@@ -4082,14 +4093,18 @@ export default function App() {
       )}
 
       {/* Official Branch Transfer Modal */}
-      <BranchTransferModal
-        isOpen={isTransferModalOpen}
-        onClose={() => setIsTransferModalOpen(false)}
-        employee={transferTargetEmp}
-        branches={branches}
-        onConfirmTransfer={handleTransferEmployee}
-        lang={lang}
-      />
+      <React.Suspense fallback={null}>
+        {isTransferModalOpen && (
+          <BranchTransferModal
+            isOpen={isTransferModalOpen}
+            onClose={() => setIsTransferModalOpen(false)}
+            employee={transferTargetEmp}
+            branches={branches}
+            onConfirmTransfer={handleTransferEmployee}
+            lang={lang}
+          />
+        )}
+      </React.Suspense>
 
       {/* Authentication & Role Switcher Modal (Bypassed if public visitor is viewing an online digital card) */}
       <LoginModal
@@ -4111,43 +4126,49 @@ export default function App() {
       />
 
       {/* PWA & Home Screen Device Installation Modal */}
-      <InstallAppModal
-        isOpen={showInstallModal}
-        onClose={() => setShowInstallModal(false)}
-        branding={branding}
-        onUpdateBranding={handleUpdateBranding}
-        lang={lang}
-      />
+      <React.Suspense fallback={null}>
+        {showInstallModal && (
+          <InstallAppModal
+            isOpen={showInstallModal}
+            onClose={() => setShowInstallModal(false)}
+            branding={branding}
+            onUpdateBranding={handleUpdateBranding}
+            lang={lang}
+          />
+        )}
+      </React.Suspense>
 
       {/* Online Verified Digital ID Card Scanned/Direct View Modal */}
-      {onlineCardEmp && (
-        <DigitalIdCardModal
-          employee={onlineCardEmp}
-          branch={branches.find((b) => b.id === onlineCardEmp.branchId)}
-          branding={branding}
-          lang={lang}
-          isOnlineVerificationView={true}
-          onClose={() => {
-            setOnlineCardEmp(null);
-            if (typeof window !== 'undefined' && window.history) {
-              const url = new URL(window.location.href);
-              url.searchParams.delete('viewCard');
-              url.searchParams.delete('verify');
-              url.searchParams.delete('badge');
-              url.searchParams.delete('card');
-              window.history.replaceState({}, '', url.pathname + (url.search || ''));
-            }
-          }}
-          onUpdatePhoto={(empId, newUrl) => {
-            setEmployees((prev) =>
-              prev.map((e) => (e.id === empId ? { ...e, avatar: newUrl } : e))
-            );
-            if (onlineCardEmp.id === empId) {
-              setOnlineCardEmp((prev) => prev ? { ...prev, avatar: newUrl } : null);
-            }
-          }}
-        />
-      )}
+      <React.Suspense fallback={null}>
+        {onlineCardEmp && (
+          <DigitalIdCardModal
+            employee={onlineCardEmp}
+            branch={branches.find((b) => b.id === onlineCardEmp.branchId)}
+            branding={branding}
+            lang={lang}
+            isOnlineVerificationView={true}
+            onClose={() => {
+              setOnlineCardEmp(null);
+              if (typeof window !== 'undefined' && window.history) {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('viewCard');
+                url.searchParams.delete('verify');
+                url.searchParams.delete('badge');
+                url.searchParams.delete('card');
+                window.history.replaceState({}, '', url.pathname + (url.search || ''));
+              }
+            }}
+            onUpdatePhoto={(empId, newUrl) => {
+              setEmployees((prev) =>
+                prev.map((e) => (e.id === empId ? { ...e, avatar: newUrl } : e))
+              );
+              if (onlineCardEmp.id === empId) {
+                setOnlineCardEmp((prev) => prev ? { ...prev, avatar: newUrl } : null);
+              }
+            }}
+          />
+        )}
+      </React.Suspense>
 
       {/* Staff Device Ringing Attendance Reminder Modal (Auto-Reminder & Admin Trigger) */}
       {activeStaffReminder && (
