@@ -2705,8 +2705,8 @@ export default function App() {
         // Enforce rule: Staff can set branch to GPS for only the 1st time and cannot change to others until transferred to another branch
         if (emp.gpsCalibratedBranchId === branchId) {
           const lockedMsg = lang === 'km'
-            ? `🔒 ទីតាំង GPS សាខាត្រូវបានកំណត់រួចរាល់ហើយ! បុគ្គលិកអាចកំណត់ទីតាំង GPS បានតែ ១ ដងប៉ុណ្ណោះក្នុងសាខាមួយ។ មិនអាចផ្លាស់ប្តូរទៅកាន់ទីតាំងផ្សេងទៀតបានទេ លុះត្រាតែមានការផ្ទេរទៅកាន់សាខាថ្មី ទើបអាចកំណត់ឡើងវិញបាន។`
-            : `🔒 Branch GPS is already locked! Staff "${emp.nameEn}" can only set branch GPS once for this branch. You cannot change it until you are officially transferred to another branch.`;
+            ? `🔒 ទីតាំង GPS សាខាត្រូវបានកំណត់រួចរាល់ហើយ! ប្រសិនបើទីតាំងនេះនៅឆ្ងាយពីសាខាពិត សូមទាក់ទង Admin ឱ្យចុចកំណត់ទីតាំង GPS ដំបូងឡើងវិញ (Reset 1st GPS) ដើម្បីឱ្យអ្នកអាចចុចកំណត់ទីតាំង GPS ឡើងវិញបាន។`
+            : `🔒 Branch GPS is already locked! If your GPS is still far from the branch, ask your Admin to Reset your 1st-time GPS calibration lock so you can calibrate it again.`;
           return { success: false, message: lockedMsg };
         }
 
@@ -3839,6 +3839,7 @@ export default function App() {
               onOpenTransferModal={handleOpenTransferModal}
               onRingStaffReminder={handleSendStaffReminder}
               onRingBulkStaffReminders={handleSendBulkStaffReminders}
+              onUpdateEmployee={handleUpdateEmployee}
               lang={lang}
               onManualSync={handleManualSync}
               isSyncing={isManualSyncing}
@@ -4035,6 +4036,7 @@ export default function App() {
                 setSelectedBranchId={setSelectedBranchId}
                 onNavigateTab={setActiveTab}
                 onOpenTransferModal={handleOpenTransferModal}
+                onUpdateEmployee={handleUpdateEmployee}
                 lang={lang}
               />
             )

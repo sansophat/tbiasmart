@@ -37,6 +37,7 @@ import {
   Shield,
   Laptop,
   Wifi,
+  RotateCcw,
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, AttendanceMethod, AttendanceStatus, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
 import { 
@@ -2452,43 +2453,102 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
               {onUpdateBranchLocation && (
                 <div className="pt-2 border-t border-slate-200">
                   {Boolean(currentUser?.role === 'employee' && (loggedInEmp || selectedEmp)?.gpsCalibratedBranchId === selectedBranch.id) ? (
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950">
-                      <div className="flex items-center space-x-2 text-[11px]">
-                        <div className="w-6 h-6 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-800 flex items-center justify-center shrink-0">
-                          <Lock className="w-3.5 h-3.5" />
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950">
+                        <div className="flex items-center space-x-2 text-[11px]">
+                          <div className="w-6 h-6 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-800 flex items-center justify-center shrink-0">
+                            <Lock className="w-3.5 h-3.5" />
+                          </div>
+                          <div>
+                            <span className="font-bold block">
+                              {lang === 'km' ? 'GPS សាខាបានចាក់សោ (កំណត់បានតែ ១ ដង)' : 'Branch GPS Locked (1st-Time Setup Active)'}
+                            </span>
+                            <span className="text-[10px] text-emerald-700 font-medium">
+                              {lang === 'km' ? 'មិនអាចប្តូរបានទេ រហូតដល់ផ្ទេរទៅកាន់សាខាថ្មី' : 'Cannot change until transferred to another branch'}
+                            </span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="font-bold block">
-                            {lang === 'km' ? 'GPS សាខាបានចាក់សោ (កំណត់បានតែ ១ ដង)' : 'Branch GPS Locked (1st-Time Setup Active)'}
-                          </span>
-                          <span className="text-[10px] text-emerald-700 font-medium">
-                            {lang === 'km' ? 'មិនអាចប្តូរបានទេ រហូតដល់ផ្ទេរទៅកាន់សាខាថ្មី' : 'Cannot change until transferred to another branch'}
-                          </span>
-                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-white rounded-md border border-emerald-300 text-emerald-800 shadow-2xs">
+                          🔒 {lang === 'km' ? 'ជាប់សោ' : 'Locked'}
+                        </span>
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-white rounded-md border border-emerald-300 text-emerald-800 shadow-2xs">
-                        🔒 {lang === 'km' ? 'ជាប់សោ' : 'Locked'}
-                      </span>
+
+                      {!isWithinGeofence && (
+                        <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[10px] flex items-start gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>
+                            {lang === 'km'
+                              ? '⚠️ ប្រសិនបើលោកអ្នកស្ថិតនៅសាខាផ្ទាល់ហើយ ប៉ុន្តែប្រព័ន្ធនៅតែបង្ហាញថានៅក្រៅបរិវេណ សូមស្នើសុំ Admin ឱ្យចុច [Reset GPS ដំបូង] លើគណនីរបស់អ្នក ដើម្បីឱ្យអ្នកអាចចុចកំណត់ទីតាំង GPS សាខាឡើងវិញបាន។'
+                              : '⚠️ If you are physically at the branch but shown out of range, ask your Admin to reset your 1st GPS lock so you can calibrate again.'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-[11px]">
-                        <span className="font-bold text-slate-700 block">
-                          {lang === 'km' ? 'កំណត់សាខានេះនៅទីតាំង GPS ខ្ញុំ' : 'Set Branch to My GPS'}
-                        </span>
-                        <span className="text-[10px] text-indigo-600 font-medium">
-                          {currentUser?.role === 'employee'
-                            ? (lang === 'km' ? '📌 កំណត់បានតែ ១ ដងគត់ (ចាក់សោរហូតដល់ផ្ទេរសាខា)' : '📌 Allowed 1st time only (locks until branch transfer)')
-                            : (lang === 'km' ? '⚙️ កំណត់ទីតាំងតេស្ត ឬទីតាំងជាក់ស្តែង' : '⚙️ Calibrate branch coordinates')}
-                        </span>
+                    <div className="space-y-2">
+                      {currentUser?.role === 'employee' && (
+                        <div className="p-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-[10px] flex items-center gap-1.5 animate-pulse">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span>
+                            {lang === 'km'
+                              ? '✨ ទីតាំង GPS ដំបូងត្រូវបានដោះសោ! សូមឈរនៅសាខាផ្ទាល់ ហើយចុច "កំណត់ទីតាំង" ដើម្បីកំណត់ GPS សាខាឡើងវិញ។'
+                              : '✨ Initial GPS calibration is open! Please stand at your branch and click "Set to My GPS" below.'}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px]">
+                          <span className="font-bold text-slate-700 block">
+                            {lang === 'km' ? 'កំណត់សាខានេះនៅទីតាំង GPS ខ្ញុំ' : 'Set Branch to My GPS'}
+                          </span>
+                          <span className="text-[10px] text-indigo-600 font-medium">
+                            {currentUser?.role === 'employee'
+                              ? (lang === 'km' ? '📌 កំណត់បានតែ ១ ដងគត់ (ចាក់សោរហូតដល់ផ្ទេរសាខា)' : '📌 Allowed 1st time only (locks until branch transfer)')
+                              : (lang === 'km' ? '⚙️ កំណត់ទីតាំងតេស្ត ឬទីតាំងជាក់ស្តែង' : '⚙️ Calibrate branch coordinates')}
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleSetBranchToMyLocation}
+                          className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition cursor-pointer flex items-center space-x-1 shrink-0 ring-2 ring-indigo-400"
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                          <span>{lang === 'km' ? 'កំណត់ទីតាំង' : 'Set to My GPS'}</span>
+                        </button>
                       </div>
-                      <button
-                        onClick={handleSetBranchToMyLocation}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] shadow-sm transition cursor-pointer flex items-center space-x-1 shrink-0"
-                      >
-                        <MapPin className="w-3.5 h-3.5" />
-                        <span>{lang === 'km' ? 'កំណត់ទីតាំង' : 'Set to My GPS'}</span>
-                      </button>
+
+                      {currentUser?.role !== 'employee' && selectedEmp?.gpsCalibratedBranchId && onUpdateEmployee && (
+                        <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-slate-500">
+                            {lang === 'km' ? `GPS បុគ្គលិក ${selectedEmp.nameKh} បានចាក់សោ` : `Staff ${selectedEmp.nameEn} GPS is locked`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirmed = window.confirm(
+                                lang === 'km'
+                                  ? `តើអ្នកចង់កំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${selectedEmp.nameKh} (${selectedEmp.code}) មែនទេ? បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS សាខាឡើងវិញបាន។`
+                                  : `Reset 1st-time GPS calibration lock for ${selectedEmp.nameEn} (${selectedEmp.code})? Staff can calibrate branch GPS again directly.`
+                              );
+                              if (!confirmed) return;
+                              const updated: Employee = {
+                                ...selectedEmp,
+                                gpsCalibratedBranchId: undefined,
+                                gpsCalibratedAt: undefined,
+                              };
+                              onUpdateEmployee(updated);
+                              alert(
+                                lang === 'km'
+                                  ? `✅ បានកំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${selectedEmp.nameKh} រួចរាល់!`
+                                  : `✅ Successfully reset 1st-time GPS calibration for ${selectedEmp.nameEn}!`
+                              );
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-bold text-[10px] transition cursor-pointer flex items-center gap-1"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>{lang === 'km' ? 'កំណត់ GPS បុគ្គលិកឡើងវិញ' : 'Reset Staff GPS'}</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

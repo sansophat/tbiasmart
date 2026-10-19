@@ -668,7 +668,7 @@ export const GpsRadarMap: React.FC<GpsRadarMapProps> = ({
                             {lang === 'km' ? 'GPS សាខាបានចាក់សោ (លើកទី ១)' : 'Branch GPS Locked (1st-Time Active)'}
                           </span>
                           <span className="text-[10px] text-emerald-700 font-medium">
-                            {lang === 'km' ? 'អាចប្តូរបានលុះត្រាតែផ្ទេរសាខា' : 'Unlocked only upon branch transfer'}
+                            {lang === 'km' ? 'ប្រសិនបើខុសទីតាំង សូមស្នើសុំ Admin ឱ្យ Reset GPS' : 'If inaccurate, ask Admin to Reset GPS'}
                           </span>
                         </div>
                       </div>
@@ -679,12 +679,12 @@ export const GpsRadarMap: React.FC<GpsRadarMapProps> = ({
                   ) : (
                     <button
                       onClick={() => handleCalibrateBranchToMyLocation(selectedBranch)}
-                      className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold border border-indigo-700 text-xs transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
+                      className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold border border-indigo-700 text-xs transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-md shadow-indigo-200 ring-2 ring-indigo-400 ring-offset-1"
                     >
                       <MapPin className="w-3.5 h-3.5" />
                       <span>
                         {currentUser?.role === 'employee'
-                          ? (lang === 'km' ? 'កំណត់សាខានេះនៅទីតាំង GPS ខ្ញុំ (លើកទី ១)' : 'Set Branch to My GPS (1st-Time Only)')
+                          ? (lang === 'km' ? 'កំណត់សាខានេះនៅទីតាំង GPS ខ្ញុំ' : 'Set Branch to My GPS')
                           : (lang === 'km' ? 'កំណត់សាខានេះនៅទីតាំង GPS របស់ខ្ញុំ' : 'Set Branch Coordinates to My GPS')}
                       </span>
                     </button>

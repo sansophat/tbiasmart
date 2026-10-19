@@ -406,19 +406,19 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     🔒 {lang === 'km' ? 'បានចាក់សោ (លើកទី ១)' : 'Locked (1st-Time Active)'}
                   </span>
                 ) : (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-300">
-                    📍 {lang === 'km' ? 'មិនទាន់កំណត់ GPS' : 'GPS Not Set Yet'}
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-300 animate-pulse">
+                    ✨ {lang === 'km' ? 'អាចកំណត់ GPS ឡើងវិញបាន' : 'GPS Reset: Ready to Set'}
                   </span>
                 )}
               </div>
               <p className="text-xs text-slate-500 font-medium">
                 {currentEmp.gpsCalibratedBranchId === currentEmp.branchId
                   ? (lang === 'km'
-                      ? `សាខា "${branch?.nameKh}" (${branch?.lat ? branch.lat.toFixed(5) : '11.55640'}, ${branch?.lng ? branch.lng.toFixed(5) : '104.92820'}) • មិនអាចប្តូរបានទេ រហូតដល់មានការផ្ទេរទៅកាន់សាខាថ្មី`
-                      : `Branch "${branch?.nameEn}" (${branch?.lat ? branch.lat.toFixed(5) : '11.55640'}, ${branch?.lng ? branch.lng.toFixed(5) : '104.92820'}) • Location locked until branch transfer`)
+                      ? `សាខា "${branch?.nameKh}" (${branch?.lat ? branch.lat.toFixed(5) : '11.55640'}, ${branch?.lng ? branch.lng.toFixed(5) : '104.92820'}) • ប្រសិនបើសាខានៅឆ្ងាយខុសទីតាំងពិត សូមស្នើសុំ Admin ឱ្យ Reset GPS ដំបូងឡើងវិញ។`
+                      : `Branch "${branch?.nameEn}" (${branch?.lat ? branch.lat.toFixed(5) : '11.55640'}, ${branch?.lng ? branch.lng.toFixed(5) : '104.92820'}) • If location is inaccurate, ask Admin to Reset your 1st GPS lock.`)
                   : (lang === 'km'
-                      ? `អ្នកអាចកំណត់ទីតាំង GPS ជាក់ស្តែងរបស់អ្នកជាទីតាំងសាខាដំបូងបាន (កំណត់បានតែ ១ ដងគត់)`
-                      : `You can calibrate your current GPS as this branch's location (1-time setup only)`)}
+                      ? `✨ Admin បានកំណត់ទីតាំង GPS ឡើងវិញរួចរាល់! សូមឈរនៅទីតាំងសាខាផ្ទាល់ ហើយចុចប៊ូតុងខាងក្រោមដើម្បីកំណត់កូអរដោនេសាខា។`
+                      : `✨ Initial GPS is unlocked! Please stand at your branch and click below to calibrate branch coordinates.`)}
               </p>
             </div>
           </div>
@@ -437,11 +437,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   alert(res.message);
                 }
               }}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center space-x-1.5 cursor-pointer shrink-0"
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition flex items-center justify-center space-x-1.5 cursor-pointer shrink-0 ring-2 ring-indigo-400 ring-offset-2 animate-bounce-subtle"
             >
               <MapPin className="w-3.5 h-3.5" />
               <span>
-                {lang === 'km' ? 'កំណត់ទីតាំង GPS ខ្ញុំជាទីតាំងសាខា (លើកទី ១)' : 'Set My GPS as Branch Location'}
+                {lang === 'km' ? 'កំណត់ទីតាំង GPS ខ្ញុំជាទីតាំងសាខា' : 'Set My GPS as Branch Location'}
               </span>
             </button>
           )}

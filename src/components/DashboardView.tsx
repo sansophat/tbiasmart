@@ -33,6 +33,7 @@ import {
   Bell,
   ShieldAlert,
   ExternalLink,
+  RotateCcw,
 } from 'lucide-react';
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest, Shift } from '../types';
 import { INITIAL_SHIFTS } from '../data/initialData';
@@ -69,6 +70,7 @@ interface DashboardViewProps {
   onOpenTransferModal?: (emp?: Employee) => void;
   onRingStaffReminder?: (targetEmp: Employee, reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call' | 'custom', customMsg?: string) => void;
   onRingBulkStaffReminders?: (targetEmps: Employee[], reminderType: 'forgot_checkin' | 'forgot_checkout' | 'emergency_roll_call') => void;
+  onUpdateEmployee?: (emp: Employee) => void;
   onManualSync?: () => Promise<void> | void;
   isSyncing?: boolean;
   lang: Language;
@@ -97,6 +99,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenTransferModal,
   onRingStaffReminder,
   onRingBulkStaffReminders,
+  onUpdateEmployee,
   lang,
 }) => {
   const now = new Date();
@@ -2142,6 +2145,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       <Bell className="w-3.5 h-3.5 text-rose-600" />
                       <span>{lang === 'km' ? 'រោទិ៍រំលឹកឧបករណ៍' : 'Ring Device'}</span>
+                    </button>
+                  )}
+
+                  {matchedEmp && onUpdateEmployee && matchedEmp.gpsCalibratedBranchId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetBranch = branches.find((b) => b.id === (matchedEmp.gpsCalibratedBranchId || matchedEmp.branchId));
+                        const branchName = targetBranch ? (lang === 'km' ? targetBranch.nameKh : targetBranch.nameEn) : 'សាខា';
+                        const confirmed = window.confirm(
+                          lang === 'km'
+                            ? `តើអ្នកចង់កំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${matchedEmp.nameKh} (${matchedEmp.code}) លើសាខា "${branchName}" មែនទេ?\n\nបន្ទាប់ពីកំណត់ឡើងវិញ បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS សាខាឡើងវិញ (Set GPS) នៅពេលពួកគេស្ថិតនៅសាខាផ្ទាល់។`
+                            : `Reset 1st-time GPS calibration lock for ${matchedEmp.nameEn} (${matchedEmp.code}) at branch "${branchName}"?\n\nAfter reset, staff can calibrate branch GPS again directly at the venue.`
+                        );
+                        if (!confirmed) return;
+                        const updated: Employee = {
+                          ...matchedEmp,
+                          gpsCalibratedBranchId: undefined,
+                          gpsCalibratedAt: undefined,
+                        };
+                        onUpdateEmployee(updated);
+                        alert(
+                          lang === 'km'
+                            ? `✅ បានកំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${matchedEmp.nameKh} រួចរាល់! បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS ឡើងវិញពេលនៅសាខា។`
+                            : `✅ Successfully reset 1st-time GPS calibration for ${matchedEmp.nameEn}! Staff can now set GPS location again at the branch.`
+                        );
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer"
+                      title={lang === 'km' ? 'កំណត់ទីតាំង GPS ដំបូងឡើងវិញ' : 'Reset 1st-time GPS lock'}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                      <span>{lang === 'km' ? 'កំណត់ GPS ឡើងវិញ' : 'Reset GPS'}</span>
                     </button>
                   )}
                 </div>

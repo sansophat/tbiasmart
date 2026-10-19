@@ -33,7 +33,10 @@ import {
   Check,
   AlertCircle,
   LayoutGrid,
-  List
+  List,
+  MapPin,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole, Shift } from '../types';
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
@@ -658,6 +661,34 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
     }
   };
 
+  const handleResetGpsCalibration = (emp: Employee) => {
+    if (!onUpdateEmployee) return;
+    const targetBranch = branches.find((b) => b.id === (emp.gpsCalibratedBranchId || emp.branchId));
+    const branchName = targetBranch 
+      ? (lang === 'km' ? targetBranch.nameKh : targetBranch.nameEn) 
+      : (emp.gpsCalibratedBranchId || 'សាខា');
+    const confirmed = window.confirm(
+      lang === 'km'
+        ? `តើអ្នកចង់កំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${emp.nameKh} (${emp.code}) លើសាខា "${branchName}" មែនទេ?\n\nបន្ទាប់ពីកំណត់ឡើងវិញ បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS សាខាឡើងវិញ (Set GPS) នៅពេលពួកគេស្ថិតនៅសាខាផ្ទាល់។`
+        : `Reset 1st-time GPS calibration lock for ${emp.nameEn} (${emp.code}) at branch "${branchName}"?\n\nAfter reset, this staff member can click "Set My GPS as Branch Location" again directly at the branch.`
+    );
+    if (!confirmed) return;
+    const updated: Employee = {
+      ...emp,
+      gpsCalibratedBranchId: undefined,
+      gpsCalibratedAt: undefined,
+    };
+    onUpdateEmployee(updated);
+    if (editingEmp?.id === emp.id) {
+      setEditingEmp(updated);
+    }
+    alert(
+      lang === 'km'
+        ? `✅ បានកំណត់ឡើងវិញនូវទីតាំង GPS ដំបូងសម្រាប់ ${emp.nameKh} រួចរាល់! បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS ឡើងវិញពេលនៅសាខា។`
+        : `✅ Successfully reset 1st-time GPS calibration for ${emp.nameEn}! Staff can now set GPS location again at the branch.`
+    );
+  };
+
   // Filter employees
   const filteredEmployees = employees.filter((emp) => {
     const matchesBranch = selectedBranchFilter === 'all' || emp.branchId === selectedBranchFilter;
@@ -1015,6 +1046,37 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                         </span>
                       )}
                     </div>
+
+                    {/* 1st-Time GPS Calibration Lock Status */}
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <span>{lang === 'km' ? 'GPS ដំបូង:' : '1st GPS:'}</span>
+                      </span>
+                      {emp.gpsCalibratedBranchId ? (
+                        <div className="flex items-center gap-1.5">
+                          <span 
+                            className="font-mono text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 truncate max-w-[100px]" 
+                            title={lang === 'km' ? `បានចាក់សោសម្រាប់សាខា ${branches.find(b => b.id === emp.gpsCalibratedBranchId)?.nameKh || emp.gpsCalibratedBranchId}` : `Locked to ${branches.find(b => b.id === emp.gpsCalibratedBranchId)?.nameEn || emp.gpsCalibratedBranchId}`}
+                          >
+                            🔒 {lang === 'km' ? 'បានចាក់សោ' : 'Locked'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleResetGpsCalibration(emp)}
+                            title={lang === 'km' ? 'កំណត់ទីតាំង GPS ដំបូងឡើងវិញ (អនុញ្ញាតឱ្យបុគ្គលិកចុចកំណត់ទីតាំង GPS សាខាឡើងវិញ)' : 'Reset 1st-time GPS calibration lock (allows staff to calibrate GPS again)'}
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition cursor-pointer flex items-center gap-0.5"
+                          >
+                            <RotateCcw className="w-2.5 h-2.5" />
+                            <span>{lang === 'km' ? 'Reset GPS' : 'Reset GPS'}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                          📍 {lang === 'km' ? 'អាចកំណត់បាន' : 'Ready / Open'}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Action Buttons */}
@@ -1258,12 +1320,50 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                                 </span>
                               )}
                             </div>
+
+                            {/* GPS 1st-Time Calibration Lock Status */}
+                            <div>
+                              {emp.gpsCalibratedBranchId ? (
+                                <div className="flex items-center gap-1">
+                                  <span 
+                                    className="font-mono text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 inline-block truncate max-w-[95px]"
+                                    title={lang === 'km' ? `GPS បានចាក់សោសម្រាប់សាខា ${branches.find(b => b.id === emp.gpsCalibratedBranchId)?.nameKh || emp.gpsCalibratedBranchId}` : `GPS locked to branch`}
+                                  >
+                                    🔒 GPS Locked
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetGpsCalibration(emp)}
+                                    title={lang === 'km' ? 'កំណត់ទីតាំង GPS ដំបូងឡើងវិញ (អនុញ្ញាតឱ្យបុគ្គលិកចុចកំណត់ GPS សាខាឡើងវិញ)' : 'Reset 1st-Time GPS Lock'}
+                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition cursor-pointer flex items-center gap-0.5"
+                                  >
+                                    <RotateCcw className="w-2.5 h-2.5" />
+                                    <span>{lang === 'km' ? 'Reset' : 'Reset'}</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block">
+                                  📍 {lang === 'km' ? 'GPS អាចកំណត់' : 'GPS Open'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
 
                         {/* Actions */}
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end space-x-1.5">
+                            {emp.gpsCalibratedBranchId && (
+                              <button
+                                type="button"
+                                onClick={() => handleResetGpsCalibration(emp)}
+                                title={lang === 'km' ? 'កំណត់ទីតាំង GPS ដំបូងឡើងវិញ (Reset GPS Lock)' : 'Reset 1st-time GPS calibration lock'}
+                                className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold transition cursor-pointer"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => handleOpenBadge(emp)}
@@ -1812,6 +1912,41 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
                 ) : (
                   <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-200 text-slate-600">
                     {lang === 'km' ? 'រួចរាល់' : 'Unbound'}
+                  </span>
+                )}
+              </div>
+
+              {/* 1st-Time GPS Calibration Lock Status */}
+              <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{lang === 'km' ? 'ការកំណត់ទីតាំង GPS ដំបូង (1st-Time GPS Calibration):' : '1st-Time GPS Calibration:'}</span>
+                  </span>
+                  <p className="text-[10px] text-slate-500">
+                    {editingEmp.gpsCalibratedBranchId ? (
+                      lang === 'km'
+                        ? `បានចាក់សោសម្រាប់សាខា ${branches.find(b => b.id === editingEmp.gpsCalibratedBranchId)?.nameKh || editingEmp.gpsCalibratedBranchId} ${editingEmp.gpsCalibratedAt ? `(${new Date(editingEmp.gpsCalibratedAt).toLocaleDateString()})` : ''}`
+                        : `Locked to ${branches.find(b => b.id === editingEmp.gpsCalibratedBranchId)?.nameEn || editingEmp.gpsCalibratedBranchId} ${editingEmp.gpsCalibratedAt ? `(${new Date(editingEmp.gpsCalibratedAt).toLocaleDateString()})` : ''}`
+                    ) : (
+                      lang === 'km'
+                        ? 'មិនទាន់ចាក់សោទេ (បុគ្គលិកអាចចុចកំណត់ទីតាំង GPS សាខាបាននៅពេលនៅសាខាផ្ទាល់)'
+                        : 'Unlocked / Ready (Staff can calibrate branch GPS at the venue)'
+                    )}
+                  </p>
+                </div>
+                {editingEmp.gpsCalibratedBranchId ? (
+                  <button
+                    type="button"
+                    onClick={() => handleResetGpsCalibration(editingEmp)}
+                    className="py-1.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>{lang === 'km' ? 'កំណត់ឡើងវិញ' : 'Reset GPS'}</span>
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">
+                    {lang === 'km' ? 'អាចកំណត់បាន' : 'Unlocked'}
                   </span>
                 )}
               </div>
