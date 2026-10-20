@@ -39,7 +39,7 @@ import {
   Wifi,
   RotateCcw,
 } from 'lucide-react';
-import { Branch, Employee, AttendanceRecord, AttendanceMethod, AttendanceStatus, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest } from '../types';
+import { Branch, Employee, AttendanceRecord, AttendanceMethod, AttendanceStatus, UserGeoLocation, Language, AuthUser, SystemSettings, AuditLogEntry, LeaveRequest, Shift } from '../types';
 import { 
   calculateDistanceMeters, 
   formatDistance, 
@@ -62,6 +62,7 @@ import { isSameLocalDate } from '../utils/dateUtils';
 import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
 import { detectClientIp, isIpInBranchWhitelist } from '../utils/networkUtils';
 import { compressImageFile } from '../utils/imageCompressor';
+import { determineAttendancePunchStatus } from '../utils/rosterUtils';
 
 interface QrAttendanceViewProps {
   branches: Branch[];
@@ -83,6 +84,7 @@ interface QrAttendanceViewProps {
   onUpdateEmployee?: (emp: Employee) => void;
   onAddAuditLog?: (log: AuditLogEntry) => void;
   leaveRequests?: LeaveRequest[];
+  shifts?: Shift[];
 }
 
 export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
@@ -100,6 +102,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   onUpdateEmployee,
   onAddAuditLog,
   leaveRequests = [],
+  shifts = [],
 }) => {
   // Find employee profile if logged in
   const loggedInEmp = employees.find(
@@ -787,18 +790,16 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         } else if (!withinRadius) {
           status = 'geofence_violation';
         } else {
-          const hour = now.getHours();
-          const mins = now.getMinutes();
-          const currentMins = hour * 60 + mins;
-
-          // Office starts at 08:00 (480 mins) with 15 mins grace period
-          if (effectiveBranch.type === 'office' && currentMins > 8 * 60 + 15 && targetType === 'check_in') {
-            status = 'late';
-          } else if (effectiveBranch.type === 'cafe' && currentMins > 7 * 60 && targetType === 'check_in') {
-            status = 'late';
-          } else if (targetType === 'check_out' && hour >= 18) {
-            status = 'overtime';
-          }
+          // Dynamic calculation based on employee's assigned or custom shift & grace period
+          status = determineAttendancePunchStatus({
+            punchDate: now,
+            targetType,
+            emp,
+            branch: effectiveBranch,
+            shifts,
+            customStartTime: emp.shiftStartTime,
+            customEndTime: emp.shiftEndTime,
+          });
         }
 
         let verifiedByTag: 'gps' | 'wifi_ip' | 'kiosk_qr' | 'supervisor_override' | 'weak_gps_exception' = 'gps';

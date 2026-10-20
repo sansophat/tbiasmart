@@ -46,6 +46,7 @@ import { EmployeePortalView } from './components/EmployeePortalView';
 import { LoginModal } from './components/LoginModal';
 import { StaffReminderAlertModal } from './components/StaffReminderAlertModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { resolveEmployeeShift } from './utils/rosterUtils';
 
 // Code-split heavy views and secondary modals for ultra-fast initial load
 const ReportsView = React.lazy(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
@@ -3269,9 +3270,10 @@ export default function App() {
       );
       if (hasApprovedLeave) return;
 
-      const empShift = shifts.find((s) => s.id === matchedEmp.shiftId) || shifts[0];
+      const empBranch = branches.find((b) => b.id === matchedEmp.branchId);
+      const empShift = resolveEmployeeShift(matchedEmp, shifts, empBranch);
       const startTime = matchedEmp.shiftStartTime || empShift?.startTime || '08:00';
-      const endTime = matchedEmp.shiftEndTime || empShift?.endTime || '17:00';
+      const endTime = matchedEmp.shiftEndTime || empShift?.endTime || '17:30';
 
       const [startH, startM] = startTime.split(':').map(Number);
       const [endH, endM] = endTime.split(':').map(Number);
@@ -3881,6 +3883,7 @@ export default function App() {
               onUpdateEmployee={handleUpdateEmployee}
               onAddAuditLog={handleAddAuditLog}
               leaveRequests={leaveRequests}
+              shifts={shifts}
             />
           )}
 

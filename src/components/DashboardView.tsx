@@ -46,6 +46,11 @@ import {
   getShiftCategoryBadge,
   isEmployeeDayOff,
 } from '../utils/dayOffUtils';
+import {
+  resolveEmployeeShift,
+  isRecordOnTime,
+  isRecordLate,
+} from '../utils/rosterUtils';
 import { DashboardLeaveApprovals } from './DashboardLeaveApprovals';
 import { RealtimeActionAlertCenter, ActionAlertItem } from './RealtimeActionAlertCenter';
 
@@ -149,8 +154,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     else if (r.employeeCode) presentEmployeesSet.add(r.employeeCode);
   });
   const presentCount = presentEmployeesSet.size;
-  const onTimeCount = checkInRecords.filter((r) => r.status === 'on_time').length;
-  const lateCount = checkInRecords.filter((r) => r.status === 'late').length;
+  const onTimeCount = checkInRecords.filter((r) => isRecordOnTime(r, employees, shifts, branches) || (r.status === 'on_time' && !isRecordLate(r, employees, shifts, branches))).length;
+  const lateCount = checkInRecords.filter((r) => isRecordLate(r, employees, shifts, branches)).length;
   const overtimeCount = todayRecords.filter((r) => r.status === 'overtime').length;
   const pendingLocationExceptions = todayRecords.filter((r) => r.locationExceptionStatus === 'pending');
 
@@ -171,8 +176,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Helper to compute Workshift, Day Off, OT, and paired Check-In / Check-Out details for any attendance record
   const getRecordShiftDayOffAndOt = (rec: AttendanceRecord) => {
     const matchedEmp = employees.find((e) => doesRecordMatchEmployee(rec, e));
-    const empShift = shifts.find((s) => s.id === matchedEmp?.shiftId) || shifts[0];
-    const shiftBadge = getShiftCategoryBadge(matchedEmp?.shiftId, lang);
+    const empBranch = branches.find((b) => b.id === (matchedEmp?.branchId || rec.branchId));
+    const empShift = resolveEmployeeShift(matchedEmp, shifts, empBranch, new Date(rec.timestamp));
+    const shiftBadge = getShiftCategoryBadge(empShift?.id || matchedEmp?.shiftId, lang);
     const shiftHoursText = getEmployeeWorkingHours(
       matchedEmp || { shiftId: empShift?.id },
       empShift,
@@ -248,32 +254,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? new Date(lastCheckOut.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '--:--';
 
-    // Determine if employee's shift has already ended today without checking out (e.g. Morning Shift forgot check-out)
-    const sId = String(matchedEmp?.shiftId || empShift?.id || '').toLowerCase();
-    const firstInHour = firstCheckIn ? new Date(firstCheckIn.timestamp).getHours() : 12;
-    const isMorningWorker = sId.includes('morning') || sId.includes('s1') || firstInHour < 9;
-
+    // Determine if employee's shift has already ended today without checking out
     const endTimeStr =
       matchedEmp?.shiftEndTime ||
       matchedEmp?.customEndTime ||
       empShift?.endTime ||
-      (isMorningWorker ? '13:00' : '19:00');
+      '17:30';
     const [endH, endM] = endTimeStr.split(':').map(Number);
     const scheduledEndDate = new Date(now);
-    scheduledEndDate.setHours(endH || (isMorningWorker ? 13 : 19), endM || 0, 0, 0);
+    scheduledEndDate.setHours(isNaN(endH) ? 17 : endH, isNaN(endM) ? 30 : endM, 0, 0);
 
-    // If morning worker checked in early (<9 AM), their shift typically ends at 13:00 or 14:00 (or after 7h-8h of work)
     const hoursSinceCheckIn = firstCheckIn
       ? (now.getTime() - new Date(firstCheckIn.timestamp).getTime()) / (1000 * 60 * 60)
       : 0;
-    const scheduledDailyHours = matchedEmp?.scheduledDailyHours || empShift?.workHours || 8;
+    const scheduledDailyHours = matchedEmp?.scheduledDailyHours || empShift?.workHours || 8.5;
 
+    // Shift only flags as past shift end when the clock has actually passed the scheduled end time (+15m grace buffer)
+    // and employee has already worked for a reasonable duration. Never falsely alerts in the middle of a workday!
     const isPastShiftEnd =
       !hasCheckedOutToday &&
       hasCheckedInToday &&
-      (now.getTime() > scheduledEndDate.getTime() + 15 * 60 * 1000 ||
-        hoursSinceCheckIn >= scheduledDailyHours + 0.25 ||
-        (isMorningWorker && now.getHours() >= 14));
+      now.getTime() > scheduledEndDate.getTime() + 15 * 60 * 1000 &&
+      hoursSinceCheckIn >= Math.min(scheduledDailyHours, 5);
 
     let workedHoursToday = 0;
     let calculatedOtHours = 0;
@@ -415,9 +417,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const rollCallPersonnelList = useMemo(() => {
     return employees.map((emp) => {
       const branch = (branches && branches.find((b) => b.id === emp.branchId)) || branches[0] || { id: 'b1', nameKh: 'សាខា', nameEn: 'Branch' };
-      const empShift = (shifts && shifts.find((s) => s.id === emp.shiftId)) || (shifts && shifts[0]) || INITIAL_SHIFTS[0];
+      const empShift = resolveEmployeeShift(emp, shifts, branch);
       const startTime = emp.shiftStartTime || empShift?.startTime || '08:00';
-      const endTime = emp.shiftEndTime || empShift?.endTime || '17:00';
+      const endTime = emp.shiftEndTime || empShift?.endTime || '17:30';
       const shiftHoursText = getEmployeeWorkingHours(emp, empShift, lang);
       const shiftBadge = getShiftCategoryBadge(empShift?.id || emp.shiftId || '', lang);
       const isDayOffToday = isEmployeeDayOff(emp, now);
@@ -434,10 +436,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const [startH, startM] = startTime.split(':').map(Number);
       const [endH, endM] = endTime.split(':').map(Number);
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const shiftStartMinutes = startH * 60 + startM;
-      const shiftEndMinutes = endH * 60 + endM;
+      const shiftStartMinutes = (isNaN(startH) ? 8 : startH) * 60 + (isNaN(startM) ? 0 : startM);
+      const shiftEndMinutes = (isNaN(endH) ? 17 : endH) * 60 + (isNaN(endM) ? 30 : endM);
       const isPastShiftStart = currentMinutes >= shiftStartMinutes;
-      const isPastShiftEnd = currentMinutes >= shiftEndMinutes;
+      const isPastShiftEnd = currentMinutes >= shiftEndMinutes + 15;
 
       // Today's punches for this employee
       const empPunchesToday = attendanceRecords
@@ -1314,6 +1316,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   matchedEmp?.avatar ||
                   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 
+                const isLatePunch = isRecordLate(rec, employees, shifts, branches);
+                const effectiveStatus: AttendanceStatus =
+                  rec.status === 'geofence_violation' || rec.status === 'pending_location_review'
+                    ? rec.status
+                    : rec.type === 'check_in'
+                    ? (isLatePunch ? 'late' : 'on_time')
+                    : (rec.status === 'overtime' ? 'overtime' : 'on_time');
+
                 return (
                   <div
                     key={rec.id}
@@ -1392,18 +1402,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </span>
 
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                            rec.status === 'on_time'
+                            effectiveStatus === 'on_time'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : rec.status === 'late'
+                              : effectiveStatus === 'late'
                               ? 'bg-rose-50 text-rose-700 border border-rose-200'
                               : 'bg-purple-50 text-purple-700 border border-purple-200'
                           }`}>
                             <div className={`w-1.5 h-1.5 rounded-full ${
-                              rec.status === 'on_time' ? 'bg-emerald-500' : rec.status === 'late' ? 'bg-rose-500' : 'bg-purple-500'
+                              effectiveStatus === 'on_time' ? 'bg-emerald-500' : effectiveStatus === 'late' ? 'bg-rose-500' : 'bg-purple-500'
                             }`} />
-                            {rec.status === 'on_time'
+                            {effectiveStatus === 'on_time'
                               ? (lang === 'km' ? 'ទាន់ម៉ោង' : 'on_time')
-                              : rec.status === 'late'
+                              : effectiveStatus === 'late'
                               ? (lang === 'km' ? 'យឺតម៉ោង' : 'late')
                               : (lang === 'km' ? 'ថែមម៉ោង (OT)' : 'overtime')}
                           </span>
@@ -1802,23 +1812,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                         <span>{lang === 'km' ? 'ម៉ោងស្កេនចូល (Check-In)' : 'Check-In Time'}</span>
                       </span>
-                      {firstCheckIn && (
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            firstCheckIn.status === 'late'
-                              ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                              : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                          }`}
-                        >
-                          {firstCheckIn.status === 'late'
-                            ? lang === 'km'
-                              ? 'មកយឺត (Late)'
-                              : 'Late'
-                            : lang === 'km'
-                            ? 'ទាន់ម៉ោង (On-Time)'
-                            : 'On-Time'}
-                        </span>
-                      )}
+                      {firstCheckIn && (() => {
+                        const isLateCheckIn = isRecordLate(firstCheckIn, employees, shifts, branches);
+                        return (
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              isLateCheckIn
+                                ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            }`}
+                          >
+                            {isLateCheckIn
+                              ? lang === 'km'
+                                ? 'មកយឺត (Late)'
+                                : 'Late'
+                              : lang === 'km'
+                              ? 'ទាន់ម៉ោង (On-Time)'
+                              : 'On-Time'}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <div className="text-2xl font-black font-mono text-slate-900">

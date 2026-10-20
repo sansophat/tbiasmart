@@ -1,4 +1,4 @@
-import { AttendanceRecord, Employee, Language, LeaveRequest, Shift } from '../types';
+import { AttendanceRecord, AttendanceStatus, AttendanceType, Branch, Employee, Language, LeaveRequest, Shift } from '../types';
 import { 
   DAY_OF_WEEK_NAMES_EN, 
   DAY_OF_WEEK_NAMES_KH, 
@@ -6,6 +6,7 @@ import {
   isEmployeeSundayRest,
   getEmployeeLeaveOnDate 
 } from './dayOffUtils';
+import { doesRecordMatchEmployee } from './attendanceSyncManager';
 
 export interface StaffRosterDay {
   date: Date;
@@ -119,26 +120,228 @@ export function formatDurationMinutes(mins: number, lang: Language = 'km'): stri
 }
 
 /**
- * Finds the assigned Shift for an employee, or falls back to first shift
+ * Intelligently resolves the assigned Shift for an employee.
+ * Avoids blindly defaulting unassigned staff to half-day morning shifts (14:30),
+ * respecting employee role, department, branch type, and punch time-of-day.
  */
-export function getEmployeeAssignedShift(emp?: Employee, shifts: Shift[] = []): Shift {
-  const safeShifts = Array.isArray(shifts) ? shifts : [];
+export function resolveEmployeeShift(
+  emp?: Partial<Employee> | null,
+  shifts: Shift[] = [],
+  branch?: { type?: string; id?: string } | null,
+  punchDate?: Date | null
+): Shift {
+  const safeShifts = Array.isArray(shifts) && shifts.length > 0 ? shifts : [];
+
+  // 1. Direct match by emp.shiftId
   if (emp && emp.shiftId) {
     const matched = safeShifts.find((s) => s && s.id === emp.shiftId);
-    if (matched) return matched;
+    if (matched) {
+      // If punchDate provided and employee is punching for an afternoon shift (12:30 - 15:30)
+      // while their profile had morning shift, check if branch provides an afternoon shift
+      if (punchDate instanceof Date && !isNaN(punchDate.getTime())) {
+        const punchHour = punchDate.getHours();
+        const punchMins = punchHour * 60 + punchDate.getMinutes();
+        if (
+          matched.shiftCategory === 'morning' &&
+          punchMins >= 12 * 60 + 15 &&
+          punchMins <= 16 * 60
+        ) {
+          const afternoonShift = safeShifts.find(
+            (s) =>
+              s.shiftCategory === 'afternoon' &&
+              (branch?.type ? s.branchTypes.includes(branch.type) : true)
+          );
+          if (afternoonShift) return afternoonShift;
+        }
+      }
+      return matched;
+    }
   }
 
-  // Fallback default
+  // 2. Intelligent fallback based on branch type or department
+  const branchType = branch?.type || '';
+  const dept = String(emp?.department || emp?.departmentKh || '').toLowerCase();
+  const role = String(emp?.role || '').toLowerCase();
+
+  const isOffice =
+    branchType === 'office' ||
+    dept.includes('office') ||
+    dept.includes('finance') ||
+    dept.includes('hr') ||
+    dept.includes('admin') ||
+    dept.includes('គណនេយ្យ') ||
+    dept.includes('ធនធានមនុស្ស') ||
+    role.includes('admin') ||
+    role.includes('manager') ||
+    role.includes('hr');
+
+  if (isOffice) {
+    const officeShift = safeShifts.find(
+      (s) => s.id === 'shift_office' || s.shiftCategory === 'office'
+    );
+    if (officeShift) return officeShift;
+  }
+
+  // Cafe or Gas Station full-time default (07:00 - 16:30, 8.5h)
+  if (branchType === 'cafe') {
+    const cafeFulltime = safeShifts.find(
+      (s) => s.id === 'shift_cafe_fulltime' || (s.shiftCategory === 'full_time' && s.branchTypes.includes('cafe'))
+    );
+    if (cafeFulltime) return cafeFulltime;
+  }
+
+  if (branchType === 'gas_station') {
+    const gasFulltime = safeShifts.find(
+      (s) => s.id === 'shift_gas_fulltime' || (s.shiftCategory === 'full_time' && s.branchTypes.includes('gas_station'))
+    );
+    if (gasFulltime) return gasFulltime;
+  }
+
+  // General full-time shift fallback (instead of half-day morning shift)
+  const anyFulltime = safeShifts.find(
+    (s) => s.shiftCategory === 'full_time' || s.id.includes('fulltime') || s.id === 'shift_office'
+  );
+  if (anyFulltime) return anyFulltime;
+
+  // Safe standard default
   return safeShifts[0] || {
     id: 'shift_default',
-    nameKh: 'វេនស្តង់ដារ (08:00 - 17:00)',
-    nameEn: 'Standard Shift (08:00 - 17:00)',
+    nameKh: 'វេនស្តង់ដារពេញម៉ោង (08:00 - 17:30)',
+    nameEn: 'Full-Time Standard Shift (08:00 - 17:30)',
     startTime: '08:00',
-    endTime: '17:00',
+    endTime: '17:30',
     gracePeriodMins: 15,
     branchTypes: ['cafe', 'gas_station', 'office'],
-    workHours: 8,
+    workHours: 8.5,
   };
+}
+
+/**
+ * Finds the assigned Shift for an employee, or falls back to smart default
+ */
+export function getEmployeeAssignedShift(emp?: Employee, shifts: Shift[] = []): Shift {
+  return resolveEmployeeShift(emp, shifts);
+}
+
+/**
+ * Determines whether a punch record is on_time, late, overtime, or early_leave
+ * based on the employee's assigned or custom work shift and grace period.
+ */
+export function determineAttendancePunchStatus(params: {
+  punchDate: Date;
+  targetType: AttendanceType;
+  emp?: Employee | null;
+  branch?: Branch | null;
+  shifts?: Shift[];
+  customStartTime?: string;
+  customEndTime?: string;
+}): AttendanceStatus {
+  const { punchDate, targetType, emp, branch, shifts = [], customStartTime, customEndTime } = params;
+  const safeDate = punchDate instanceof Date && !isNaN(punchDate.getTime()) ? punchDate : new Date();
+  const punchHour = safeDate.getHours();
+  const punchMins = safeDate.getMinutes();
+  const currentTotalMins = punchHour * 60 + punchMins;
+
+  const resolvedShift = resolveEmployeeShift(emp, shifts, branch, safeDate);
+  const startTime = customStartTime || emp?.shiftStartTime || resolvedShift.startTime || '08:00';
+  const endTime = customEndTime || emp?.shiftEndTime || resolvedShift.endTime || '17:30';
+  const gracePeriodMins = resolvedShift.gracePeriodMins ?? 15;
+
+  if (targetType === 'check_in') {
+    const [startH, startM] = startTime.split(':').map(Number);
+    const shiftStartTotalMins = (isNaN(startH) ? 8 : startH) * 60 + (isNaN(startM) ? 0 : startM);
+
+    // If punch is at or before shift start + grace period, it is strictly ON-TIME
+    // (Arriving early is always on-time!)
+    if (currentTotalMins <= shiftStartTotalMins + gracePeriodMins) {
+      return 'on_time';
+    }
+
+    // Check if employee is punching for an afternoon shift (e.g. arrived at 13:15 for 13:30 shift)
+    if (shifts.length > 0 && currentTotalMins >= 12 * 60) {
+      const afternoonShift = shifts.find(
+        (s) =>
+          (s.shiftCategory === 'afternoon' || s.id.includes('afternoon')) &&
+          (branch?.type ? s.branchTypes?.includes(branch.type) : true)
+      );
+      if (afternoonShift) {
+        const [aftH, aftM] = afternoonShift.startTime.split(':').map(Number);
+        const aftStartTotalMins = (isNaN(aftH) ? 13 : aftH) * 60 + (isNaN(aftM) ? 30 : aftM);
+        const aftGrace = afternoonShift.gracePeriodMins ?? 10;
+        if (currentTotalMins <= aftStartTotalMins + aftGrace) {
+          return 'on_time';
+        }
+      }
+    }
+
+    return 'late';
+  } else {
+    // Check-out
+    const [endH, endM] = endTime.split(':').map(Number);
+    const shiftEndTotalMins = (isNaN(endH) ? 17 : endH) * 60 + (isNaN(endM) ? 30 : endM);
+
+    if (currentTotalMins >= shiftEndTotalMins + 30) {
+      return 'overtime';
+    }
+    if (currentTotalMins < shiftEndTotalMins - 15) {
+      return 'early_leave';
+    }
+    return 'on_time';
+  }
+}
+
+/**
+ * Accurately determines if a check-in record was on-time based on employee's shift.
+ */
+export function isRecordOnTime(
+  rec: AttendanceRecord,
+  employees: Employee[] = [],
+  shifts: Shift[] = [],
+  branches: Branch[] = []
+): boolean {
+  if (rec.type !== 'check_in') return false;
+  if (rec.status === 'geofence_violation' || rec.status === 'pending_location_review') return false;
+
+  const matchedEmp = employees.find((e) => doesRecordMatchEmployee(rec, e));
+  const branch = branches.find((b) => b.id === (matchedEmp?.branchId || rec.branchId));
+  const punchDate = new Date(rec.timestamp);
+
+  const status = determineAttendancePunchStatus({
+    punchDate,
+    targetType: 'check_in',
+    emp: matchedEmp,
+    branch,
+    shifts,
+  });
+
+  return status === 'on_time';
+}
+
+/**
+ * Accurately determines if a check-in record was actually late based on employee's shift.
+ */
+export function isRecordLate(
+  rec: AttendanceRecord,
+  employees: Employee[] = [],
+  shifts: Shift[] = [],
+  branches: Branch[] = []
+): boolean {
+  if (rec.type !== 'check_in') return false;
+  if (rec.status === 'geofence_violation' || rec.status === 'pending_location_review') return false;
+
+  const matchedEmp = employees.find((e) => doesRecordMatchEmployee(rec, e));
+  const branch = branches.find((b) => b.id === (matchedEmp?.branchId || rec.branchId));
+  const punchDate = new Date(rec.timestamp);
+
+  const status = determineAttendancePunchStatus({
+    punchDate,
+    targetType: 'check_in',
+    emp: matchedEmp,
+    branch,
+    shifts,
+  });
+
+  return status === 'late';
 }
 
 /**
