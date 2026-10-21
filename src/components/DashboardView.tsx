@@ -254,6 +254,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? new Date(lastCheckOut.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '--:--';
 
+    // Determine if employee is on a morning-only shift
+    const sId = String(matchedEmp?.shiftId || empShift?.id || '').toLowerCase();
+    const isMorningWorker =
+      (sId.includes('morning') || sId.includes('s1') || empShift?.shiftCategory === 'morning') &&
+      !sId.includes('full') &&
+      empShift?.shiftCategory !== 'full_time';
+
     // Determine if employee's shift has already ended today without checking out
     const endTimeStr =
       matchedEmp?.shiftEndTime ||
