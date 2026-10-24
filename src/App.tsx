@@ -3948,6 +3948,7 @@ export default function App() {
               attendanceRecords={attendanceRecords}
               branches={branches}
               employees={employees}
+              shifts={shifts}
               leaveRequests={leaveRequests}
               onUpdateLeaveStatus={handleUpdateLeaveStatus}
               onDeleteLeaveRequest={handleDeleteLeaveRequest}

@@ -135,10 +135,10 @@ export const StaffRosterTable: React.FC<StaffRosterTableProps> = ({
 
       // Status filter
       if (teamStatusFilter === 'scanned') {
-        return Boolean(item.rosterDay?.hasScannedIn);
+        return Boolean(item.rosterDay?.hasScanned);
       }
       if (teamStatusFilter === 'not_scanned') {
-        return !item.rosterDay?.hasScannedIn && !item.rosterDay?.isDayOff && !item.rosterDay?.isOnLeave;
+        return !item.rosterDay?.hasScanned && !item.rosterDay?.isDayOff && !item.rosterDay?.isOnLeave;
       }
       return true;
     });

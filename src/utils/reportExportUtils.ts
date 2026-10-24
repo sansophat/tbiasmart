@@ -2,10 +2,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas-pro';
 import ExcelJS from 'exceljs';
-import { AttendanceRecord, Branch, Employee, Language, LeaveRequest } from '../types';
+import { AttendanceRecord, Branch, Employee, Language, LeaveRequest, Shift } from '../types';
 import { isEmployeeDayOff, isEmployeeSundayRest, getEmployeeLeaveOnDate, getEmployeeDayOffName } from './dayOffUtils';
 import { ReportTableSettings, DAILY_TIMESHEET_COLUMNS, MERGED_SUMMARY_COLUMNS } from '../types/tableCustomization';
 import { doesRecordMatchEmployee } from './attendanceSyncManager';
+import { getLocalDateString } from './dateUtils';
+import { isRecordLate } from './rosterUtils';
 
 export interface TimesheetRow {
   no: number;
@@ -89,7 +91,8 @@ export function generateDailyTimesheetRows(
   endDateStr: string,
   branchFilter: string = 'all',
   employeeFilter: string = 'all',
-  leaveRequests: LeaveRequest[] = []
+  leaveRequests: LeaveRequest[] = [],
+  shifts: Shift[] = []
 ): TimesheetRow[] {
   // Filter employees by branch and by employee
   let targetEmployees = branchFilter === 'all'
@@ -155,18 +158,14 @@ export function generateDailyTimesheetRows(
         .filter((r) => {
           if (!r || !r.timestamp) return false;
           if (!doesRecordMatchEmployee(r, emp)) return false;
-          const parsed = new Date(r.timestamp);
-          if (!isNaN(parsed.getTime())) {
-            return parsed.toLocaleDateString('en-CA') === dateStr;
-          }
-          return r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
+          return getLocalDateString(r.timestamp) === dateStr;
         })
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       let firstIn = dayPunches.find((p) => p.type === 'check_in');
       if (!firstIn && dayPunches.length > 0) {
         const earliest = dayPunches[0];
-        if (new Date(earliest.timestamp).getHours() < 11 || dayPunches.length >= 2) {
+        if (new Date(earliest.timestamp).getHours() < 12 || dayPunches.length >= 2) {
           firstIn = earliest;
         }
       }
@@ -178,7 +177,7 @@ export function generateDailyTimesheetRows(
         const latest = dayPunches[dayPunches.length - 1];
         const gapHours =
           (new Date(latest.timestamp).getTime() - new Date(firstIn.timestamp).getTime()) / (1000 * 60 * 60);
-        if (latest.id !== firstIn.id && gapHours >= 1) {
+        if (latest.id !== firstIn.id && gapHours >= 0.5) {
           lastOut = latest;
         }
       }
@@ -198,7 +197,8 @@ export function generateDailyTimesheetRows(
         const inDate = new Date(firstIn.timestamp);
         timeInStr = inDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
         
-        statusStr = firstIn.status === 'late' ? 'Late Check-in' : 'On-Time Present';
+        const isLate = isRecordLate(firstIn, employees, shifts, branches) || firstIn.status === 'late';
+        statusStr = isLate ? 'Late Check-in' : 'On-Time Present';
         remarkStr = firstIn.isWithinGeofence
           ? `Verified GPS (${firstIn.distanceToBranch}m from venue)`
           : `⚠️ Geofence Warning (${firstIn.distanceToBranch}m away)`;
@@ -211,17 +211,22 @@ export function generateDailyTimesheetRows(
           if (diffMs > 0) {
             const hours = (diffMs / (1000 * 60 * 60)).toFixed(1);
             workHours = `${hours}h`;
-            if (parseFloat(hours) > 9) {
+            if (parseFloat(hours) > 8.5) {
               statusStr = 'Overtime';
               remarkStr += ` • ${hours} hrs worked (OT included)`;
             }
           }
+        } else {
+          // Check-in without check-out yet: estimate 8.0h so daily timesheet and summary match
+          workHours = '8.0h (Est)';
+          remarkStr += ' • Pending check-out (8.0h estimated)';
         }
       } else if (lastOut) {
         const outDate = new Date(lastOut.timestamp);
         timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
         statusStr = 'Check-Out Only';
         remarkStr = 'Missing morning Check-In record';
+        workHours = '0.0h';
       } else {
         // No punch: Determine if Leave, Day Off, Sunday Rest, or genuine Absent
         if (empLeave) {
@@ -283,7 +288,8 @@ export function generateEmployeeMergedSummaries(
   endDateStr: string,
   branchFilter: string = 'all',
   employeeFilter: string = 'all',
-  leaveRequests: LeaveRequest[] = []
+  leaveRequests: LeaveRequest[] = [],
+  shifts: Shift[] = []
 ): EmployeeMergedSummary[] {
   // Filter target employees
   let targetEmployees = branchFilter === 'all'
@@ -305,8 +311,19 @@ export function generateEmployeeMergedSummaries(
   return targetEmployees.map((emp) => {
     const empBranch = branches.find((b) => b.id === emp.branchId) || branches[0];
     
-    // Get all daily records for this employee
-    const empDailyRows: TimesheetRow[] = [];
+    // Generate daily rows strictly for this employee across the date range
+    const empDailyRows = generateDailyTimesheetRows(
+      records,
+      [emp],
+      branches,
+      startDateStr,
+      endDateStr,
+      'all',
+      emp.id,
+      leaveRequests,
+      shifts
+    );
+
     let daysPresent = 0;
     let daysAbsent = 0;
     let daysOff = 0;
@@ -318,142 +335,35 @@ export function generateEmployeeMergedSummaries(
     let totalOtHoursNum = 0;
     let sundaysCount = 0;
 
-    dates.forEach((dateStr, idx) => {
-      const [y, m, dNum] = dateStr.split('-').map(Number);
-      const d = new Date(y, m - 1, dNum, 12, 0, 0);
-      const dayIndex = d.getDay();
-      const isSunday = dayIndex === 0;
-      const isDayOff = isEmployeeDayOff(emp, dateStr);
-      const isSunRest = isSunday && isEmployeeSundayRest(emp);
-      const empLeave = getEmployeeLeaveOnDate(emp, dateStr, leaveRequests);
+    empDailyRows.forEach((r) => {
+      const hasPunch = r.timeIn !== '--:--' || r.timeOut !== '--:--';
+      const hours = parseFloat(r.durationHours) || 0;
+      totalWorkHoursNum += hours;
 
-      if (isSunRest) {
+      if (r.isSunday && !hasPunch) {
         sundaysCount++;
       }
 
-      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const dayNamesKh = ['អាទិត្យ', 'ច័ន្ទ', 'អង្គារ', 'ពុធ', 'ព្រហស្បតិ៍', 'សុក្រ', 'សៅរ៍'];
-      const dayOfWeekStr = `${dayNames[dayIndex]} (${dayNamesKh[dayIndex]})`;
-
-      const dayPunches = records.filter((r) => {
-        if (!r || !r.timestamp) return false;
-        if (!doesRecordMatchEmployee(r, emp)) return false;
-        const localDate = new Date(r.timestamp).toLocaleDateString('en-CA');
-        return localDate === dateStr || r.timestamp.startsWith(dateStr) || r.timestamp.slice(0, 10) === dateStr;
-      });
-
-      const checkIns = dayPunches.filter((p) => p.type === 'check_in').sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-      const checkOuts = dayPunches.filter((p) => p.type === 'check_out').sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-
-      let timeInStr = '--:--';
-      let timeOutStr = '--:--';
-      let statusStr = 'Absent';
-      let remarkStr = 'Absent';
-      let workHours = '0.0h';
-      let parsedHours = 0;
-      let isDayOffFlag = false;
-      let isLeaveFlag = false;
-
-      if (checkIns.length > 0) {
+      if (hasPunch) {
         daysPresent++;
-        const firstIn = checkIns[0];
-        const inDate = new Date(firstIn.timestamp);
-        timeInStr = inDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-
-        if (firstIn.status === 'late') {
+        if (r.status.includes('Late')) {
           daysLate++;
-          statusStr = 'Late Check-in';
-        } else {
+        } else if (r.status.includes('On-Time')) {
           daysOnTime++;
-          statusStr = 'On-Time';
         }
-
-        remarkStr = firstIn.isWithinGeofence
-          ? `GPS Verified (${firstIn.distanceToBranch}m)`
-          : `⚠️ Geofence Warning (${firstIn.distanceToBranch}m)`;
-
-        if (checkOuts.length > 0) {
-          const lastOut = checkOuts[0];
-          const outDate = new Date(lastOut.timestamp);
-          timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-
-          const diffMs = outDate.getTime() - inDate.getTime();
-          if (diffMs > 0) {
-            parsedHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(1));
-            workHours = `${parsedHours}h`;
-            totalWorkHoursNum += parsedHours;
-
-            if (parsedHours > 8) {
-              const ot = parseFloat((parsedHours - 8).toFixed(1));
-              totalOtHoursNum += ot;
-              daysOvertime++;
-              statusStr = 'Overtime';
-              remarkStr += ` • ${parsedHours}h worked (${ot}h OT)`;
-            }
-          }
-        } else {
-          // Standard shift assume 8h if checked in
-          parsedHours = 8.0;
-          totalWorkHoursNum += parsedHours;
-          workHours = '8.0h (Est)';
+        if (r.status.includes('Overtime') || hours > 8.5) {
+          daysOvertime++;
+          totalOtHoursNum += Math.max(0, parseFloat((hours - 8).toFixed(1)));
         }
-      } else if (checkOuts.length > 0) {
-        daysPresent++;
-        const lastOut = checkOuts[0];
-        const outDate = new Date(lastOut.timestamp);
-        timeOutStr = outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-        statusStr = 'Check-Out Only';
-        remarkStr = 'Missing morning Check-In';
+      } else if (r.isLeave) {
+        daysLeave++;
+      } else if (r.isDayOff) {
+        daysOff++;
+      } else if (r.isSunday) {
+        // already counted in sundaysCount
       } else {
-        // No punch: Check if Leave, Day Off, or Sunday Rest
-        if (empLeave) {
-          daysLeave++;
-          isLeaveFlag = true;
-          statusStr = 'On Leave / សុំច្បាប់';
-          const typeKh = empLeave.typeKh || empLeave.type || 'ច្បាប់';
-          remarkStr = `[ច្បាប់អនុញ្ញាត] ${typeKh}${empLeave.reason ? `: ${empLeave.reason}` : ''}`;
-        } else if (isDayOff) {
-          daysOff++;
-          isDayOffFlag = true;
-          statusStr = 'Day Off / ថ្ងៃសម្រាក';
-          remarkStr = `Weekly Day Off (${getEmployeeDayOffName(emp, 'km')})`;
-        } else if (isSunRest) {
-          statusStr = 'Sunday Rest';
-          remarkStr = 'Company Sunday Rest Day';
-        } else {
-          daysAbsent++;
-          statusStr = 'Absent / អវត្តមាន';
-          remarkStr = 'No punch logged';
-        }
+        daysAbsent++;
       }
-
-      empDailyRows.push({
-        no: idx + 1,
-        enrollId: emp.code,
-        employeeId: emp.id,
-        nameEn: emp.nameEn,
-        nameKh: emp.nameKh,
-        avatar: emp.avatar,
-        department: emp.department,
-        role: emp.role,
-        branchId: empBranch?.id || '',
-        branchNameEn: empBranch?.nameEn || '',
-        branchNameKh: empBranch?.nameKh || '',
-        date: dateStr,
-        dayOfWeek: dayOfWeekStr,
-        isSunday: isSunday,
-        isDayOff: isDayOffFlag,
-        isLeave: isLeaveFlag,
-        timeIn: timeInStr,
-        timeOut: timeOutStr,
-        durationHours: workHours,
-        status: statusStr,
-        remark: remarkStr,
-      });
     });
 
     const scheduledWorkDays = daysPresent + daysAbsent;

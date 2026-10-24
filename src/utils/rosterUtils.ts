@@ -7,6 +7,7 @@ import {
   getEmployeeLeaveOnDate 
 } from './dayOffUtils';
 import { doesRecordMatchEmployee } from './attendanceSyncManager';
+import { getLocalDateString } from './dateUtils';
 
 export interface StaffRosterDay {
   date: Date;
@@ -412,18 +413,8 @@ export function getEmployeeRosterDay(
   const safeRecords = Array.isArray(attendanceRecords) ? attendanceRecords : [];
   const records = safeRecords.filter((rec) => {
     if (!rec || !rec.timestamp) return false;
-    const isSameEmp = 
-      (safeEmp.id && rec.employeeId === safeEmp.id) || 
-      (safeEmp.code && rec.employeeCode && rec.employeeCode.toLowerCase() === safeEmp.code.toLowerCase()) ||
-      (safeEmp.id && rec.employeeId === safeEmp.id.replace('user_', '')) ||
-      (safeEmp.nameEn && rec.employeeNameEn && safeEmp.nameEn.toLowerCase() === rec.employeeNameEn.toLowerCase());
-    if (!isSameEmp) return false;
-    const parsed = new Date(rec.timestamp);
-    if (!isNaN(parsed.getTime())) {
-      return parsed.toLocaleDateString('en-CA') === targetDateStr;
-    }
-    const rawDate = typeof rec.timestamp === 'string' ? rec.timestamp.slice(0, 10) : '';
-    return rawDate === targetDateStr;
+    if (!doesRecordMatchEmployee(rec, safeEmp)) return false;
+    return getLocalDateString(rec.timestamp) === targetDateStr;
   });
 
   // Sort chronologically safely
@@ -436,7 +427,7 @@ export function getEmployeeRosterDay(
   let checkInRecord = records.find((r) => r && r.type === 'check_in');
   if (!checkInRecord && records.length > 0) {
     const earliest = records[0];
-    if (new Date(earliest.timestamp).getHours() < 11 || records.length >= 2) {
+    if (new Date(earliest.timestamp).getHours() < 12 || records.length >= 2) {
       checkInRecord = earliest;
     }
   }
@@ -448,7 +439,7 @@ export function getEmployeeRosterDay(
     const latest = records[records.length - 1];
     const gapHours =
       (new Date(latest.timestamp).getTime() - new Date(checkInRecord.timestamp).getTime()) / (1000 * 60 * 60);
-    if (latest.id !== checkInRecord.id && gapHours >= 1) {
+    if (latest.id !== checkInRecord.id && gapHours >= 0.5) {
       checkOutRecord = latest;
     }
   }
@@ -476,11 +467,12 @@ export function getEmployeeRosterDay(
 
       // Lateness calculation
       const [startH, startM] = (scheduledStart || '08:00').split(':').map(Number);
-      const scheduledStartMs = new Date(targetDate).setHours(startH || 0, startM || 0, 0, 0);
+      const dCopy = new Date(safeTargetDate);
+      const scheduledStartMs = dCopy.setHours(startH || 0, startM || 0, 0, 0);
       const graceMins = assignedShift?.gracePeriodMins || 15;
       const graceThresholdMs = scheduledStartMs + graceMins * 60 * 1000;
 
-      if (!isNaN(dIn.getTime()) && dIn.getTime() > graceThresholdMs) {
+      if (!isNaN(dIn.getTime()) && (dIn.getTime() > graceThresholdMs || isRecordLate(checkInRecord, [safeEmp], shifts))) {
         isLate = true;
         lateMinutes = Math.max(1, Math.round((dIn.getTime() - scheduledStartMs) / 60000));
       }
@@ -550,9 +542,13 @@ export function getEmployeeRosterDay(
     status = 'completed';
     statusLabelKh = 'បានស្កេនចូល & ចេញ';
     statusLabelEn = 'Completed (In & Out)';
-    statusDescriptionKh = `ចូលម៉ោង ${actualInTime} • ចេញម៉ោង ${actualOutTime}`;
-    statusDescriptionEn = `In at ${actualInTime} • Out at ${actualOutTime}`;
-    badgeVariant = 'success';
+    statusDescriptionKh = isLate
+      ? `ចូលយឺត (${lateMinutes}mn) ម៉ោង ${actualInTime} • ចេញម៉ោង ${actualOutTime}`
+      : `ចូលម៉ោង ${actualInTime} • ចេញម៉ោង ${actualOutTime}`;
+    statusDescriptionEn = isLate
+      ? `Late (${lateMinutes}m) In at ${actualInTime} • Out at ${actualOutTime}`
+      : `In at ${actualInTime} • Out at ${actualOutTime}`;
+    badgeVariant = isLate ? 'warning' : 'success';
   } else if (hasScannedIn && !hasScannedOut) {
     status = 'scanned_in';
     statusLabelKh = 'បានស្កេនចូលហើយ';
@@ -560,6 +556,13 @@ export function getEmployeeRosterDay(
     statusDescriptionKh = `បានស្កេនចូលនៅម៉ោង ${actualInTime} (រង់ចាំស្កេនចេញ)`;
     statusDescriptionEn = `Clocked in at ${actualInTime} (awaiting clock out)`;
     badgeVariant = 'info';
+  } else if (hasScannedOut && !hasScannedIn) {
+    status = 'scanned_in';
+    statusLabelKh = 'បានស្កេនចេញ (ខ្វះស្កេនចូល)';
+    statusLabelEn = 'Scanned Out Only';
+    statusDescriptionKh = `បានស្កេនចេញនៅម៉ោង ${actualOutTime} (ខកខានស្កេនចូល)`;
+    statusDescriptionEn = `Clocked out at ${actualOutTime} (missing clock in)`;
+    badgeVariant = 'warning';
   } else if (isFuture) {
     status = 'future';
     statusLabelKh = 'វេនគ្រោងទុក';

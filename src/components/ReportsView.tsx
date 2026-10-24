@@ -40,7 +40,7 @@ import {
   Trash2,
   RefreshCw
 } from 'lucide-react';
-import { AttendanceRecord, Branch, LeaveRequest, Language, Employee, CompanyBranding } from '../types';
+import { AttendanceRecord, Branch, LeaveRequest, Language, Employee, CompanyBranding, Shift } from '../types';
 import { INITIAL_LEAVE_REQUESTS } from '../data/initialData';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
 import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
@@ -78,6 +78,7 @@ interface ReportsViewProps {
   attendanceRecords: AttendanceRecord[];
   branches: Branch[];
   employees?: Employee[];
+  shifts?: Shift[];
   leaveRequests: LeaveRequest[];
   onUpdateLeaveStatus: (leaveId: string, status: 'approved' | 'rejected', adminComment?: string, approvedBy?: string) => void;
   onDeleteLeaveRequest?: (leaveId: string) => void;
@@ -92,6 +93,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   attendanceRecords,
   branches,
   employees = [],
+  shifts = [],
   leaveRequests,
   onUpdateLeaveStatus,
   onDeleteLeaveRequest,
@@ -703,9 +705,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       endDate,
       selectedBranchFilter,
       selectedEmployeeFilter,
-      leaveRequests
+      leaveRequests,
+      shifts
     );
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests, shifts]);
 
   // Generate Merged Employee Summaries (Grouped by Employee)
   const mergedEmployeeSummaries = useMemo(() => {
@@ -717,9 +720,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       endDate,
       selectedBranchFilter,
       selectedEmployeeFilter,
-      leaveRequests
+      leaveRequests,
+      shifts
     );
-  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, selectedBranchFilter, selectedEmployeeFilter, leaveRequests, shifts]);
 
   // Filtered Timesheet Rows (via search query)
   const filteredTimesheetRows = useMemo(() => {
@@ -885,12 +889,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         endDate,
         'all',
         emp.id,
-        leaveRequests
+        leaveRequests,
+        shifts
       ).filter((r) => r.employeeId === emp.id);
 
       const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
-      const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
-      const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
+      const daysWorked = empRows.filter((r) => r.timeIn !== '--:--' || r.timeOut !== '--:--').length;
+      const daysOff = empRows.filter((r) => (r.isDayOff || r.isSunday) && r.timeIn === '--:--' && r.timeOut === '--:--').length;
       const daysLeave = empRows.filter((r) => r.isLeave).length;
       const lateDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
       const otDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('overtime')).length;
@@ -908,7 +913,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         },
       };
     });
-  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests, shifts]);
 
   // Group printable staff by department helper function for any given filters
   const getDepartmentStaffGroups = (
@@ -936,12 +941,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         endDate,
         'all',
         emp.id,
-        leaveRequests
+        leaveRequests,
+        shifts
       ).filter((r) => r.employeeId === emp.id);
 
       const totalWork = empRows.reduce((acc, r) => acc + (parseFloat(r.durationHours) || 0), 0).toFixed(1);
-      const daysWorked = empRows.filter((r) => !r.isSunday && !r.isDayOff && !r.isLeave && r.timeIn !== '--:--').length;
-      const daysOff = empRows.filter((r) => r.isDayOff || r.isSunday).length;
+      const daysWorked = empRows.filter((r) => r.timeIn !== '--:--' || r.timeOut !== '--:--').length;
+      const daysOff = empRows.filter((r) => (r.isDayOff || r.isSunday) && r.timeIn === '--:--' && r.timeOut === '--:--').length;
       const daysLeave = empRows.filter((r) => r.isLeave).length;
       const lateDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('late')).length;
       const otDays = empRows.filter((r) => (r.status || '').toLowerCase().includes('overtime')).length;
@@ -988,13 +994,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       endDate,
       printBranchFilter,
       printStaffFilter,
-      leaveRequests
+      leaveRequests,
+      shifts
     );
     if (printDepartmentFilter !== 'all') {
       list = list.filter((s) => s.department && s.department.toLowerCase() === printDepartmentFilter.toLowerCase());
     }
     return list;
-  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests]);
+  }, [attendanceRecords, employees, branches, startDate, endDate, printBranchFilter, printStaffFilter, printDepartmentFilter, leaveRequests, shifts]);
 
   // Selected Branch Name
   const currentBranchObj = branches.find((b) => b.id === selectedBranchFilter);
@@ -1072,7 +1079,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               endDate,
               b.id,
               selectedEmployeeFilter,
-              leaveRequests
+              leaveRequests,
+              shifts
             );
             if (format === 'xlsx') {
               await exportMergedSummaryToXlsx(branchSummaries, b.nameKh || b.nameEn, dateRangeLabel, compName, mergedTableSettings);
@@ -1090,7 +1098,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               endDate,
               b.id,
               selectedEmployeeFilter,
-              leaveRequests
+              leaveRequests,
+              shifts
             );
             if (format === 'xlsx') {
               await exportTimesheetToXlsx(branchRows, b.nameKh || b.nameEn, dateRangeLabel, compName, dailyTableSettings);
