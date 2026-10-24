@@ -6,8 +6,9 @@
  * 2. Multi-device account swapping
  * 3. Device sharing across different staff members
  * 
- * Generates a persistent hardware/browser fingerprint (UUID + platform signature)
- * and enforces strict 1-Employee = 1-Device binding.
+ * Uses Multi-Layer Storage Persistence (LocalStorage + Long-Lived Cookies + SessionStorage)
+ * combined with Deterministic Hardware Signature Analysis (Screen, Canvas, WebGL, Platform)
+ * to prevent false lockouts when iOS Safari or in-app browsers evict local cache.
  */
 
 import { Employee, SystemSettings } from '../types';
@@ -21,10 +22,137 @@ export interface DeviceFingerprint {
   browser: string;
   screenSummary: string;
   fingerprintHash: string;
+  hardwareSignature: string;
 }
 
 const STORAGE_KEY_DEVICE_ID = 'ams_trusted_device_uuid_v2';
 const STORAGE_KEY_DEVICE_NAME = 'ams_trusted_device_name_v2';
+const STORAGE_KEY_DEVICE_HW = 'ams_trusted_device_hw_sig_v2';
+
+/**
+ * Multi-layer persistent storage helper (LocalStorage + Cookie + SessionStorage)
+ * Survives Safari tab resets, private browsing closures, and in-app webview switches.
+ */
+function getPersistentStorageValue(key: string): string {
+  if (typeof window === 'undefined') return '';
+
+  // 1. Try localStorage
+  try {
+    const val = localStorage.getItem(key);
+    if (val && val.trim()) return val.trim();
+  } catch (e) {}
+
+  // 2. Try Cookie (persists across Safari session resets & tab closures)
+  try {
+    const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + key + '=([^;]*)'));
+    if (match && match[1]) {
+      const decoded = decodeURIComponent(match[1]).trim();
+      if (decoded) {
+        // Self-heal localStorage
+        try { localStorage.setItem(key, decoded); } catch (_) {}
+        return decoded;
+      }
+    }
+  } catch (e) {}
+
+  // 3. Try sessionStorage
+  try {
+    const val = sessionStorage.getItem(key);
+    if (val && val.trim()) {
+      try { localStorage.setItem(key, val.trim()); } catch (_) {}
+      return val.trim();
+    }
+  } catch (e) {}
+
+  return '';
+}
+
+function setPersistentStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined' || !value) return;
+
+  // 1. Write localStorage
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {}
+
+  // 2. Write document.cookie with 10 years max-age
+  try {
+    document.cookie = `${key}=${encodeURIComponent(value)}; max-age=315360000; path=/; SameSite=Lax`;
+  } catch (e) {}
+
+  // 3. Write sessionStorage
+  try {
+    sessionStorage.setItem(key, value);
+  } catch (e) {}
+}
+
+/**
+ * 32-bit FNV-1a / polynomial string hash
+ */
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Generates a deterministic Hardware Signature based on physical device characteristics
+ * (Screen resolution, pixel ratio, platform, CPU cores, WebGL GPU, Canvas 2D fingerprint, Timezone).
+ * This signature is CONSTANT across sessions, private mode, and browser resets.
+ */
+function getHardwareFingerprintHash(os: string, browser: string, screenSummary: string): { canvasHash: string; hardwareSignature: string } {
+  let canvasHash = 'cv_default';
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 40;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.textBaseline = 'top';
+      ctx.font = '14px Arial, sans-serif';
+      ctx.fillStyle = '#4f46e5';
+      ctx.fillRect(0, 0, 160, 40);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('TBIA_SMART_2026', 4, 12);
+      ctx.fillStyle = '#10b981';
+      ctx.arc(140, 20, 10, 0, Math.PI * 2);
+      ctx.fill();
+      canvasHash = `cv_${hashString(canvas.toDataURL())}`;
+    }
+  } catch (e) {}
+
+  let webGlRenderer = '';
+  try {
+    const glCanvas = document.createElement('canvas');
+    const gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+    if (gl) {
+      const dbg = (gl as any).getExtension('WEBGL_debug_renderer_info');
+      if (dbg) {
+        webGlRenderer = (gl as any).getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '';
+      }
+    }
+  } catch (e) {}
+
+  const nav = typeof navigator !== 'undefined' ? navigator : ({} as any);
+  const tz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone || '' : '';
+  const components = [
+    os,
+    browser,
+    screenSummary,
+    nav.platform || '',
+    nav.maxTouchPoints || 0,
+    nav.hardwareConcurrency || 0,
+    tz,
+    webGlRenderer,
+    canvasHash,
+  ];
+
+  const hardwareSignature = `hw_${hashString(components.join('~'))}`;
+  return { canvasHash, hardwareSignature };
+}
 
 /**
  * Generate a deterministic or persistent unique device identifier
@@ -40,6 +168,7 @@ export function getDeviceFingerprint(): DeviceFingerprint {
       browser: 'Unknown',
       screenSummary: '1920x1080',
       fingerprintHash: 'hash_server',
+      hardwareSignature: 'hw_server_default',
     };
   }
 
@@ -80,36 +209,25 @@ export function getDeviceFingerprint(): DeviceFingerprint {
   }
 
   const screenSummary = `${window.screen?.width || 0}x${window.screen?.height || 0} (${window.devicePixelRatio || 1}x)`;
+  const { canvasHash, hardwareSignature } = getHardwareFingerprintHash(os, browser, screenSummary);
 
-  // 2. Retrieve or create persistent Device UUID
-  let deviceId = '';
-  try {
-    deviceId = localStorage.getItem(STORAGE_KEY_DEVICE_ID) || '';
-  } catch (e) {
-    // localStorage might be restricted
-  }
+  // 2. Retrieve or create multi-layer persistent Device UUID
+  let deviceId = getPersistentStorageValue(STORAGE_KEY_DEVICE_ID);
 
   if (!deviceId) {
-    // Generate fresh persistent UUID with entropy
-    const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(8)))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    const timeStr = Date.now().toString(36);
-    deviceId = `dev_${isMobile ? 'mob' : 'desk'}_${timeStr}_${randomHex}`;
-    try {
-      localStorage.setItem(STORAGE_KEY_DEVICE_ID, deviceId);
-    } catch (e) {
-      // ignore
-    }
+    // Generate fresh persistent UUID with hardware signature seed
+    const randomHex = typeof crypto !== 'undefined' && crypto.getRandomValues
+      ? Array.from(crypto.getRandomValues(new Uint8Array(6))).map((b) => b.toString(16).padStart(2, '0')).join('')
+      : Math.random().toString(36).slice(2, 10);
+    
+    // Stable device ID incorporating hardware signature
+    deviceId = `dev_${isMobile ? 'mob' : 'desk'}_${hardwareSignature}_${randomHex}`;
+    setPersistentStorageValue(STORAGE_KEY_DEVICE_ID, deviceId);
+    setPersistentStorageValue(STORAGE_KEY_DEVICE_HW, hardwareSignature);
   }
 
   // 3. User-friendly Device Name
-  let deviceName = '';
-  try {
-    deviceName = localStorage.getItem(STORAGE_KEY_DEVICE_NAME) || '';
-  } catch (e) {
-    // ignore
-  }
+  let deviceName = getPersistentStorageValue(STORAGE_KEY_DEVICE_NAME);
 
   if (!deviceName) {
     if (isMobile) {
@@ -123,34 +241,7 @@ export function getDeviceFingerprint(): DeviceFingerprint {
     } else {
       deviceName = `${os} (${browser})`;
     }
-    try {
-      localStorage.setItem(STORAGE_KEY_DEVICE_NAME, deviceName);
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  // Generate lightweight canvas/hardware fingerprint hash
-  let fingerprintHash = 'fp_' + deviceId.slice(-8);
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 120;
-    canvas.height = 30;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.textBaseline = 'top';
-      ctx.font = '14px Arial';
-      ctx.fillText('AMS_SEC_2026', 2, 2);
-      const dataUri = canvas.toDataURL();
-      let simpleHash = 0;
-      for (let i = 0; i < dataUri.length; i++) {
-        simpleHash = ((simpleHash << 5) - simpleHash) + dataUri.charCodeAt(i);
-        simpleHash |= 0;
-      }
-      fingerprintHash = `fp_${Math.abs(simpleHash).toString(36)}`;
-    }
-  } catch (e) {
-    // fallback
+    setPersistentStorageValue(STORAGE_KEY_DEVICE_NAME, deviceName);
   }
 
   return {
@@ -161,7 +252,8 @@ export function getDeviceFingerprint(): DeviceFingerprint {
     os,
     browser,
     screenSummary,
-    fingerprintHash,
+    fingerprintHash: canvasHash,
+    hardwareSignature,
   };
 }
 
@@ -170,6 +262,7 @@ export interface DeviceValidationResult {
   isFirstTimeEnrollment: boolean;
   isMismatch: boolean;
   isDeviceConflict: boolean;
+  isReconnectedSameDevice?: boolean;
   trustedDeviceName?: string;
   trustedDeviceId?: string;
   currentDeviceName: string;
@@ -181,6 +274,7 @@ export interface DeviceValidationResult {
 
 /**
  * Validates whether the current physical device is authorized to scan attendance for the specified employee.
+ * Features Smart Self-Healing for legit employees when browser cache/localStorage is wiped by Safari.
  */
 export function validateEmployeeDevice(
   employee: Employee,
@@ -205,7 +299,12 @@ export function validateEmployeeDevice(
     // If setting preventDeviceSharing is ON, verify no OTHER employee is already bound to this device
     if (settings?.preventDeviceSharing !== false) {
       const otherBoundEmp = allEmployees.find(
-        (e) => e.id !== employee.id && !!e.trustedDeviceId && e.trustedDeviceId.trim() !== '' && e.trustedDeviceId === currentDevice.deviceId
+        (e) =>
+          e.id !== employee.id &&
+          !!e.trustedDeviceId &&
+          e.trustedDeviceId.trim() !== '' &&
+          (e.trustedDeviceId === currentDevice.deviceId ||
+            (e.trustedDeviceSignature && e.trustedDeviceSignature === currentDevice.hardwareSignature))
       );
 
       if (otherBoundEmp) {
@@ -234,7 +333,7 @@ export function validateEmployeeDevice(
     };
   }
 
-  // 2. Employee has a bound device: Compare fingerprints
+  // 2. Direct Match: Exact deviceId match
   if (employee.trustedDeviceId === currentDevice.deviceId) {
     return {
       allowed: true,
@@ -248,7 +347,42 @@ export function validateEmployeeDevice(
     };
   }
 
-  // 3. Mismatch detected! (Employee is logging in on another device or friend's device)
+  // 3. Smart Self-Healing Hardware Match:
+  // If localStorage/cookie was wiped by iOS Safari or opened in Telegram/Messenger in-app browser,
+  // but the physical device hardware signature and deviceName match the employee's registered device,
+  // AND this physical device is not claimed by another employee (anti-buddy punching preserved):
+  const otherBoundEmp = allEmployees.find(
+    (e) =>
+      e.id !== employee.id &&
+      !!e.trustedDeviceId &&
+      e.trustedDeviceId.trim() !== '' &&
+      (e.trustedDeviceId === currentDevice.deviceId ||
+        (e.trustedDeviceSignature && e.trustedDeviceSignature === currentDevice.hardwareSignature))
+  );
+
+  const isSameHardware =
+    !otherBoundEmp &&
+    ((employee.trustedDeviceSignature && employee.trustedDeviceSignature === currentDevice.hardwareSignature) ||
+      (employee.trustedDeviceName === currentDevice.deviceName &&
+        (employee.trustedDeviceId.includes(currentDevice.hardwareSignature) ||
+          currentDevice.deviceId.includes(employee.trustedDeviceSignature || 'xyz_none'))));
+
+  if (isSameHardware) {
+    // Legitimate same hardware phone -> Allow and self-heal binding
+    return {
+      allowed: true,
+      isFirstTimeEnrollment: false,
+      isMismatch: false,
+      isDeviceConflict: false,
+      isReconnectedSameDevice: true,
+      trustedDeviceId: employee.trustedDeviceId,
+      trustedDeviceName: employee.trustedDeviceName,
+      currentDeviceName: currentDevice.deviceName,
+      currentDeviceId: currentDevice.deviceId,
+    };
+  }
+
+  // 4. Mismatch detected! (Employee is logging in on another device or friend's device)
   return {
     allowed: false,
     isFirstTimeEnrollment: false,
@@ -269,12 +403,14 @@ export function validateEmployeeDevice(
 export function bindEmployeeToCurrentDevice(
   employee: Employee,
   deviceId: string,
-  deviceName: string
+  deviceName: string,
+  hardwareSignature?: string
 ): Employee {
   return {
     ...employee,
     trustedDeviceId: deviceId,
     trustedDeviceName: deviceName,
+    trustedDeviceSignature: hardwareSignature,
     trustedDeviceBoundAt: new Date().toISOString(),
     deviceBindingLocked: true,
   };
@@ -288,6 +424,7 @@ export function unbindEmployeeDevice(employee: Employee): Employee {
     ...employee,
     trustedDeviceId: '',
     trustedDeviceName: '',
+    trustedDeviceSignature: '',
     trustedDeviceBoundAt: '',
     deviceBindingLocked: false,
   };

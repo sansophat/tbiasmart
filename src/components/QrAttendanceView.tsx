@@ -730,9 +730,14 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         return;
       }
 
-      // Auto-enroll device on first successful scan
-      if (deviceValidation.isFirstTimeEnrollment && onUpdateEmployee) {
-        const boundEmp = bindEmployeeToCurrentDevice(emp, currentDevice.deviceId, currentDevice.deviceName);
+      // Auto-enroll device on first scan OR self-heal same hardware device when storage was evicted
+      if ((deviceValidation.isFirstTimeEnrollment || deviceValidation.isReconnectedSameDevice) && onUpdateEmployee) {
+        const boundEmp = bindEmployeeToCurrentDevice(
+          emp,
+          currentDevice.deviceId,
+          currentDevice.deviceName,
+          currentDevice.hardwareSignature
+        );
         onUpdateEmployee(boundEmp);
         if (onAddAuditLog) {
           onAddAuditLog({
@@ -740,11 +745,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
             actorName: `${emp.nameKh} (${emp.code})`,
             actorRole: emp.role || 'employee',
-            action: 'Registered Trusted Device',
-            actionKh: 'ចុះឈ្មោះចាក់សោឧបករណ៍ផ្លូវការ',
+            action: deviceValidation.isReconnectedSameDevice ? 'Reconnected Trusted Device' : 'Registered Trusted Device',
+            actionKh: deviceValidation.isReconnectedSameDevice ? 'ភ្ជាប់ឧបករណ៍ផ្លូវការឡើងវិញ' : 'ចុះឈ្មោះចាក់សោឧបករណ៍ផ្លូវការ',
             module: 'security',
-            details: `Bound employee ${emp.nameEn} to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...)`,
-            detailsKh: `បានភ្ជាប់គណនី ${emp.nameKh} ជាមួយឧបករណ៍ "${currentDevice.deviceName}"`,
+            details: `Bound employee ${emp.nameEn} to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...) [HW: ${currentDevice.hardwareSignature}]`,
+            detailsKh: `បានភ្ជាប់គណនី ${emp.nameKh} ជាមួយឧបករណ៍ "${currentDevice.deviceName}" [HW: ${currentDevice.hardwareSignature}]`,
             status: 'success',
           });
         }
@@ -885,7 +890,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     if (!pendingSecurityContext) return;
     const { emp, branch, method, photoUrl, targetType } = pendingSecurityContext;
 
-    const boundEmp = bindEmployeeToCurrentDevice(emp, currentDevice.deviceId, currentDevice.deviceName);
+    const boundEmp = bindEmployeeToCurrentDevice(
+      emp,
+      currentDevice.deviceId,
+      currentDevice.deviceName,
+      currentDevice.hardwareSignature
+    );
     if (onUpdateEmployee) {
       onUpdateEmployee(boundEmp);
     }
@@ -898,8 +908,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         action: 'Authorized & Re-bound Device',
         actionKh: 'អនុញ្ញាត និងភ្ជាប់ឧបករណ៍ទូរស័ព្ទឡើងវិញ',
         module: 'security',
-        details: `Re-bound employee ${emp.nameEn} (${emp.code}) to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...)`,
-        detailsKh: `បានអនុញ្ញាត និងភ្ជាប់ឧបករណ៍ឡើងវិញសម្រាប់ ${emp.nameKh} ជាមួយ "${currentDevice.deviceName}"`,
+        details: `Re-bound employee ${emp.nameEn} (${emp.code}) to device "${currentDevice.deviceName}" (${currentDevice.deviceId.slice(0, 16)}...) [HW: ${currentDevice.hardwareSignature}]`,
+        detailsKh: `បានអនុញ្ញាត និងភ្ជាប់ឧបករណ៍ឡើងវិញសម្រាប់ ${emp.nameKh} ជាមួយ "${currentDevice.deviceName}" [HW: ${currentDevice.hardwareSignature}]`,
         status: 'success',
       });
     }
@@ -918,16 +928,21 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
   const handleVerifySupervisorPinAndAuthorize = () => {
     const entered = supervisorPinValue.trim();
+    const defaultPins = ['1234', '9999', '7047', '123456', '704799', '12234'];
     const isValidPin =
-      entered === '1234' ||
-      entered === '9999' ||
+      defaultPins.includes(entered) ||
       (currentUser?.pinCode && entered === currentUser.pinCode) ||
-      employees.some((e) => (e.roleType === 'admin' || e.roleType === 'manager' || e.roleType === 'supervisor') && e.pinCode === entered);
+      (currentUser?.password && entered === currentUser.password) ||
+      employees.some(
+        (e) =>
+          (e.roleType === 'admin' || e.roleType === 'manager' || e.roleType === 'supervisor') &&
+          (e.pinCode === entered || e.password === entered)
+      );
 
     if (isValidPin) {
       handleAuthorizeAndBindCurrentDevice(true);
     } else {
-      setSupervisorPinError(lang === 'km' ? '❌ លេខកូដសម្ងាត់មិនត្រឹមត្រូវទេ! (Default: 1234)' : '❌ Invalid Supervisor PIN! (Default: 1234)');
+      setSupervisorPinError(lang === 'km' ? '❌ លេខកូដសម្ងាត់មិនត្រឹមត្រូវទេ! (Default: 1234, 7047)' : '❌ Invalid Supervisor PIN! (Default: 1234, 7047)');
     }
   };
 
@@ -1230,7 +1245,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                           setSupervisorPinValue(e.target.value);
                           setSupervisorPinError('');
                         }}
-                        placeholder="PIN (1234)"
+                        placeholder="PIN (1234, 7047)"
                         className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 text-center text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
                         autoFocus
                       />

@@ -88,6 +88,7 @@ export interface Employee {
   gpsCalibratedAt?: string;       // Timestamp when staff calibrated GPS
   trustedDeviceId?: string;       // Unique hardware/device fingerprint bound to this employee
   trustedDeviceName?: string;     // Friendly device name (e.g. "iPhone 15 Pro (Safari Mobile)")
+  trustedDeviceSignature?: string;// Stable hardware signature hash
   trustedDeviceBoundAt?: string;  // ISO timestamp when device was bound
   deviceBindingLocked?: boolean;  // If true, scanning is strictly locked to trustedDeviceId
   weeklyDayOff?: number;          // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat, -1 = None / Rotating
