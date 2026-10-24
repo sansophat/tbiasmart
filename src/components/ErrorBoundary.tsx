@@ -30,6 +30,25 @@ export class ErrorBoundary extends Component<Props, State> {
 
     const msg = (error?.message || '').toLowerCase();
     const isQuota = msg.includes('quota') || msg.includes('exceeded') || error.name === 'QuotaExceededError';
+    const isChunkLoadFailed =
+      msg.includes('dynamically imported module') ||
+      msg.includes('loading chunk') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('chunkloaderror');
+
+    // Auto-reload once if a new deployment changed chunk hashes
+    if (isChunkLoadFailed) {
+      console.warn('[ErrorBoundary] New deployment detected (chunk load failure). Auto-reloading to fetch new assets...');
+      const chunkReloadKey = 'tbia_chunk_auto_reload_attempted';
+      const lastAttempt = sessionStorage.getItem(chunkReloadKey);
+      if (!lastAttempt) {
+        sessionStorage.setItem(chunkReloadKey, '1');
+        setTimeout(() => {
+          window.location.reload();
+        }, 200);
+        return;
+      }
+    }
 
     if (isQuota) {
       try {
@@ -60,6 +79,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   private handleReload = () => {
     try {
+      sessionStorage.removeItem('tbia_chunk_auto_reload_attempted');
+      sessionStorage.removeItem('tbia_lazy_retry_done');
+      sessionStorage.removeItem('page_has_been_force_refreshed');
       // Clear heavy cache to ensure safe reload
       ['attend_records', 'attend_staff_alerts', 'attend_audit_logs'].forEach((k) => {
         try { localStorage.removeItem(k); } catch (_) {}
@@ -98,19 +120,30 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      const errorMsg = (this.state.error?.message || '').toLowerCase();
+      const isChunkLoadFailed =
+        errorMsg.includes('dynamically imported module') ||
+        errorMsg.includes('loading chunk') ||
+        errorMsg.includes('failed to fetch') ||
+        errorMsg.includes('chunkloaderror');
+
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 font-sans select-none">
           <div className="max-w-md w-full bg-slate-800/90 border border-slate-700/80 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl text-center space-y-5 animate-in fade-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400 shadow-lg shadow-rose-500/20">
-              <AlertTriangle className="w-8 h-8 animate-pulse" />
+            <div className={`w-16 h-16 rounded-3xl ${isChunkLoadFailed ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400 shadow-indigo-500/20' : 'bg-rose-500/10 border-rose-500/30 text-rose-400 shadow-rose-500/20'} border flex items-center justify-center mx-auto shadow-lg`}>
+              {isChunkLoadFailed ? <RefreshCw className="w-8 h-8 animate-spin" /> : <AlertTriangle className="w-8 h-8 animate-pulse" />}
             </div>
 
             <div className="space-y-1.5">
               <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
-                {this.props.fallbackTitleKh || 'ប្រព័ន្ធកំពុងស្ដារឡើងវិញ (Auto-Recovery)'}
+                {isChunkLoadFailed
+                  ? 'ប្រព័ន្ធទើបតែបាន Update កំណែថ្មី (New Version Released)'
+                  : (this.props.fallbackTitleKh || 'ប្រព័ន្ធកំពុងស្ដារឡើងវិញ (Auto-Recovery)')}
               </h2>
               <p className="text-xs sm:text-sm text-slate-400">
-                {this.props.fallbackTitleEn || 'An unexpected display glitch occurred. No attendance data was lost.'}
+                {isChunkLoadFailed
+                  ? 'កំណែថ្មីរបស់កម្មវិធីត្រូវបានដាក់ឱ្យប្រើប្រាស់។ សូមចុច "ផ្ទុកឡើងវិញ" ដើម្បីទទួលបានមុខងារថ្មី។'
+                  : (this.props.fallbackTitleEn || 'An unexpected display glitch occurred. No attendance data was lost.')}
               </p>
             </div>
 

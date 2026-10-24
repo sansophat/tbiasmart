@@ -47,18 +47,19 @@ import { LoginModal } from './components/LoginModal';
 import { StaffReminderAlertModal } from './components/StaffReminderAlertModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { resolveEmployeeShift } from './utils/rosterUtils';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 
-// Code-split heavy views and secondary modals for ultra-fast initial load
-const ReportsView = React.lazy(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
-const AdminSettingsView = React.lazy(() => import('./components/AdminSettingsView').then(m => ({ default: m.AdminSettingsView })));
-const GpsRadarMap = React.lazy(() => import('./components/GpsRadarMap').then(m => ({ default: m.GpsRadarMap })));
-const EmployeeDirectoryView = React.lazy(() => import('./components/EmployeeDirectoryView').then(m => ({ default: m.EmployeeDirectoryView })));
-const BranchManagementView = React.lazy(() => import('./components/BranchManagementView').then(m => ({ default: m.BranchManagementView })));
-const BranchKioskView = React.lazy(() => import('./components/BranchKioskView').then(m => ({ default: m.BranchKioskView })));
-const ProfileSettingsView = React.lazy(() => import('./components/ProfileSettingsView').then(m => ({ default: m.ProfileSettingsView })));
-const BranchTransferModal = React.lazy(() => import('./components/BranchTransferModal').then(m => ({ default: m.BranchTransferModal })));
-const InstallAppModal = React.lazy(() => import('./components/InstallAppModal').then(m => ({ default: m.InstallAppModal })));
-const DigitalIdCardModal = React.lazy(() => import('./components/DigitalIdCardModal').then(m => ({ default: m.DigitalIdCardModal })));
+// Code-split heavy views and secondary modals with auto-reloading retry for new releases
+const ReportsView = lazyWithRetry(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
+const AdminSettingsView = lazyWithRetry(() => import('./components/AdminSettingsView').then(m => ({ default: m.AdminSettingsView })));
+const GpsRadarMap = lazyWithRetry(() => import('./components/GpsRadarMap').then(m => ({ default: m.GpsRadarMap })));
+const EmployeeDirectoryView = lazyWithRetry(() => import('./components/EmployeeDirectoryView').then(m => ({ default: m.EmployeeDirectoryView })));
+const BranchManagementView = lazyWithRetry(() => import('./components/BranchManagementView').then(m => ({ default: m.BranchManagementView })));
+const BranchKioskView = lazyWithRetry(() => import('./components/BranchKioskView').then(m => ({ default: m.BranchKioskView })));
+const ProfileSettingsView = lazyWithRetry(() => import('./components/ProfileSettingsView').then(m => ({ default: m.ProfileSettingsView })));
+const BranchTransferModal = lazyWithRetry(() => import('./components/BranchTransferModal').then(m => ({ default: m.BranchTransferModal })));
+const InstallAppModal = lazyWithRetry(() => import('./components/InstallAppModal').then(m => ({ default: m.InstallAppModal })));
+const DigitalIdCardModal = lazyWithRetry(() => import('./components/DigitalIdCardModal').then(m => ({ default: m.DigitalIdCardModal })));
 
 const ViewLoadingFallback: React.FC = () => (
   <div className="flex flex-col items-center justify-center min-h-[420px] p-8 text-slate-400">
