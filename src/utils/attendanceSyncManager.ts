@@ -296,39 +296,39 @@ export function startAttendanceSyncService(
   onEmployeesReceived?: (newEmployees: Employee[]) => void
 ): () => void {
   let isRunning = true;
+  let isSyncing = false;
   let cycleCount = 0;
 
   const runSync = async () => {
-    if (!isRunning) return;
+    if (!isRunning || isSyncing) return;
+    isSyncing = true;
 
-    // 1. Flush any pending mobile punches (broadcasts directly to Admin!)
-    await syncPendingPunches();
-
-    // 2. Fetch fresh records from Supabase / server
     try {
+      // 1. Flush any pending mobile punches (broadcasts directly to Admin!)
+      await syncPendingPunches();
+
+      // 2. Fetch fresh records from Supabase / server
       const records = await fetchComprehensiveAttendance(150);
       if (records.length > 0 && isRunning) {
         onRecordsReceived(records);
       }
-    } catch {
-      // background silent
-    }
 
-    // 3. Periodically sync employees every ~10s so new staff instantly propagate to all devices
-    cycleCount++;
-    if (onEmployeesReceived && cycleCount % 2 === 0) {
-      try {
+      // 3. Periodically sync employees every ~40s so new staff propagate smoothly
+      cycleCount++;
+      if (onEmployeesReceived && cycleCount % 2 === 0) {
         const freshEmps = await fetchComprehensiveEmployees();
         if (freshEmps.length > 0 && isRunning) {
           onEmployeesReceived(freshEmps);
         }
-      } catch {
-        // silent
       }
+    } catch {
+      // background silent
+    } finally {
+      isSyncing = false;
     }
   };
 
-  const intervalId = setInterval(runSync, 5000);
+  const intervalId = setInterval(runSync, 20000);
 
   const handleOnlineOrFocus = () => {
     runSync();

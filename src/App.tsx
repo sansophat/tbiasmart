@@ -1608,6 +1608,13 @@ export default function App() {
             ...KNOWN_DELETED_EMPLOYEE_IDS,
           ]);
           const next = deduplicateAndFilterEmployees(mergeDatasets(prev, payload), tombstones);
+          // Prevent unnecessary state change and re-render loop if employees are identical
+          if (
+            next.length === prev.length &&
+            next.every((e, idx) => e.id === prev[idx]?.id && e.avatar === prev[idx]?.avatar && e.role === prev[idx]?.role && e.branchId === prev[idx]?.branchId)
+          ) {
+            return prev;
+          }
           safeSetJson('attend_employees', JSON.stringify(next));
           return next;
         });
@@ -2108,84 +2115,50 @@ export default function App() {
     };
   }, [lang]);
 
-  // Periodic background Turso SQLite Cloud sync (every 6 seconds) to guarantee real-time staff alerts & records across all devices
+  // Periodic background Turso SQLite Cloud reconciliation (every 45s) to ensure data integrity without overwhelming network or UI
+  const isTursoSyncRunningRef = useRef(false);
   useEffect(() => {
     const pollInterval = setInterval(() => {
+      if (isTursoSyncRunningRef.current) return;
+      isTursoSyncRunningRef.current = true;
+
       fetchInitialTursoData()
         .then((tursoState) => {
-          if (tursoState) {
-            if (Array.isArray(tursoState.attendanceRecords) && tursoState.attendanceRecords.length > 0) {
-              setAttendanceRecords((prevRecords) => {
-                const prevIds = new Set(prevRecords.map((r) => r.id));
-                const newPunches = tursoState.attendanceRecords.filter((r: AttendanceRecord) => !prevIds.has(r.id));
-                if (newPunches.length > 0) {
-                  playAlertChime('punch');
-                  newPunches.forEach((record: AttendanceRecord) => {
-                    const empName = lang === 'km' ? (record.employeeNameKh || record.employeeNameEn) : (record.employeeNameEn || record.employeeNameKh);
-                    const actionType = record.type === 'check_in' 
-                      ? (lang === 'km' ? 'បានចូលធ្វើការ (Check-In)' : 'Checked In') 
-                      : (lang === 'km' ? 'បានចេញពីការងារ (Check-Out)' : 'Checked Out');
+          if (!tursoState) return;
 
-                    addActionAlert({
-                      type: 'punch',
-                      titleKh: record.isWithinGeofence ? 'វត្តមានស្កេន GPS ថ្មី' : '⚠️ វត្តមានស្កេនខុសទីតាំង Geofence',
-                      titleEn: record.isWithinGeofence ? 'Real-time GPS Scan Punch' : '⚠️ Geofence Distance Warning',
-                      detailKh: `${empName} ${actionType} - ${record.branchNameKh || record.branchNameEn || ''} (${record.isWithinGeofence ? 'ក្នុងរង្វង់ GPS' : `ចម្ងាយ ${Math.round(record.distanceToBranch || 0)}m`})`,
-                      detailEn: `${empName} ${actionType} - ${record.branchNameEn || ''} (${record.isWithinGeofence ? 'Within GPS Geofence' : `${Math.round(record.distanceToBranch || 0)}m Out of Range`})`,
-                      actorName: empName,
-                      actorAvatar: record.employeeAvatar,
-                    });
+          // 1. Reconcile attendance records
+          if (Array.isArray(tursoState.attendanceRecords) && tursoState.attendanceRecords.length > 0) {
+            setAttendanceRecords((prevRecords) => {
+              const prevIds = new Set(prevRecords.map((r) => r.id));
+              const newPunches = tursoState.attendanceRecords.filter((r: AttendanceRecord) => !prevIds.has(r.id));
+              if (newPunches.length === 0) return prevRecords;
 
-                    showLiveAlert(
-                      lang === 'km' ? '🟢 វត្តមានស្កេន GPS ថ្មី (Live Sync)' : '🟢 Real-time GPS Punch Synced',
-                      `${empName} ${actionType} - ${record.branchNameEn || ''}`,
-                      'punch'
-                    );
-                  });
-                  const merged = mergeDatasets(prevRecords, tursoState.attendanceRecords);
-                  safeSetJson('attend_records', JSON.stringify(merged));
-                  return merged;
-                }
-                return prevRecords;
-              });
-            }
-            if (Array.isArray(tursoState.employees) && tursoState.employees.length > 0) {
-              setEmployees((currentEmps) => {
-                if (!currentEmps || currentEmps.length === 0) {
-                  safeSetJson('attend_employees', JSON.stringify(tursoState.employees));
-                  return tursoState.employees;
-                }
-                return currentEmps;
-              });
-            }
-            if (Array.isArray(tursoState.branches) && tursoState.branches.length > 0) {
-              setBranches((currentBranches) => {
-                if (!currentBranches || currentBranches.length === 0) {
-                  safeSetJson('attend_branches', JSON.stringify(tursoState.branches));
-                  return tursoState.branches;
-                }
-                return currentBranches;
-              });
-            }
-            if (Array.isArray(tursoState.staffAlerts) && tursoState.staffAlerts.length > 0) {
-              const clearedTime = alertsClearedAt || Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
-              setActionAlerts((prev) => {
-                const prevIds = new Set(prev.map((a) => a.id));
-                const newAlerts = tursoState.staffAlerts.filter(
-                  (a: any) => !prevIds.has(a.id) && (a.rawTimestamp || 0) > clearedTime
-                );
-                if (newAlerts.length > 0) {
-                  const merged = [...newAlerts, ...prev];
-                  merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
-                  return merged.slice(0, 50);
-                }
-                return prev;
-              });
-            }
+              const merged = mergeDatasets(prevRecords, tursoState.attendanceRecords);
+              safeSetJson('attend_records', JSON.stringify(merged));
+              return merged;
+            });
+          }
+
+          // 2. Reconcile staff alerts
+          if (Array.isArray(tursoState.staffAlerts) && tursoState.staffAlerts.length > 0) {
+            const clearedTime = alertsClearedAt || Number(localStorage.getItem('attend_alerts_cleared_at') || 0);
+            setActionAlerts((prev) => {
+              const prevIds = new Set(prev.map((a) => a.id));
+              const newAlerts = tursoState.staffAlerts.filter(
+                (a: any) => !prevIds.has(a.id) && (a.rawTimestamp || 0) > clearedTime
+              );
+              if (newAlerts.length === 0) return prev;
+              const merged = [...newAlerts, ...prev];
+              merged.sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+              return merged.slice(0, 50);
+            });
           }
         })
-        .catch(() => {});
-    }, 6000);
+        .catch(() => {})
+        .finally(() => {
+          isTursoSyncRunningRef.current = false;
+        });
+    }, 45000);
 
     return () => clearInterval(pollInterval);
   }, [lang, alertsClearedAt]);
@@ -2210,20 +2183,6 @@ export default function App() {
   useEffect(() => {
     safeSetJson('attend_employees', JSON.stringify(employees));
   }, [employees]);
-
-  // When Admin is active, proactively broadcast employee roster so all peer devices receive latest staff
-  useEffect(() => {
-    if (currentUser?.role === 'admin' && employees.length > 0) {
-      broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', employees);
-      const timer = setInterval(() => {
-        const local = safeGetJson<Employee[]>('attend_employees', employees);
-        if (Array.isArray(local) && local.length > 0) {
-          broadcastSupabaseEvent('UPDATE_EMPLOYEES_BATCH', local);
-        }
-      }, 30000);
-      return () => clearInterval(timer);
-    }
-  }, [currentUser?.role, employees]);
 
   useEffect(() => {
     safeSetJson('attend_records', JSON.stringify(attendanceRecords));

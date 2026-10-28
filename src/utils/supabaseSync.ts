@@ -370,21 +370,26 @@ export async function syncStateToSupabase(stateData: Partial<SupabaseSystemData>
 // ==========================================
 // Realtime Broadcast Channel & PostgreSQL Polling Sync
 // ==========================================
+const SESSION_CLIENT_ID = 'tab_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
 let liveChannel: any = null;
 const liveListeners = new Set<(event: string, payload: any) => void>();
 
 export function getOrCreateChannel() {
   if (!liveChannel) {
     liveChannel = supabase.channel('ams_live_feed', {
-      config: { broadcast: { ack: true } },
+      config: { broadcast: { ack: true, self: false } },
     });
 
     liveChannel
       .on('broadcast', { event: '*' }, ({ event, payload }: any) => {
-        console.info('[Supabase Realtime] Inbound broadcast:', event, payload);
+        // Discard echoes from this same tab/client instance to prevent recursive update loops
+        if (payload?._senderSessionId && payload._senderSessionId === SESSION_CLIENT_ID) {
+          return;
+        }
+        const cleanPayload = payload?._wrappedData !== undefined ? payload._wrappedData : payload;
         liveListeners.forEach((fn) => {
           try {
-            fn(event, payload);
+            fn(event, cleanPayload);
           } catch (e) {
             console.warn('[Supabase] Listener error:', e);
           }
@@ -400,12 +405,16 @@ export function getOrCreateChannel() {
 export async function broadcastSupabaseEvent(event: string, payload: any): Promise<boolean> {
   try {
     const ch = getOrCreateChannel();
+    // Wrap payload with sender session ID to prevent infinite broadcast echo loops
+    const wrappedPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? { ...payload, _senderSessionId: SESSION_CLIENT_ID }
+      : { _wrappedData: payload, _senderSessionId: SESSION_CLIENT_ID };
+
     const res = await ch.send({
       type: 'broadcast',
       event,
-      payload,
+      payload: wrappedPayload,
     });
-    console.info(`[Supabase Broadcast] Sent ${event}:`, res);
     return res === 'ok';
   } catch (err) {
     console.warn('[Supabase] Broadcast send error:', err);
