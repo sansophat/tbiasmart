@@ -1736,7 +1736,14 @@ export default function App() {
       (newAlert) => addActionAlert(newAlert),
       (records) => {
         setAttendanceRecords((prev) => {
+          const prevMap = new Map(prev.map((r) => [r.id, r]));
+          const hasChange = records.some((r) => {
+            const existing = prevMap.get(r.id);
+            return !existing || existing.timestamp !== r.timestamp || existing.status !== r.status;
+          });
+          if (!hasChange) return prev;
           const merged = mergeDatasets(prev, records);
+          try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
           return merged;
         });
       }
@@ -1807,6 +1814,12 @@ export default function App() {
             );
             if (incomingRecords.length > 0) {
               setAttendanceRecords((prev) => {
+                const prevMap = new Map(prev.map((r) => [r.id, r]));
+                const hasChange = incomingRecords.some((r) => {
+                  const existing = prevMap.get(r.id);
+                  return !existing || existing.timestamp !== r.timestamp || existing.status !== r.status;
+                });
+                if (!hasChange) return prev;
                 const merged = mergeDatasets(prev, incomingRecords);
                 try { safeSetJson('attend_records', JSON.stringify(merged)); } catch (_) {}
                 return merged;
@@ -1825,6 +1838,9 @@ export default function App() {
                 ]);
                 const merged = mergeDatasets(prev, incomingEmps);
                 const cleaned = deduplicateAndFilterEmployees(merged, currentTombstones);
+                if (cleaned.length === prev.length && cleaned.every((e, idx) => e.id === prev[idx]?.id && e.avatar === prev[idx]?.avatar)) {
+                  return prev;
+                }
                 try { safeSetJson('attend_employees', JSON.stringify(cleaned)); } catch (_) {}
                 return cleaned;
               });
@@ -1840,6 +1856,9 @@ export default function App() {
                   ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
                 ]);
                 const merged = mergeDatasets(prev, incomingBranches).filter((b: Branch) => !tombstones.has(b.id));
+                if (merged.length === prev.length && merged.every((b, idx) => b.id === prev[idx]?.id && b.lat === prev[idx]?.lat && b.lng === prev[idx]?.lng)) {
+                  return prev;
+                }
                 try { safeSetJson('attend_branches', JSON.stringify(merged)); } catch (_) {}
                 return merged;
               });
@@ -2181,11 +2200,17 @@ export default function App() {
   }, [branches]);
 
   useEffect(() => {
-    safeSetJson('attend_employees', JSON.stringify(employees));
+    const timer = setTimeout(() => {
+      safeSetJson('attend_employees', JSON.stringify(employees));
+    }, 600);
+    return () => clearTimeout(timer);
   }, [employees]);
 
   useEffect(() => {
-    safeSetJson('attend_records', JSON.stringify(attendanceRecords));
+    const timer = setTimeout(() => {
+      safeSetJson('attend_records', JSON.stringify(attendanceRecords));
+    }, 600);
+    return () => clearTimeout(timer);
   }, [attendanceRecords]);
 
   useEffect(() => {
@@ -2222,7 +2247,7 @@ export default function App() {
     safeSetJson('attend_shifts', JSON.stringify(shifts));
   }, [shifts]);
 
-  // Automatically sync any local modifications to Turso SQLite Cloud, Supabase, and Cloud Firestore
+  // Automatically sync any local modifications to Turso SQLite Cloud, Supabase, and Cloud Firestore (debounced)
   useEffect(() => {
     // Only push to cloud if:
     // 1. Initial cloud fetch has finished
@@ -2240,50 +2265,52 @@ export default function App() {
       return;
     }
 
-    syncStateToTurso({
-      branches,
-      employees,
-      leaveRequests,
-      transferRecords,
-      branchTypes,
-      branding,
-      rolePermissions,
-      systemSettings,
-      adminProfile,
-      auditLogs,
-      shifts,
-    });
+    const timer = setTimeout(() => {
+      syncStateToTurso({
+        branches,
+        employees,
+        leaveRequests,
+        transferRecords,
+        branchTypes,
+        branding,
+        rolePermissions,
+        systemSettings,
+        adminProfile,
+        auditLogs,
+        shifts,
+      });
 
-    syncStateToCloudDatabase({
-      branches,
-      employees,
-      attendanceRecords,
-      leaveRequests,
-      transferRecords,
-      branchTypes,
-      branding,
-      rolePermissions,
-      systemSettings,
-      adminProfile,
-      auditLogs,
-    });
+      syncStateToCloudDatabase({
+        branches,
+        employees,
+        leaveRequests,
+        transferRecords,
+        branchTypes,
+        branding,
+        rolePermissions,
+        systemSettings,
+        adminProfile,
+        auditLogs,
+      });
 
-    syncStateToSupabase({
-      branches,
-      employees,
-      leaveRequests,
-      transferRecords,
-      branchTypes,
-      branding,
-      rolePermissions,
-      systemSettings,
-      adminProfile,
-      auditLogs,
-    });
+      syncStateToSupabase({
+        branches,
+        employees,
+        leaveRequests,
+        transferRecords,
+        branchTypes,
+        branding,
+        rolePermissions,
+        systemSettings,
+        adminProfile,
+        auditLogs,
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
   }, [
     branches,
     employees,
-    attendanceRecords,
     leaveRequests,
     transferRecords,
     branchTypes,

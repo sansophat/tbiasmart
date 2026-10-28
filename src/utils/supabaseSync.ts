@@ -469,9 +469,9 @@ export async function requestEmployeesFromPeers(timeoutMs: number = 2200): Promi
 }
 
 /**
- * Bulletproof Background Polling Sync (Runs every 3.5 seconds):
- * Ensures Admin receives new punches and alerts from Supabase PostgreSQL,
- * with timeout guards to prevent hanging.
+ * Resilient Background Polling Sync (Runs every 25 seconds as a quiet fallback):
+ * Ensures Admin receives new punches and alerts from Supabase PostgreSQL even if WebSockets sleep,
+ * with timeout and overlap guards to prevent UI sluggishness.
  */
 export function startSupabasePollingSync(
   onNewPunch: (record: AttendanceRecord) => void,
@@ -480,9 +480,11 @@ export function startSupabasePollingSync(
 ): () => void {
   let isMounted = true;
   let lastSeenTimestamp = Date.now() - 120000;
+  let isPolling = false;
 
   const pollInterval = setInterval(async () => {
-    if (!isMounted) return;
+    if (!isMounted || isPolling) return;
+    isPolling = true;
     try {
       const punchPromise = supabase
         .from('attendance_records')
@@ -531,8 +533,10 @@ export function startSupabasePollingSync(
       lastSeenTimestamp = Math.max(lastSeenTimestamp, Date.now() - 2000);
     } catch (e) {
       // silent background ignore
+    } finally {
+      isPolling = false;
     }
-  }, 4000);
+  }, 25000);
 
   return () => {
     isMounted = false;
