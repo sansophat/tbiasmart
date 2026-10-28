@@ -3840,6 +3840,7 @@ export default function App() {
               onUpdateBranchLocation={handleUpdateBranchLocation}
               onNavigateToDashboard={() => setActiveTab('dashboard')}
               systemSettings={systemSettings}
+              onUpdateSystemSettings={handleUpdateSystemSettings}
               onUpdateEmployee={handleUpdateEmployee}
               onAddAuditLog={handleAddAuditLog}
               leaveRequests={leaveRequests}

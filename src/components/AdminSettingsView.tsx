@@ -245,6 +245,12 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   // System Settings State
   const [settingsForm, setSettingsForm] = useState<SystemSettings>(systemSettings);
 
+  useEffect(() => {
+    if (systemSettings) {
+      setSettingsForm(systemSettings);
+    }
+  }, [systemSettings]);
+
   // Success / Feedback Alerts
   const [toastMessage, setToastMessage] = useState<string>('');
 
@@ -1305,7 +1311,74 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       {/* TAB 1: BRANCH LOCATIONS & GEOFENCES */}
       {/* ========================================================================= */}
       {activeTab === 'branches' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="space-y-4">
+          {/* Strict Location Geofence Master Toggle Banner */}
+          <div className={`p-4 sm:p-5 rounded-3xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm ${
+            settingsForm.strictGeofenceEnforcement !== false
+              ? 'bg-gradient-to-r from-indigo-50/90 to-blue-50/70 border-indigo-200'
+              : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-300 ring-2 ring-amber-200/60'
+          }`}>
+            <div className="flex items-start sm:items-center space-x-3.5 min-w-0">
+              <div className={`p-3 rounded-2xl shrink-0 shadow-sm ${
+                settingsForm.strictGeofenceEnforcement !== false ? 'bg-indigo-600 text-white' : 'bg-amber-500 text-white animate-pulse'
+              }`}>
+                <MapPin className="w-6 h-6" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-sm sm:text-base text-slate-900 font-battambang">
+                    {lang === 'km' ? 'ទីតាំងតឹងរ៉ឹង (Strict Location Geofence)' : 'Strict Location Geofence Mode'}
+                  </h3>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                    settingsForm.strictGeofenceEnforcement !== false
+                      ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                      : 'bg-amber-200 text-amber-900 border border-amber-300'
+                  }`}>
+                    {settingsForm.strictGeofenceEnforcement !== false
+                      ? (lang === 'km' ? '🔒 កំពុងបើក (Strict ON)' : '🔒 Strict ON')
+                      : (lang === 'km' ? '🔓 កំពុងបិទ (Strict OFF - របៀបបត់បែន)' : '🔓 Strict OFF (Relaxed)')}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed font-hanuman">
+                  {settingsForm.strictGeofenceEnforcement !== false
+                    ? (lang === 'km'
+                        ? 'បុគ្គលិកត្រូវតែនៅខាងក្នុងរង្វង់ Geofence សាខា ទើបប្រព័ន្ធអនុញ្ញាតឱ្យស្កេន។'
+                        : 'Staff must be physically inside branch radius to scan.')
+                    : (lang === 'km'
+                        ? '⚡ កំពុងអនុញ្ញាតឱ្យបុគ្គលិកស្កេនវត្តមានបាន ទោះបីសញ្ញា GPS រាយការណ៍ថានៅក្រៅបរិវេណ (សមស្របពេល GPS លោតខុសក្នុងអគារបេតុង ឬដំបូលស័ង្កសី)។'
+                        : '⚡ Staff can punch attendance even if GPS drifts outside the branch area (ideal for weak indoor signals).')}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = settingsForm.strictGeofenceEnforcement === false;
+                const updated = { ...settingsForm, strictGeofenceEnforcement: nextVal };
+                setSettingsForm(updated);
+                onUpdateSystemSettings(updated);
+                showToast(
+                  lang === 'km'
+                    ? (nextVal ? '🔒 បានបើកទីតាំងតឹងរ៉ឹង (Strict ON)' : '🔓 បានបិទទីតាំងតឹងរ៉ឹង (Strict OFF - របៀបបត់បែន)')
+                    : (nextVal ? '🔒 Strict Location is now ON' : '🔓 Strict Location is now OFF (Relaxed Mode)')
+                );
+              }}
+              className={`px-5 py-2.5 rounded-2xl font-bold text-xs shrink-0 shadow-md transition cursor-pointer flex items-center space-x-2 ${
+                settingsForm.strictGeofenceEnforcement !== false
+                  ? 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
+                  : 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200'
+              }`}
+            >
+              <span>
+                {settingsForm.strictGeofenceEnforcement !== false
+                  ? (lang === 'km' ? 'ចុចបិទទីតាំងតឹងរ៉ឹង (Turn OFF)' : 'Turn OFF Strict')
+                  : (lang === 'km' ? 'ចុចបើកទីតាំងតឹងរ៉ឹង (Turn ON)' : 'Turn ON Strict')}
+              </span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Branch Directory & Selector */}
           <div className="lg:col-span-4 space-y-4">
             <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
@@ -1610,6 +1683,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             </form>
           </div>
         </div>
+      </div>
       )}
 
       {/* ========================================================================= */}
@@ -3307,7 +3381,43 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Policy 0: Strict Geofence Enforcement */}
+              <div className={`p-4 rounded-2xl border transition ${settingsForm.strictGeofenceEnforcement !== false ? 'bg-indigo-50/60 border-indigo-200 ring-1 ring-indigo-300' : 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-300'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <MapPin className={`w-4 h-4 ${settingsForm.strictGeofenceEnforcement !== false ? 'text-indigo-600' : 'text-amber-600'}`} />
+                    <span className="font-bold text-slate-800 text-xs font-battambang">
+                      {lang === 'km' ? 'ទីតាំងតឹងរ៉ឹង (Strict Location)' : 'Strict Location Geofence'}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.strictGeofenceEnforcement !== false}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, strictGeofenceEnforcement: e.target.checked })}
+                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                  {settingsForm.strictGeofenceEnforcement !== false
+                    ? (lang === 'km'
+                        ? '🔒 បើកទីតាំងតឹងរ៉ឹង៖ បុគ្គលិកត្រូវតែនៅខាងក្នុងរង្វង់ Geofence ទើបស្កេនបាន។'
+                        : '🔒 Strict ON: Staff must be physically within branch geofence.')
+                    : (lang === 'km'
+                        ? '🔓 បិទទីតាំងតឹងរ៉ឹង (របៀបបត់បែន)៖ បុគ្គលិកអាចស្កេនបានទោះបី GPS រាយការណ៍ថានៅក្រៅបរិវេណ (សមស្របពេល GPS លោតខុសក្នុងអគារ)។'
+                        : '🔓 Strict OFF (Relaxed): Staff can scan even if indoor GPS reports outside radius.')}
+                </p>
+                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  settingsForm.strictGeofenceEnforcement !== false
+                    ? 'bg-indigo-100 text-indigo-800'
+                    : 'bg-amber-200 text-amber-900 font-black'
+                }`}>
+                  {settingsForm.strictGeofenceEnforcement !== false
+                    ? (lang === 'km' ? '✔ Strict ON' : '✔ Strict ON')
+                    : (lang === 'km' ? '⚡ Relaxed (ស្កេនបាន)' : '⚡ Relaxed Allowed')}
+                </span>
+              </div>
+
               {/* Policy 1: Strict 1-Device Binding */}
               <div className={`p-4 rounded-2xl border transition ${settingsForm.strictDeviceBinding !== false ? 'bg-indigo-50/60 border-indigo-200 ring-1 ring-indigo-300' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="flex items-center justify-between mb-2">

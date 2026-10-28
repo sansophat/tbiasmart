@@ -81,6 +81,7 @@ interface QrAttendanceViewProps {
   ) => { success: boolean; message: string } | void;
   onNavigateToDashboard?: () => void;
   systemSettings?: SystemSettings;
+  onUpdateSystemSettings?: (newSettings: SystemSettings) => void;
   onUpdateEmployee?: (emp: Employee) => void;
   onAddAuditLog?: (log: AuditLogEntry) => void;
   leaveRequests?: LeaveRequest[];
@@ -99,6 +100,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   onUpdateBranchLocation,
   onNavigateToDashboard,
   systemSettings,
+  onUpdateSystemSettings,
   onUpdateEmployee,
   onAddAuditLog,
   leaveRequests = [],
@@ -293,9 +295,12 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
   const isWithinGeofence = adaptiveGeoResult.isWithin;
   const gpsQuality = getGpsSignalQuality(currentGeo.accuracy);
 
+  // Strict Location Geofence check
+  const isStrictLocation = systemSettings?.strictGeofenceEnforcement !== false;
+
   // Office Wi-Fi / IP Verification Check
   const isBranchNetworkVerified = Boolean(clientIp && isIpInBranchWhitelist(selectedBranch, clientIp));
-  const isAllowedToPunch = isWithinGeofence || isBranchNetworkVerified;
+  const isAllowedToPunch = !isStrictLocation || isWithinGeofence || isBranchNetworkVerified;
 
   // Auto-detect check-in vs check-out recommendation based on today's logs (Timezone-safe)
   const selectedEmpTodayRecords = (attendanceRecords || [])
@@ -786,16 +791,17 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         const isWeakGpsException = method === 'weak_gps_exception';
         const isWifiMethod = method === 'wifi_network' || isNetworkMatch;
         const withinRadius = geoCheck.isWithin || isWifiMethod;
+        const isStrict = systemSettings?.strictGeofenceEnforcement !== false;
 
         // Determine Status (On-Time / Late / Geofence violation / Pending review)
         let status: AttendanceStatus = 'on_time';
         
         if (isWeakGpsException) {
           status = 'pending_location_review';
-        } else if (!withinRadius) {
+        } else if (!withinRadius && isStrict) {
           status = 'geofence_violation';
         } else {
-          // Dynamic calculation based on employee's assigned or custom shift & grace period
+          // Dynamic calculation based on employee's assigned or custom shift & grace period (also applied in relaxed mode)
           status = determineAttendancePunchStatus({
             punchDate: now,
             targetType,
@@ -821,6 +827,10 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           notesText = geoCheck.indoorCompensated
             ? `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវ (សម្រួលតាម GPS ក្នុងអគារ: ${currentDistance}m, កាំ: ${effectiveBranch.radiusMeters}m + Buffer ${geoCheck.accuracyBuffer}m, Accuracy ±${geoCheck.accuracyMeters}m)`
             : `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាម Geofence (${currentDistance}m, GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
+        } else if (!isStrict) {
+          // Relaxed mode punch outside geofence radius
+          verifiedByTag = 'gps';
+          notesText = `${targetType === 'check_in' ? 'ចូលធ្វើការ (Check-In)' : 'ចេញពីធ្វើការ (Check-Out)'} ត្រឹមត្រូវតាមរបៀបទីតាំងបត់បែន / Relaxed Location (${currentDistance}m, កំណត់សាខា: ${effectiveBranch.radiusMeters}m, GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
         } else {
           notesText = `⚠️ បដិសេធ: ទីតាំងនៅឆ្ងាយពីសាខា (${formatDistance(currentDistance, lang)}) លើសដែនកំណត់ ${geoCheck.allowedRadiusMeters}m (GPS Accuracy ±${geoCheck.accuracyMeters}m)`;
         }
@@ -840,7 +850,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           lat: safeGeo.lat,
           lng: safeGeo.lng,
           distanceToBranch: currentDistance,
-          isWithinGeofence: withinRadius && !isWeakGpsException,
+          isWithinGeofence: (withinRadius || !isStrict) && !isWeakGpsException,
           accuracyMeters: safeGeo.accuracy || 5,
           method: isWeakGpsException ? 'weak_gps_exception' : (isWifiMethod ? 'wifi_network' : method),
           selfieUrl: photoUrl || emp.avatar,
@@ -1872,14 +1882,40 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowDeviceDetailsModal(true)}
-          className="self-end sm:self-center px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center space-x-1.5 cursor-pointer font-battambang shrink-0"
-        >
-          <Shield className="w-3.5 h-3.5 text-indigo-600" />
-          <span>{lang === 'km' ? 'ព័ត៌មានឧបករណ៍' : 'Device Info'}</span>
-        </button>
+        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap">
+          {onUpdateSystemSettings && systemSettings && (currentUser?.role === 'admin' || currentUser?.role === 'manager' || !currentUser) && (
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = systemSettings.strictGeofenceEnforcement === false;
+                const updated = { ...systemSettings, strictGeofenceEnforcement: nextVal };
+                onUpdateSystemSettings(updated);
+              }}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition flex items-center space-x-1.5 cursor-pointer font-battambang shrink-0 shadow-sm ${
+                systemSettings.strictGeofenceEnforcement !== false
+                  ? 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                  : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300 ring-2 ring-amber-300/60 font-black'
+              }`}
+              title={lang === 'km' ? 'ចុចដើម្បីបិទ/បើក ទីតាំងតឹងរ៉ឹង (Strict Location)' : 'Click to Toggle Strict Location Geofence'}
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              <span>
+                {systemSettings.strictGeofenceEnforcement !== false
+                  ? (lang === 'km' ? '🔒 ទីតាំងតឹងរ៉ឹង: បើក' : '🔒 Strict Loc: ON')
+                  : (lang === 'km' ? '🔓 ទីតាំងតឹងរ៉ឹង: បិទ (បត់បែន)' : '🔓 Strict Loc: OFF (Relaxed)')}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowDeviceDetailsModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center space-x-1.5 cursor-pointer font-battambang shrink-0"
+          >
+            <Shield className="w-3.5 h-3.5 text-indigo-600" />
+            <span>{lang === 'km' ? 'ព័ត៌មានឧបករណ៍' : 'Device Info'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Top Banner */}
@@ -2255,6 +2291,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                   className={`w-full py-4 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 shadow-md transition-all cursor-pointer ${
                     !isAllowedToPunch
                       ? 'bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 opacity-90'
+                      : !isWithinGeofence && !isBranchNetworkVerified
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200'
                       : isBranchNetworkVerified && !isWithinGeofence
                       ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'
                       : attendanceType === 'check_in'
@@ -2271,12 +2309,22 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                     <>
                       {isBranchNetworkVerified && !isWithinGeofence ? (
                         <Wifi className="w-5 h-5" />
+                      ) : !isWithinGeofence ? (
+                        <Radio className="w-5 h-5 animate-pulse" />
                       ) : (
                         <Sparkles className="w-5 h-5" />
                       )}
                       <span>
                         {isAllowedToPunch
-                          ? (isBranchNetworkVerified && !isWithinGeofence
+                          ? (!isWithinGeofence && !isBranchNetworkVerified
+                              ? (lang === 'km'
+                                  ? (attendanceType === 'check_in'
+                                      ? '⚡ បញ្ជាក់វត្តមានចូល (Check-In) - របៀបទីតាំងបត់បែន'
+                                      : '⚡ បញ្ជាក់វត្តមានចេញ (Check-Out) - របៀបទីតាំងបត់បែន')
+                                  : (attendanceType === 'check_in'
+                                      ? '⚡ Execute Check-In (Relaxed Location Mode)'
+                                      : '⚡ Execute Check-Out (Relaxed Location Mode)'))
+                              : isBranchNetworkVerified && !isWithinGeofence
                               ? (lang === 'km'
                                   ? `📶 បញ្ជាក់វត្តមានតាម Wi-Fi/IP សាខា (${attendanceType === 'check_in' ? 'Check-In' : 'Check-Out'})`
                                   : `📶 Execute ${attendanceType === 'check_in' ? 'Check-In' : 'Check-Out'} via Office Network`)
@@ -2396,13 +2444,25 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
             <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
               isWithinGeofence
                 ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
+                : !isStrictLocation
+                ? 'bg-amber-50/80 border-amber-300 text-amber-900'
                 : 'bg-rose-50/70 border-rose-200 text-rose-800'
             }`}>
               <div className="flex items-center space-x-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-                  isWithinGeofence ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                  isWithinGeofence
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : !isStrictLocation
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-rose-100 text-rose-700'
                 }`}>
-                  {isWithinGeofence ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                  {isWithinGeofence ? (
+                    <CheckCircle2 className="w-6 h-6" />
+                  ) : !isStrictLocation ? (
+                    <Sparkles className="w-6 h-6" />
+                  ) : (
+                    <AlertTriangle className="w-6 h-6" />
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center space-x-2">
@@ -2411,6 +2471,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                         ? (adaptiveGeoResult.indoorCompensated
                             ? (lang === 'km' ? '✅ ស្ថិតក្នុងបរិវេណអនុញ្ញាត (សម្រួលតាមកម្រិត GPS ក្នុងអគារ)' : '✅ Geofence Verified: On-Site (Indoor Tolerance Applied)')
                             : (lang === 'km' ? '✅ ស្ថិតក្នុងបរិវេណអនុញ្ញាត (Within Geofence)' : '✅ Geofence Verified: On-Site'))
+                        : !isStrictLocation
+                        ? (lang === 'km' ? '⚡ របៀបទីតាំងបត់បែន (អនុញ្ញាតស្កេនទោះបី GPS រាយការណ៍ឆ្ងាយ)' : '⚡ Relaxed Location Mode Active (Punch Allowed)')
                         : (lang === 'km' ? '❌ នៅក្រៅបរិវេណសាខា (Out of Geofence)' : '❌ Geofence Violation: Out of Range')}
                     </span>
                   </div>
@@ -2433,10 +2495,14 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
                 <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${
                   isWithinGeofence
                     ? 'bg-emerald-600 text-white shadow-sm'
+                    : !isStrictLocation
+                    ? 'bg-amber-600 text-white shadow-sm'
                     : 'bg-rose-600 text-white shadow-sm'
                 }`}>
                   {isWithinGeofence
                     ? (lang === 'km' ? 'អនុញ្ញាតស្កេន' : 'Punch Allowed')
+                    : !isStrictLocation
+                    ? (lang === 'km' ? 'អនុញ្ញាត (ទីតាំងបត់បែន)' : 'Allowed (Relaxed)')
                     : (lang === 'km' ? 'បដិសេធស្កេន' : 'Punch Blocked')}
                 </span>
               </div>
