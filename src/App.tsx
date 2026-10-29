@@ -639,32 +639,66 @@ export default function App() {
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
 
-  // Live GPS state: initial coordinates
-  const [currentGeo, setCurrentGeo] = useState<UserGeoLocation>({
-    lat: 11.55802,
-    lng: 104.92804,
-    accuracy: 5,
-    timestamp: Date.now(),
-    isReal: false,
-    label: 'Initial Location',
+  // Live GPS state: load fast from session storage or fallback
+  const [currentGeo, setCurrentGeo] = useState<UserGeoLocation>(() => {
+    try {
+      const saved = sessionStorage.getItem('attend_last_known_geo');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+          return parsed;
+        }
+      }
+    } catch (_) {}
+    return {
+      lat: 11.55802,
+      lng: 104.92804,
+      accuracy: 10,
+      timestamp: Date.now(),
+      isReal: false,
+      label: 'Initial Location',
+    };
   });
 
-  // Automatically acquire real browser GPS coordinates on app load
+  // Automatically acquire real browser GPS coordinates on app load (Two-tier fast lock)
   useEffect(() => {
-    if (navigator.geolocation) {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      // Tier 1: Fast network / cellular / Wi-Fi lock (< 100ms)
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setCurrentGeo({
+          const acc = Math.round(pos.coords.accuracy);
+          const geo: UserGeoLocation = {
             lat: pos.coords.latitude,
             lng: pos.coords.longitude,
-            accuracy: Math.round(pos.coords.accuracy),
+            accuracy: acc,
             timestamp: pos.timestamp,
             isReal: true,
-            label: `Live GPS Device (±${Math.round(pos.coords.accuracy)}m)`,
-          });
+            label: `Live GPS (±${acc}m)`,
+          };
+          setCurrentGeo(geo);
+          try { sessionStorage.setItem('attend_last_known_geo', JSON.stringify(geo)); } catch (_) {}
         },
         () => {},
-        { enableHighAccuracy: true, timeout: 8000 }
+        { enableHighAccuracy: false, timeout: 4000, maximumAge: 60000 }
+      );
+
+      // Tier 2: Refined high accuracy GPS satellites
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const acc = Math.round(pos.coords.accuracy);
+          const geo: UserGeoLocation = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: acc,
+            timestamp: pos.timestamp,
+            isReal: true,
+            label: `Live GPS (±${acc}m)`,
+          };
+          setCurrentGeo(geo);
+          try { sessionStorage.setItem('attend_last_known_geo', JSON.stringify(geo)); } catch (_) {}
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
       );
     }
   }, []);

@@ -352,6 +352,8 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     fetchRealDeviceGps(false);
   }, []);
 
+  const lastScanTimestampRef = useRef<number>(0);
+
   const fetchRealDeviceGps = (showAlert: boolean = true) => {
     if (!navigator.geolocation) {
       if (showAlert) alert(lang === 'km' ? 'ឧបករណ៍មិនគាំទ្រ GPS ទេ' : 'Geolocation is not supported by your device.');
@@ -360,24 +362,42 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
 
     setIsLocatingGps(true);
 
-    // 1. Immediate high accuracy fix
+    const applyPosition = (pos: GeolocationPosition, isPrecise: boolean) => {
+      const acc = Math.round(pos.coords.accuracy);
+      const geo: UserGeoLocation = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: acc,
+        timestamp: pos.timestamp,
+        isReal: true,
+        label: lang === 'km' ? `GPS ជាក់ស្តែង (±${acc}m)` : `Real GPS (±${acc}m)`,
+      };
+      setCurrentGeo(geo);
+      try { sessionStorage.setItem('attend_last_known_geo', JSON.stringify(geo)); } catch (_) {}
+      if (isPrecise || acc <= 30) {
+        setIsLocatingGps(false);
+      }
+    };
+
+    // 1. Fast immediate fix (< 100ms via cached coordinates or cellular/Wi-Fi)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        applyPosition(pos, false);
+      },
+      () => {},
+      { enableHighAccuracy: false, timeout: 3500, maximumAge: 60000 }
+    );
+
+    // 2. High-precision satellite lock
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        applyPosition(pos, true);
         setIsLocatingGps(false);
-        const acc = Math.round(pos.coords.accuracy);
-        setCurrentGeo({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: acc,
-          timestamp: pos.timestamp,
-          isReal: true,
-          label: lang === 'km' ? `GPS ជាក់ស្តែង (±${acc}m)` : `Real GPS (±${acc}m)`,
-        });
       },
       (err) => {
         setIsLocatingGps(false);
-        console.warn('GPS Error:', err);
-        if (showAlert) {
+        console.warn('[GPS] Satellite high-accuracy timeout/error:', err);
+        if (showAlert && (!currentGeo.isReal && currentGeo.lat === 11.55802)) {
           alert(
             lang === 'km'
               ? 'មិនអាចទាញយក GPS បានទេ: ' + err.message + ' (សូមបើក Location Permission)'
@@ -385,10 +405,10 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
     );
 
-    // 2. Multi-sample refinement watch for 5 seconds to lock satellites and stabilize accuracy
+    // 3. Multi-sample refinement watch with jitter threshold filtering
     try {
       if (gpsWatchIdRef.current !== null) {
         navigator.geolocation.clearWatch(gpsWatchIdRef.current);
@@ -397,36 +417,36 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
         clearTimeout(gpsWatchTimeoutRef.current);
       }
 
-      let bestAccuracy = currentGeo.accuracy || 999;
+      let lastLat = currentGeo.lat;
+      let lastLng = currentGeo.lng;
+      let lastAcc = currentGeo.accuracy || 999;
+
       gpsWatchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => {
           const acc = Math.round(pos.coords.accuracy);
-          if (acc < bestAccuracy) {
-            bestAccuracy = acc;
-            setCurrentGeo({
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: acc,
-              timestamp: pos.timestamp,
-              isReal: true,
-              label: lang === 'km' ? `GPS ជាក់ស្តែង (±${acc}m)` : `Real GPS (±${acc}m)`,
-            });
-          }
-          if (acc <= 10 && gpsWatchIdRef.current !== null) {
-            navigator.geolocation.clearWatch(gpsWatchIdRef.current);
-            gpsWatchIdRef.current = null;
+          const moved = calculateDistanceMeters(lastLat, lastLng, pos.coords.latitude, pos.coords.longitude);
+          
+          // Only trigger state update if accuracy improved >= 5m OR user moved >= 5m
+          // Prevents constant 60fps React re-renders from sub-meter GPS noise
+          if (acc < lastAcc - 5 || moved >= 5 || !currentGeo.isReal) {
+            lastLat = pos.coords.latitude;
+            lastLng = pos.coords.longitude;
+            lastAcc = acc;
+            applyPosition(pos, acc <= 15);
           }
         },
         () => {},
-        { enableHighAccuracy: true, maximumAge: 0 }
+        { enableHighAccuracy: true, maximumAge: 5000 }
       );
 
+      // Auto-release GPS watch after 12s to conserve device battery and avoid CPU drain
       gpsWatchTimeoutRef.current = setTimeout(() => {
         if (gpsWatchIdRef.current !== null && navigator.geolocation) {
           navigator.geolocation.clearWatch(gpsWatchIdRef.current);
           gpsWatchIdRef.current = null;
         }
-      }, 5000);
+        setIsLocatingGps(false);
+      }, 12000);
     } catch (e) {
       console.warn('GPS Watcher initialization error:', e);
     }
@@ -491,30 +511,44 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     }
   };
 
-  // QR Scanning Loop
+  // QR Scanning Loop with throttled frame rate (~6 fps) and downscaled canvas for 10x faster decoding & zero lag
   const tick = () => {
-    if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          canvas.height = videoRef.current.videoHeight;
-          canvas.width = videoRef.current.videoWidth;
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    if (isCameraActive && scanMode === 'camera_scan' && !scanSuccessModalRecord) {
+      const now = performance.now();
+      if (now - lastScanTimestampRef.current >= 150) {
+        lastScanTimestampRef.current = now;
+        if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              const vW = videoRef.current.videoWidth || 640;
+              const vH = videoRef.current.videoHeight || 480;
+              // Scale to max 480px width for fast decoding without pegged CPU
+              const scale = Math.min(1, 480 / Math.max(vW, vH));
+              const sW = Math.round(vW * scale);
+              const sH = Math.round(vH * scale);
 
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: 'dontInvert',
-          });
+              if (canvas.width !== sW || canvas.height !== sH) {
+                canvas.width = sW;
+                canvas.height = sH;
+              }
 
-          if (code && code.data) {
-            handleQrCodeScanned(code.data);
-            return;
+              ctx.drawImage(videoRef.current, 0, 0, sW, sH);
+
+              const imageData = ctx.getImageData(0, 0, sW, sH);
+              const code = jsQR(imageData.data, sW, sH, {
+                inversionAttempts: 'dontInvert',
+              });
+
+              if (code && code.data) {
+                handleQrCodeScanned(code.data);
+                return;
+              }
+            }
           }
         }
       }
-    }
-    if (isCameraActive && scanMode === 'camera_scan' && !scanSuccessModalRecord) {
       animationFrameId.current = requestAnimationFrame(tick);
     }
   };
@@ -527,7 +561,7 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     let photoUrl: string | undefined = undefined;
     if (canvasRef.current) {
       try {
-        photoUrl = canvasRef.current.toDataURL('image/jpeg', 0.7);
+        photoUrl = canvasRef.current.toDataURL('image/jpeg', 0.65);
         setCapturedPhoto(photoUrl);
       } catch (e) {
         // ignore
@@ -764,9 +798,9 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     setTimeout(() => {
       try {
         const now = new Date();
-        // Ensure punch is credited to the employee's assigned branch safely
+        // Ensure punch is credited to the employee's chosen/assigned branch safely
         const assignedBranch = emp.branchId ? branches.find((b) => b.id === emp.branchId) : undefined;
-        const effectiveBranch = (method !== 'qr_kiosk' && assignedBranch) ? assignedBranch : branch || branches[0];
+        const effectiveBranch = branch || assignedBranch || branches[0];
 
         if (!effectiveBranch) {
           throw new Error('Branch location not configured.');

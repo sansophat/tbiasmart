@@ -132,20 +132,21 @@ export interface AdaptiveGeofenceResult {
 
 /**
  * Calculates adaptive geofence validity taking device GPS accuracy uncertainty into account.
- * When staff are indoors, GPS signals degrade and report accuracy of +-20m to +-50m.
+ * When staff are indoors, GPS signals degrade and report accuracy of +-20m to +-80m.
  * By factoring in an accuracy buffer (capped at maxBuffer to prevent spoofing),
- * staff inside the workplace will not be rejected due to satellite bounce.
+ * staff inside the workplace under concrete/metal roofs will not be rejected due to satellite bounce.
  */
 export function isWithinAdaptiveGeofence(
   distanceMeters: number,
   branchRadiusMeters: number,
   accuracyMeters?: number,
-  maxAccuracyBuffer: number = 55
+  maxAccuracyBuffer: number = 120
 ): AdaptiveGeofenceResult {
   const baseRadius = Math.max(10, branchRadiusMeters || 100);
   const accuracy = typeof accuracyMeters === 'number' && accuracyMeters > 0 ? Math.round(accuracyMeters) : 5;
   
   // Accuracy buffer: if device reports accuracy uncertainty > 5m, provide an allowance up to maxAccuracyBuffer
+  // When inside buildings with concrete roofs, accuracy is typically +-25m to +-80m.
   const rawBuffer = Math.max(0, accuracy - 5);
   const accuracyBuffer = Math.min(rawBuffer, maxAccuracyBuffer);
   
