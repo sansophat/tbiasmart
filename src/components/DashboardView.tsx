@@ -38,7 +38,7 @@ import {
 import { Branch, Employee, AttendanceRecord, BranchTransferRecord, AuthUser, Language, LeaveRequest, Shift } from '../types';
 import { INITIAL_SHIFTS } from '../data/initialData';
 import { formatDistance, toKhmerNumeral } from '../utils/geoUtils';
-import { isSameLocalDate } from '../utils/dateUtils';
+import { isSameLocalDate, getLocalDateString } from '../utils/dateUtils';
 import { doesRecordMatchEmployee } from '../utils/attendanceSyncManager';
 import {
   getEmployeeDayOffName,
@@ -108,7 +108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   lang,
 }) => {
   const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const today = getLocalDateString(now);
   const isEmployee = currentUser?.role === 'employee';
   
   // Find current employee if logged in

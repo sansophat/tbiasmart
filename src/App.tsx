@@ -2214,7 +2214,7 @@ export default function App() {
     };
   }, [lang]);
 
-  // Periodic background Turso SQLite Cloud reconciliation (every 45s) to ensure data integrity without overwhelming network or UI
+  // Periodic background Turso SQLite Cloud reconciliation (every 12s) to ensure real-time attendance feed updates
   const isTursoSyncRunningRef = useRef(false);
   useEffect(() => {
     const pollInterval = setInterval(() => {
@@ -2257,7 +2257,7 @@ export default function App() {
         .finally(() => {
           isTursoSyncRunningRef.current = false;
         });
-    }, 45000);
+    }, 12000);
 
     return () => clearInterval(pollInterval);
   }, [lang, alertsClearedAt]);
