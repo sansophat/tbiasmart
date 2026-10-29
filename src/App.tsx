@@ -162,7 +162,21 @@ function safeGetJson<T>(key: string, fallback: T): T {
 
 function safeSetJson(key: string, value: any): boolean {
   try {
-    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    let payload = value;
+    // Proactively compact attendance records for local storage cache (< 60KB total)
+    // so mobile / desktop browser localStorage NEVER encounters QuotaExceededError or GC thrashing
+    if (key === 'attend_records' && Array.isArray(value)) {
+      payload = value.slice(0, 50).map((r) => {
+        if (!r) return r;
+        const { selfieUrl, employeeAvatar, ...rest } = r;
+        return {
+          ...rest,
+          employeeAvatar: employeeAvatar && employeeAvatar.length < 500 ? employeeAvatar : '',
+          selfieUrl: selfieUrl && selfieUrl.length < 500 ? selfieUrl : undefined,
+        };
+      });
+    }
+    const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
     localStorage.setItem(key, str);
     return true;
   } catch (err) {
@@ -183,10 +197,11 @@ function safeSetJson(key: string, value: any): boolean {
       if (key === 'attend_records' && Array.isArray(parsed)) {
         const compact = parsed.slice(0, 20).map((r) => {
           if (!r) return r;
-          const { selfieUrl, ...rest } = r;
+          const { selfieUrl, employeeAvatar, ...rest } = r;
           return {
             ...rest,
-            selfieUrl: selfieUrl && selfieUrl.length < 500 ? selfieUrl : undefined,
+            employeeAvatar: '',
+            selfieUrl: undefined,
           };
         });
         localStorage.setItem(key, JSON.stringify(compact));
@@ -218,6 +233,17 @@ function safeSetJson(key: string, value: any): boolean {
   }
 }
 
+export const KNOWN_DELETED_BRANCH_IDS: string[] = [
+  'br_office',
+  'br_club_1',
+  'br_club_2',
+  'br_gas_1',
+  'br_cafe_1',
+  'br_cafe_2',
+  'br_cafe_3',
+  'br_warehouse',
+];
+
 export const KNOWN_DELETED_EMPLOYEE_IDS: string[] = [
   'emp_1790830636106',
   'emp_1790830699522',
@@ -225,6 +251,15 @@ export const KNOWN_DELETED_EMPLOYEE_IDS: string[] = [
   'emp_1790831431039',
   'emp_1790831475316',
   'emp_1790831527255',
+  // Demo employee IDs
+  'emp_cf1_1', 'emp_cf1_2', 'emp_cf1_3',
+  'emp_cf2_1', 'emp_cf2_2',
+  'emp_cf3_1', 'emp_cf3_2', 'emp_cf3_3',
+  'emp_cl1_1', 'emp_cl1_2', 'emp_cl1_3', 'emp_cl1_4',
+  'emp_cl2_1', 'emp_cl2_2', 'emp_cl2_3',
+  'emp_gas_1', 'emp_gas_2', 'emp_gas_3', 'emp_gas_4',
+  'emp_off_1', 'emp_off_2', 'emp_off_3', 'emp_off_4',
+  'emp_wh_1', 'emp_wh_2', 'emp_wh_3', 'emp_wh_4',
 ];
 
 /**
@@ -351,7 +386,7 @@ export default function App() {
   // Tombstone Deletion Tracking: ensures deleted branches stay deleted and never resurrect
   const [deletedBranchIds, setDeletedBranchIds] = useState<Set<string>>(() => {
     const saved = safeGetJson<string[]>('attend_deleted_branch_ids', []);
-    return new Set(Array.isArray(saved) ? saved : []);
+    return new Set([...(Array.isArray(saved) ? saved : []), ...KNOWN_DELETED_BRANCH_IDS]);
   });
 
   // Tombstone Deletion Tracking: ensures deleted leaves stay deleted and never resurrect
@@ -364,7 +399,10 @@ export default function App() {
   const [branches, setBranches] = useState<Branch[]>(() => {
     const saved = safeGetJson('attend_branches', INITIAL_BRANCHES);
     const tombstoneArr = safeGetJson<string[]>('attend_deleted_branch_ids', []);
-    const tombstones = new Set(Array.isArray(tombstoneArr) ? tombstoneArr : []);
+    const tombstones = new Set([
+      ...(Array.isArray(tombstoneArr) ? tombstoneArr : []),
+      ...KNOWN_DELETED_BRANCH_IDS,
+    ]);
     const filtered = (Array.isArray(saved) ? saved : []).filter((b: Branch) => !tombstones.has(b.id));
     return filtered.length > 0 ? filtered : INITIAL_BRANCHES.filter((b) => !tombstones.has(b.id));
   });
@@ -714,20 +752,20 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Turso SQLite Cloud (Primary), Supabase PostgreSQL, and Cloud Firestore concurrently
-        const [cloudStateRes, supabaseRes, tursoRes] = await Promise.allSettled([
-          getCloudDatabaseState(),
-          fetchInitialSupabaseData(),
-          fetchInitialTursoData(),
-        ]);
+        // Fast-path: Fetch Turso SQLite Cloud (Primary Authoritative Cloud)
+        const tState = await fetchInitialTursoData().catch(() => null);
 
-        const cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
-        const suState = (supabaseRes.status === 'fulfilled' && supabaseRes.value)
-          ? supabaseRes.value
-          : null;
-        const tState = (tursoRes.status === 'fulfilled' && tursoRes.value)
-          ? tursoRes.value
-          : null;
+        let cState: any = null;
+        let suState: any = null;
+        // If Turso is unconfigured or empty, fall back to Firestore and Supabase
+        if (!tState || !tState.branches || tState.branches.length === 0) {
+          const [cloudStateRes, supabaseRes] = await Promise.allSettled([
+            getCloudDatabaseState(),
+            fetchInitialSupabaseData(),
+          ]);
+          cState = cloudStateRes.status === 'fulfilled' ? cloudStateRes.value : null;
+          suState = (supabaseRes.status === 'fulfilled' && supabaseRes.value) ? supabaseRes.value : null;
+        }
 
         if (!isMounted) return;
 
@@ -811,6 +849,7 @@ export default function App() {
 
         const branchTombstones = new Set([
           ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+          ...KNOWN_DELETED_BRANCH_IDS,
           ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
         ]);
 
@@ -1660,7 +1699,10 @@ export default function App() {
         }
       } else if (event === 'UPDATE_BRANCH' && payload) {
         setBranches((prev) => {
-          const tombstones = new Set(safeGetJson<string[]>('attend_deleted_branch_ids', []));
+          const tombstones = new Set([
+            ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+            ...KNOWN_DELETED_BRANCH_IDS,
+          ]);
           if (tombstones.has(payload.id)) return prev;
           const next = mergeDatasets(prev, [payload]);
           safeSetJson('attend_branches', JSON.stringify(next));
@@ -1886,6 +1928,7 @@ export default function App() {
               setBranches((prev) => {
                 const tombstones = new Set([
                   ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+                  ...KNOWN_DELETED_BRANCH_IDS,
                   ...(Array.isArray((tState as any)?.deletedBranchIds) ? (tState as any).deletedBranchIds : []),
                   ...(Array.isArray((suState as any)?.deletedBranchIds) ? (suState as any).deletedBranchIds : []),
                 ]);
@@ -1952,7 +1995,10 @@ export default function App() {
 
         if (Array.isArray(cloudData.branches) && (cloudData.branches.length > 0 || cloudData.isReset)) {
           setBranches((prev) => {
-            const tombstones = new Set(safeGetJson<string[]>('attend_deleted_branch_ids', []));
+            const tombstones = new Set([
+              ...safeGetJson<string[]>('attend_deleted_branch_ids', []),
+              ...KNOWN_DELETED_BRANCH_IDS,
+            ]);
             const raw = cloudData.isReset ? cloudData.branches! : mergeDatasets(prev, cloudData.branches!);
             const next = raw.filter((b: Branch) => !tombstones.has(b.id));
             safeSetJson('attend_branches', JSON.stringify(next));

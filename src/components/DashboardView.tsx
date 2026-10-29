@@ -365,22 +365,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   };
 
-  const enrichedFeedRecords = todayFeedRecords.map((rec) => ({
-    rec,
-    meta: getRecordShiftDayOffAndOt(rec),
-  }));
+  const enrichedFeedRecords = useMemo(() => {
+    return todayFeedRecords.map((rec) => ({
+      rec,
+      meta: getRecordShiftDayOffAndOt(rec),
+    }));
+  }, [todayFeedRecords, employees, branches, shifts, leaveRequests, today, lang]);
 
-  const filteredFeedItems = enrichedFeedRecords.filter(({ rec, meta }) => {
-    if (feedFilter === 'all') return true;
-    const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
-    if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
-    if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2') || (!meta.isMorningWorker && !sId.includes('office'));
-    if (feedFilter === 'checked_out') return rec.type === 'check_out' || meta.hasCheckedOutToday;
-    if (feedFilter === 'no_checkout') return meta.hasCheckedInToday && !meta.hasCheckedOutToday;
-    if (feedFilter === 'dayoff') return meta.isWorkingOnDayOff;
-    if (feedFilter === 'ot') return meta.hasOt;
-    return true;
-  });
+  const filteredFeedItems = useMemo(() => {
+    return enrichedFeedRecords.filter(({ rec, meta }) => {
+      if (feedFilter === 'all') return true;
+      const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
+      if (feedFilter === 'morning') return sId.includes('morning') || sId.includes('s1') || meta.isMorningWorker;
+      if (feedFilter === 'afternoon') return sId.includes('afternoon') || sId.includes('s2') || (!meta.isMorningWorker && !sId.includes('office'));
+      if (feedFilter === 'checked_out') return rec.type === 'check_out' || meta.hasCheckedOutToday;
+      if (feedFilter === 'no_checkout') return meta.hasCheckedInToday && !meta.hasCheckedOutToday;
+      if (feedFilter === 'dayoff') return meta.isWorkingOnDayOff;
+      if (feedFilter === 'ot') return meta.hasOt;
+      return true;
+    });
+  }, [enrichedFeedRecords, feedFilter]);
 
   const morningFeedCount = enrichedFeedRecords.filter(({ meta }) => {
     const sId = String(meta.matchedEmp?.shiftId || meta.empShift?.id || '').toLowerCase();
