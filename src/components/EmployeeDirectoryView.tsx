@@ -41,7 +41,7 @@ import {
 import { Employee, Branch, AttendanceRecord, Language, CompanyBranding, UserRole, Shift } from '../types';
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
-import { DigitalIdCardModal } from './DigitalIdCardModal';
+const DigitalIdCardModal = React.lazy(() => import('./DigitalIdCardModal').then(m => ({ default: m.DigitalIdCardModal })));
 import { ProcessingProgressModal } from './ProcessingProgressModal';
 import { getEmployeeDayOffName, getEmployeeWorkingHours, getShiftCategoryBadge, isShiftBasedWorker } from '../utils/dayOffUtils';
 import { resolveAvatar, handleAvatarError, getFallbackAvatar } from '../utils/avatarUtils';
@@ -1438,14 +1438,16 @@ export const EmployeeDirectoryView: React.FC<EmployeeDirectoryViewProps> = ({
 
       {/* Digital ID Badge Modal */}
       {selectedBadgeEmp && (
-        <DigitalIdCardModal
-          employee={selectedBadgeEmp}
-          branch={getBranch(selectedBadgeEmp.branchId)}
-          branding={branding}
-          lang={lang}
-          onClose={() => setSelectedBadgeEmp(null)}
-          onUpdatePhoto={handleUpdateBadgePhoto}
-        />
+        <React.Suspense fallback={null}>
+          <DigitalIdCardModal
+            employee={selectedBadgeEmp}
+            branch={getBranch(selectedBadgeEmp.branchId)}
+            branding={branding}
+            lang={lang}
+            onClose={() => setSelectedBadgeEmp(null)}
+            onUpdatePhoto={handleUpdateBadgePhoto}
+          />
+        </React.Suspense>
       )}
 
       {/* Quick Photo Edit Modal */}

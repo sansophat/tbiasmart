@@ -78,7 +78,7 @@ import {
   Shift
 } from '../types';
 import { INITIAL_SHIFTS } from '../data/initialData';
-import { InteractiveMapPicker } from './InteractiveMapPicker';
+const InteractiveMapPicker = React.lazy(() => import('./InteractiveMapPicker').then(m => ({ default: m.InteractiveMapPicker })));
 import { BackupRestorePanel } from './BackupRestorePanel';
 import { updateDynamicAppBranding } from '../utils/pwaBrandUtils';
 import { KhmerTypographySettings } from './KhmerTypographySettings';
@@ -1488,24 +1488,26 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                   </span>
                 </div>
 
-                <InteractiveMapPicker
-                  lat={branchForm.lat}
-                  lng={branchForm.lng}
-                  radiusMeters={branchForm.radiusMeters}
-                  branchName={lang === 'km' ? branchForm.nameKh : branchForm.nameEn}
-                  branchType={branchForm.type}
-                  lang={lang}
-                  heightClass="h-[280px] sm:h-[340px]"
-                  onChange={(newLat, newLng, addr) => {
-                    setBranchForm((prev) => ({
-                      ...prev,
-                      lat: newLat,
-                      lng: newLng,
-                      addressKh: prev.addressKh ? prev.addressKh : (addr?.nameKh || prev.addressKh),
-                      addressEn: prev.addressEn ? prev.addressEn : (addr?.nameEn || prev.addressEn),
-                    }));
-                  }}
-                />
+                <React.Suspense fallback={<div className="h-[280px] sm:h-[340px] flex items-center justify-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-400">Loading Map...</div>}>
+                  <InteractiveMapPicker
+                    lat={branchForm.lat}
+                    lng={branchForm.lng}
+                    radiusMeters={branchForm.radiusMeters}
+                    branchName={lang === 'km' ? branchForm.nameKh : branchForm.nameEn}
+                    branchType={branchForm.type}
+                    lang={lang}
+                    heightClass="h-[280px] sm:h-[340px]"
+                    onChange={(newLat, newLng, addr) => {
+                      setBranchForm((prev) => ({
+                        ...prev,
+                        lat: newLat,
+                        lng: newLng,
+                        addressKh: prev.addressKh ? prev.addressKh : (addr?.nameKh || prev.addressKh),
+                        addressEn: prev.addressEn ? prev.addressEn : (addr?.nameEn || prev.addressEn),
+                      }));
+                    }}
+                  />
+                </React.Suspense>
               </div>
 
               {/* Core Branch Fields Grid */}
@@ -3848,24 +3850,26 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                   </span>
                 </div>
 
-                <InteractiveMapPicker
-                  lat={newBranchForm.lat || 11.5560}
-                  lng={newBranchForm.lng || 104.9280}
-                  radiusMeters={newBranchForm.radiusMeters || 80}
-                  branchName={newBranchForm.nameEn || 'New Branch'}
-                  branchType={newBranchForm.type || 'cafe'}
-                  lang={lang}
-                  heightClass="h-[220px]"
-                  onChange={(newLat, newLng, addr) => {
-                    setNewBranchForm((prev) => ({
-                      ...prev,
-                      lat: newLat,
-                      lng: newLng,
-                      addressKh: prev.addressKh || addr?.nameKh || '',
-                      addressEn: prev.addressEn || addr?.nameEn || '',
-                    }));
-                  }}
-                />
+                <React.Suspense fallback={<div className="h-[220px] flex items-center justify-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-400">Loading Map...</div>}>
+                  <InteractiveMapPicker
+                    lat={newBranchForm.lat || 11.5560}
+                    lng={newBranchForm.lng || 104.9280}
+                    radiusMeters={newBranchForm.radiusMeters || 80}
+                    branchName={newBranchForm.nameEn || 'New Branch'}
+                    branchType={newBranchForm.type || 'cafe'}
+                    lang={lang}
+                    heightClass="h-[220px]"
+                    onChange={(newLat, newLng, addr) => {
+                      setNewBranchForm((prev) => ({
+                        ...prev,
+                        lat: newLat,
+                        lng: newLng,
+                        addressKh: prev.addressKh || addr?.nameKh || '',
+                        addressEn: prev.addressEn || addr?.nameEn || '',
+                      }));
+                    }}
+                  />
+                </React.Suspense>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

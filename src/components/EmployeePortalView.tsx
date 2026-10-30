@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { AuthUser, Employee, Branch, LeaveRequest, AttendanceRecord, Language, CompanyBranding, UserGeoLocation, Shift } from '../types';
 import { INITIAL_BRANDING, INITIAL_SHIFTS } from '../data/initialData';
-import { DigitalIdCardModal } from './DigitalIdCardModal';
+const DigitalIdCardModal = React.lazy(() => import('./DigitalIdCardModal').then(m => ({ default: m.DigitalIdCardModal })));
 import { StaffRosterTable } from './StaffRosterTable';
 import { EmployeeImageUploader } from './EmployeeImageUploader';
 import { resolveAvatar, handleAvatarError } from '../utils/avatarUtils';
@@ -965,13 +965,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
       {/* Digital ID Badge Pass Modal */}
       {showBadgeModal && (
-        <DigitalIdCardModal
-          employee={currentEmp as Employee}
-          branch={branch}
-          branding={branding}
-          lang={lang}
-          onClose={() => setShowBadgeModal(false)}
-        />
+        <React.Suspense fallback={null}>
+          <DigitalIdCardModal
+            employee={currentEmp as Employee}
+            branch={branch}
+            branding={branding}
+            lang={lang}
+            onClose={() => setShowBadgeModal(false)}
+          />
+        </React.Suspense>
       )}
 
       {/* Upload / Change Profile Photo Modal for Employee */}

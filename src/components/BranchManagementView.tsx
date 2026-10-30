@@ -38,7 +38,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Branch, BranchTypeConfig, BranchTransferRecord, Employee, Language } from '../types';
-import { InteractiveMapPicker } from './InteractiveMapPicker';
+const InteractiveMapPicker = React.lazy(() => import('./InteractiveMapPicker').then(m => ({ default: m.InteractiveMapPicker })));
 import { detectClientIp } from '../utils/networkUtils';
 import { ProcessingProgressModal } from './ProcessingProgressModal';
 import { compressImageFile } from '../utils/imageCompressor';
@@ -915,19 +915,21 @@ export const BranchManagementView: React.FC<BranchManagementViewProps> = ({
                     </span>
                   </div>
 
-                  <InteractiveMapPicker
-                    lat={lat}
-                    lng={lng}
-                    radiusMeters={radiusMeters}
-                    branchName={lang === 'km' ? nameKh : nameEn}
-                    branchType={branchType}
-                    lang={lang}
-                    heightClass="h-[220px]"
-                    onChange={(newLat, newLng) => {
-                      setLat(newLat);
-                      setLng(newLng);
-                    }}
-                  />
+                  <React.Suspense fallback={<div className="h-[220px] flex items-center justify-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-400">Loading Map...</div>}>
+                    <InteractiveMapPicker
+                      lat={lat}
+                      lng={lng}
+                      radiusMeters={radiusMeters}
+                      branchName={lang === 'km' ? nameKh : nameEn}
+                      branchType={branchType}
+                      lang={lang}
+                      heightClass="h-[220px]"
+                      onChange={(newLat, newLng) => {
+                        setLat(newLat);
+                        setLng(newLng);
+                      }}
+                    />
+                  </React.Suspense>
                 </div>
 
                 {/* Geofence Radius Slider */}

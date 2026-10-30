@@ -15,6 +15,12 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1500,
+    modulePreload: {
+      resolveDependencies: (filename, deps) => {
+        // Exclude heavy export tools and map rendering engines from initial HTML modulepreload
+        return deps.filter((dep) => !dep.includes('vendor-export') && !dep.includes('vendor-maps'));
+      },
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {

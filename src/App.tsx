@@ -141,9 +141,29 @@ const DEFAULT_STARTER_BRANCH: Branch = {
   activeStaffCount: 0,
 };
 
+const pendingStorageWrites = new Map<string, string>();
+let storageWriteTimer: any = null;
+
+function flushPendingStorageWrites() {
+  if (pendingStorageWrites.size === 0) return;
+  const entries = Array.from(pendingStorageWrites.entries());
+  pendingStorageWrites.clear();
+  for (const [key, str] of entries) {
+    try {
+      localStorage.setItem(key, str);
+    } catch (e) {
+      console.warn(`[SafeStorage] Flush failed for key "${key}":`, e);
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushPendingStorageWrites);
+}
+
 function safeGetJson<T>(key: string, fallback: T): T {
   try {
-    const saved = localStorage.getItem(key);
+    const saved = pendingStorageWrites.has(key) ? pendingStorageWrites.get(key) : localStorage.getItem(key);
     if (!saved || saved === 'undefined' || saved === 'null') return fallback;
     const parsed = JSON.parse(saved);
     if (parsed === null || parsed === undefined) return fallback;
@@ -155,12 +175,13 @@ function safeGetJson<T>(key: string, fallback: T): T {
     console.warn(`SafeStorage: reset corrupted key "${key}" to initial fallback.`, err);
     try {
       localStorage.removeItem(key);
+      pendingStorageWrites.delete(key);
     } catch (_) {}
     return fallback;
   }
 }
 
-function safeSetJson(key: string, value: any): boolean {
+function safeSetJson(key: string, value: any, immediate = false): boolean {
   try {
     let payload = value;
     // Proactively compact attendance records for local storage cache (< 60KB total)
@@ -177,7 +198,25 @@ function safeSetJson(key: string, value: any): boolean {
       });
     }
     const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    localStorage.setItem(key, str);
+
+    if (immediate || key === 'attend_auth_user' || key === 'attend_user_id' || key === 'attend_lang') {
+      pendingStorageWrites.delete(key);
+      localStorage.setItem(key, str);
+      return true;
+    }
+
+    // Non-blocking deferred batch write for heavy collections to prevent UI thread lockups
+    pendingStorageWrites.set(key, str);
+    if (!storageWriteTimer) {
+      storageWriteTimer = setTimeout(() => {
+        storageWriteTimer = null;
+        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+          (window as any).requestIdleCallback(() => flushPendingStorageWrites(), { timeout: 1000 });
+        } else {
+          flushPendingStorageWrites();
+        }
+      }, 250);
+    }
     return true;
   } catch (err) {
     console.warn(`[SafeStorage] Quota exceeded on "${key}". Freeing non-essential cache...`, err);

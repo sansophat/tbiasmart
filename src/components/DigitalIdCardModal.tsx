@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
-import html2canvas from 'html2canvas-pro';
-import { jsPDF } from 'jspdf';
 import { 
   X, 
   Download, 
@@ -372,6 +370,8 @@ export const DigitalIdCardModal: React.FC<DigitalIdCardModalProps> = ({
   const getRenderedCardCanvas = async (): Promise<HTMLCanvasElement> => {
     if (cardRef.current) {
       try {
+        const html2canvasModule = await import('html2canvas-pro');
+        const html2canvas = html2canvasModule.default || html2canvasModule;
         const canvas = await html2canvas(cardRef.current, {
           scale: 3,
           useCORS: true,
@@ -435,6 +435,7 @@ export const DigitalIdCardModal: React.FC<DigitalIdCardModalProps> = ({
       const canvas = await getRenderedCardCanvas();
       const imgData = canvas.toDataURL('image/png');
 
+      const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
