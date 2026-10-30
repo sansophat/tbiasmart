@@ -307,13 +307,13 @@ export function startAttendanceSyncService(
       // 1. Flush any pending mobile punches (broadcasts directly to Admin!)
       await syncPendingPunches();
 
-      // 2. Fetch fresh records from Supabase / server
-      const records = await fetchComprehensiveAttendance(150);
+      // 2. Fetch fresh records from Supabase / Turso (keep compact 25 limit for background sync)
+      const records = await fetchComprehensiveAttendance(25);
       if (records.length > 0 && isRunning) {
         onRecordsReceived(records);
       }
 
-      // 3. Periodically sync employees every ~40s so new staff propagate smoothly
+      // 3. Periodically sync employees every ~60s so new staff propagate smoothly
       cycleCount++;
       if (onEmployeesReceived && cycleCount % 2 === 0) {
         const freshEmps = await fetchComprehensiveEmployees();
@@ -328,7 +328,7 @@ export function startAttendanceSyncService(
     }
   };
 
-  const intervalId = setInterval(runSync, 20000);
+  const intervalId = setInterval(runSync, 30000);
 
   const handleOnlineOrFocus = () => {
     runSync();

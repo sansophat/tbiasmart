@@ -40,7 +40,6 @@ import {
 } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
-import { DashboardView } from './components/DashboardView';
 import { QrAttendanceView } from './components/QrAttendanceView';
 import { EmployeePortalView } from './components/EmployeePortalView';
 import { LoginModal } from './components/LoginModal';
@@ -50,6 +49,7 @@ import { resolveEmployeeShift } from './utils/rosterUtils';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 
 // Code-split heavy views and secondary modals with auto-reloading retry for new releases
+const DashboardView = lazyWithRetry(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
 const ReportsView = lazyWithRetry(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
 const AdminSettingsView = lazyWithRetry(() => import('./components/AdminSettingsView').then(m => ({ default: m.AdminSettingsView })));
 const GpsRadarMap = lazyWithRetry(() => import('./components/GpsRadarMap').then(m => ({ default: m.GpsRadarMap })));
@@ -367,12 +367,12 @@ export default function App() {
   const isCloudInitializedRef = useRef<boolean>(hasLocalCache);
   const initialMountSkipped = useRef<boolean>(false);
 
-  // Failsafe: Never let loading overlay block the user for more than 1.2s under any network condition
+  // Failsafe: Never let loading overlay block the user for more than 500ms under any network condition
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsCloudSyncLoading(false);
       isCloudInitializedRef.current = true;
-    }, 1200);
+    }, 500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -2214,9 +2214,12 @@ export default function App() {
     };
   }, [lang]);
 
-  // Periodic background Turso SQLite Cloud reconciliation (every 12s) to ensure real-time attendance feed updates
+  // Periodic background Turso SQLite Cloud reconciliation (every 15s) for Admins & Supervisors
+  // For regular staff on mobile devices, skip heavy full-database polling to conserve mobile CPU, RAM and battery
   const isTursoSyncRunningRef = useRef(false);
   useEffect(() => {
+    if (currentUser?.role === 'employee') return;
+
     const pollInterval = setInterval(() => {
       if (isTursoSyncRunningRef.current) return;
       isTursoSyncRunningRef.current = true;
@@ -3809,7 +3812,10 @@ export default function App() {
     <div className="min-h-screen bg-[#F1F5F9] text-slate-800 flex flex-col font-['Kantumruy_Pro','Plus_Jakarta_Sans',sans-serif] w-full max-w-full overflow-x-hidden">
       {/* Cloud Sync Overlay for Fresh Devices / Browsers */}
       {isCloudSyncLoading && (
-        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-900/95 backdrop-blur-md text-white px-4 text-center">
+        <div 
+          onClick={() => setIsCloudSyncLoading(false)}
+          className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-900/95 text-white px-4 text-center cursor-pointer select-none"
+        >
           <div className="w-16 h-16 rounded-3xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center mb-5 shadow-xl shadow-indigo-600/30 animate-pulse">
             <Cloud className="w-8 h-8 text-indigo-400" />
           </div>
@@ -3886,7 +3892,7 @@ export default function App() {
         <main className="flex-1 pb-16">
           <ErrorBoundary fallbackTitleKh="កំពុងស្ដារផ្ទាំងទិដ្ឋភាពឡើងវិញ" fallbackTitleEn="Auto-Recovering View Container">
             <React.Suspense fallback={<ViewLoadingFallback />}>
-            {activeTab === 'dashboard' && (
+            {activeTab === 'dashboard' && currentUser && (
             <DashboardView
               branches={branches}
               employees={employees}
@@ -4092,7 +4098,7 @@ export default function App() {
                 onUpdateEmployee={handleUpdateEmployee}
                 onUpdateUserProfile={handleUpdateUserProfile}
               />
-            ) : (
+            ) : currentUser ? (
               <DashboardView
                 branches={branches}
                 employees={employees}
@@ -4111,7 +4117,7 @@ export default function App() {
                 onUpdateEmployee={handleUpdateEmployee}
                 lang={lang}
               />
-            )
+            ) : null
           )}
           </React.Suspense>
           </ErrorBoundary>

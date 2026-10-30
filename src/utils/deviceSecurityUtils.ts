@@ -125,16 +125,22 @@ function getHardwareFingerprintHash(os: string, browser: string, screenSummary: 
   } catch (e) {}
 
   let webGlRenderer = '';
-  try {
-    const glCanvas = document.createElement('canvas');
-    const gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
-    if (gl) {
-      const dbg = (gl as any).getExtension('WEBGL_debug_renderer_info');
-      if (dbg) {
-        webGlRenderer = (gl as any).getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '';
+  // Avoid heavy WebGL context allocation on mobile devices where GPU compilation can block the main thread
+  const isMobileUa = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+  if (!isMobileUa) {
+    try {
+      const glCanvas = document.createElement('canvas');
+      const gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+      if (gl) {
+        const dbg = (gl as any).getExtension('WEBGL_debug_renderer_info');
+        if (dbg) {
+          webGlRenderer = (gl as any).getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '';
+        }
+        // Explicitly release WebGL context immediately to prevent GPU memory retention
+        (gl as any).getExtension('WEBGL_lose_context')?.loseContext();
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
 
   const nav = typeof navigator !== 'undefined' ? navigator : ({} as any);
   const tz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone || '' : '';

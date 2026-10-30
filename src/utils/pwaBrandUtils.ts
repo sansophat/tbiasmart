@@ -67,12 +67,16 @@ export function updateDynamicAppBranding(branding: CompanyBranding, lang: Langua
       type: 'application/manifest+json'
     });
 
-    if (currentManifestObjectUrl) {
-      URL.revokeObjectURL(currentManifestObjectUrl);
+    // On mobile devices (especially Android Chrome), avoid dynamic blob URLs on <link rel=manifest>
+    // as it triggers asynchronous WebAPK compilation loops that freeze the browser UI
+    const isMobileDevice = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+    if (!isMobileDevice) {
+      if (currentManifestObjectUrl) {
+        URL.revokeObjectURL(currentManifestObjectUrl);
+      }
+      currentManifestObjectUrl = URL.createObjectURL(manifestBlob);
+      updateOrCreateLinkTag('manifest', currentManifestObjectUrl);
     }
-
-    currentManifestObjectUrl = URL.createObjectURL(manifestBlob);
-    updateOrCreateLinkTag('manifest', currentManifestObjectUrl);
   } catch (err) {
     console.warn('Could not generate dynamic PWA manifest:', err);
   }

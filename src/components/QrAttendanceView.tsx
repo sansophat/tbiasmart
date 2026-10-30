@@ -347,9 +347,11 @@ export const QrAttendanceView: React.FC<QrAttendanceViewProps> = ({
     };
   }, []);
 
-  // Request real device GPS automatically on view load with multi-sample refinement
+  // Request real device GPS automatically on view load only if not already locked by App
   useEffect(() => {
-    fetchRealDeviceGps(false);
+    if (!currentGeo?.isReal) {
+      fetchRealDeviceGps(false);
+    }
   }, []);
 
   const lastScanTimestampRef = useRef<number>(0);

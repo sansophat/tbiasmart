@@ -108,15 +108,17 @@ class RealtimeSyncManager {
         }
       };
 
-      this.ws.onclose = () => {
+      let isHandled = false;
+      const onDisconnect = () => {
+        if (isHandled) return;
+        isHandled = true;
         this.handleDisconnect();
       };
 
-      this.ws.onerror = () => {
-        this.handleDisconnect();
-      };
+      this.ws.onclose = onDisconnect;
+      this.ws.onerror = onDisconnect;
     } catch (err) {
-      console.warn('WebSocket setup failed, falling back to BroadcastChannel:', err);
+      console.warn('WebSocket setup failed, falling back to BroadcastChannel & Cloud DB:', err);
       this.handleDisconnect();
     }
   }
@@ -126,14 +128,18 @@ class RealtimeSyncManager {
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
     }
 
     this.reconnectAttempts++;
     this.isConnected = false;
     this.notifyConnectionListeners(false);
 
-    // Continuous reconnection with fast initial attempts (500ms, 1000ms, max 3000ms)
-    const delay = Math.min(3000, Math.max(500, this.reconnectAttempts * 800));
+    // If hosted on a serverless platform (e.g. Vercel) where custom WebSockets on /ws don't exist,
+    // or after 3 consecutive failures, back off significantly (45s) to avoid pegging mobile CPU
+    const isServerlessOrFailed = this.reconnectAttempts >= 3 || window.location.hostname.includes('vercel.app');
+    const delay = isServerlessOrFailed ? 45000 : Math.min(5000, Math.max(1500, this.reconnectAttempts * 1000));
+    
     this.reconnectTimeout = setTimeout(() => {
       this.connect();
     }, delay);

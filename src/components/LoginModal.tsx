@@ -600,7 +600,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 overflow-y-auto font-hanuman">
+    <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm sm:backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto font-hanuman">
       {/* ========================================================================= */}
       {/* OPTION B: SPLIT-SCREEN DUAL BRAND SHOWCASE & MODERN WORKSPACE GATE */}
       {/* ========================================================================= */}
